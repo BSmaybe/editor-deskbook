@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Панель администратора</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <!-- Auth overlay (shown when not logged in) -->
+  <div id="login-overlay" style="position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100">
+    <div class="auth-card">
+      <div class="logo">⚙️</div>
+      <h1>Панель администратора</h1>
+      <p class="subtitle">Войдите как администратор</p>
+      <form id="login-form" class="stack">
+        <div class="field">
+          <label for="login-username">Логин</label>
+          <input id="login-username" type="text" placeholder="admin" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="login-password">Пароль</label>
+          <input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password" required>
+        </div>
+        <div id="login-error" class="error-msg hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block">Войти</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Admin layout (hidden until logged in) -->
+  <div id="admin-app" class="admin-layout hidden">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <h1>⚙️ Управление</h1>
+        <p>Панель администратора</p>
+      </div>
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-tab="offices">🏢 Офисы</button>
+        <button class="nav-item" data-tab="floors">🔢 Этажи</button>
+        <button class="nav-item" data-tab="desks">🪑 Рабочие места</button>
+        <button class="nav-item" data-tab="policies">📋 Политики</button>
+        <button class="nav-item" data-tab="reservations">📅 Бронирования</button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="username" id="sidebar-username"></div>
+        <button id="logout-btn" class="btn btn-secondary btn-sm" style="width:100%">Выйти</button>
+      </div>
+    </aside>
+
+    <!-- Main content area -->
+    <main class="main-content">
+      <div id="messages" class="messages" style="margin-bottom:20px"></div>
+
+      <!-- Offices tab -->
+      <div id="tab-offices" class="tab-content">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <h2 style="font-size:20px;font-weight:700">Офисы</h2>
+          <button id="refresh-offices" class="btn btn-secondary btn-sm">Обновить</button>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Название</th>
+                <th>Адрес</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody id="offices-body">
+              <tr><td colspan="4" class="empty">Загрузка...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="form-panel">
+          <h3>Добавить офис</h3>
+          <div class="grid-2" style="gap:12px">
+            <div class="field">
+              <label for="office-name">Название</label>
+              <input id="office-name" type="text" placeholder="Главный офис">
+            </div>
+            <div class="field">
+              <label for="office-address">Адрес</label>
+              <input id="office-address" type="text" placeholder="ул. Ленина, 1">
+            </div>
+          </div>
+          <button id="create-office-btn" class="btn btn-primary" style="margin-top:16px">Добавить офис</button>
+        </div>
+      </div>
+
+      <!-- Floors tab -->
+      <div id="tab-floors" class="tab-content hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <h2 style="font-size:20px;font-weight:700">Этажи</h2>
+          <button id="refresh-floors" class="btn btn-secondary btn-sm">Обновить</button>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Офис</th>
+                <th>Название</th>
+                <th>План</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody id="floors-body"></tbody>
+          </table>
+        </div>
+        <div class="form-panel">
+          <h3>Добавить этаж</h3>
+          <div class="grid-2" style="gap:12px">
+            <div class="field">
+              <label for="floor-office-select">Офис</label>
+              <select id="floor-office-select"><option value="">Выберите офис</option></select>
+            </div>
+            <div class="field">
+              <label for="floor-name">Название</label>
+              <input id="floor-name" type="text" placeholder="Этаж 1">
+            </div>
+          </div>
+          <button id="create-floor-btn" class="btn btn-primary" style="margin-top:16px">Добавить этаж</button>
+        </div>
+        <div class="form-panel" style="margin-top:12px">
+          <h3>Загрузить план этажа (PNG)</h3>
+          <div class="grid-2" style="gap:12px">
+            <div class="field">
+              <label for="plan-floor-select">Этаж</label>
+              <select id="plan-floor-select"><option value="">Выберите этаж</option></select>
+            </div>
+            <div class="field">
+              <label for="plan-file">Файл PNG</label>
+              <input id="plan-file" type="file" accept="image/png">
+            </div>
+          </div>
+          <button id="upload-plan-btn" class="btn btn-primary" style="margin-top:16px">Загрузить план</button>
+        </div>
+      </div>
+
+      <!-- Desks tab -->
+      <div id="tab-desks" class="tab-content hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <h2 style="font-size:20px;font-weight:700">Рабочие места</h2>
+          <button id="refresh-desks" class="btn btn-secondary btn-sm">Обновить</button>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Этаж</th>
+                <th>Метка</th>
+                <th>Тип</th>
+                <th>Зона</th>
+                <th>Закреплено</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody id="desks-body"></tbody>
+          </table>
+        </div>
+        <div class="form-panel">
+          <h3>Добавить рабочее место</h3>
+          <div class="grid-4" style="gap:12px">
+            <div class="field">
+              <label for="desk-floor-select">Этаж</label>
+              <select id="desk-floor-select"><option value="">Выберите этаж</option></select>
+            </div>
+            <div class="field">
+              <label for="desk-label">Метка</label>
+              <input id="desk-label" type="text" placeholder="A-01">
+            </div>
+            <div class="field">
+              <label for="desk-type">Тип</label>
+              <select id="desk-type">
+                <option value="flex">Гибкое</option>
+                <option value="fixed">Закреплённое</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="desk-zone">Зона</label>
+              <input id="desk-zone" type="text" placeholder="Зона A">
+            </div>
+          </div>
+          <div class="grid-2" style="gap:12px;margin-top:12px">
+            <div class="field">
+              <label for="desk-assigned">Закреплено за (логин)</label>
+              <input id="desk-assigned" type="text" placeholder="только для fixed">
+            </div>
+          </div>
+          <button id="create-desk-btn" class="btn btn-primary" style="margin-top:16px">Добавить место</button>
+        </div>
+      </div>
+
+      <!-- Policies tab -->
+      <div id="tab-policies" class="tab-content hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <h2 style="font-size:20px;font-weight:700">Политики бронирования</h2>
+          <button id="refresh-policies" class="btn btn-secondary btn-sm">Обновить</button>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Офис</th>
+                <th>Название</th>
+                <th>Дни вперёд</th>
+                <th>Длительность (мин)</th>
+                <th>No-show (мин)</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody id="policies-body"></tbody>
+          </table>
+        </div>
+        <div class="form-panel">
+          <h3>Добавить политику</h3>
+          <div class="grid-4" style="gap:12px">
+            <div class="field">
+              <label for="policy-office-select">Офис</label>
+              <select id="policy-office-select"><option value="">Выберите офис</option></select>
+            </div>
+            <div class="field">
+              <label for="policy-name">Название</label>
+              <input id="policy-name" type="text" placeholder="Стандартная">
+            </div>
+            <div class="field">
+              <label for="policy-min-days">Мин. дней вперёд</label>
+              <input id="policy-min-days" type="number" value="0" min="0">
+            </div>
+            <div class="field">
+              <label for="policy-max-days">Макс. дней вперёд</label>
+              <input id="policy-max-days" type="number" value="30" min="0">
+            </div>
+          </div>
+          <div class="grid-4" style="gap:12px;margin-top:12px">
+            <div class="field">
+              <label for="policy-min-dur">Мин. длит. (мин)</label>
+              <input id="policy-min-dur" type="number" value="30" min="0">
+            </div>
+            <div class="field">
+              <label for="policy-max-dur">Макс. длит. (мин)</label>
+              <input id="policy-max-dur" type="number" value="480" min="0">
+            </div>
+            <div class="field">
+              <label for="policy-noshow">No-show таймаут (мин)</label>
+              <input id="policy-noshow" type="number" value="15" min="0">
+            </div>
+          </div>
+          <button id="create-policy-btn" class="btn btn-primary" style="margin-top:16px">Добавить политику</button>
+        </div>
+      </div>
+
+      <!-- Reservations tab -->
+      <div id="tab-reservations" class="tab-content hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <h2 style="font-size:20px;font-weight:700">Бронирования</h2>
+          <button id="refresh-reservations" class="btn btn-secondary btn-sm">Обновить</button>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Место</th>
+                <th>Пользователь</th>
+                <th>Дата</th>
+                <th>Начало</th>
+                <th>Конец</th>
+                <th>Check-in</th>
+                <th>Статус</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody id="reservations-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="./admin.js"></script>
+</body>
+</html>

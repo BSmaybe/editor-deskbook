@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Бронирование рабочих мест</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="header-brand">
+        <h1>🗓️ Бронирование мест</h1>
+        <p>Выберите место и забронируйте</p>
+      </div>
+      <div class="header-user">
+        <div id="api-status" class="api-status">API: проверка...</div>
+        <span class="user-badge" id="logged-as"></span>
+        <button id="logout-btn" class="btn btn-secondary btn-sm">Выйти</button>
+      </div>
+    </header>
+
+    <!-- Booking params -->
+    <div class="card">
+      <h2 class="card-title">Параметры бронирования</h2>
+      <div class="grid-4">
+        <div class="field">
+          <label for="office-select">Офис</label>
+          <select id="office-select"><option value="">Загрузка...</option></select>
+        </div>
+        <div class="field">
+          <label for="floor-select">Этаж</label>
+          <select id="floor-select" disabled><option value="">Выберите офис</option></select>
+        </div>
+        <div class="field">
+          <label for="reservation-date">Дата</label>
+          <input id="reservation-date" type="date">
+        </div>
+        <div class="field" style="align-self:end">
+          <input id="user-id" type="hidden">
+        </div>
+      </div>
+      <div class="grid-4" style="margin-top:16px">
+        <div class="field">
+          <label for="start-time">Начало</label>
+          <input id="start-time" type="time" value="09:00">
+        </div>
+        <div class="field">
+          <label for="end-time">Конец</label>
+          <input id="end-time" type="time" value="18:00">
+        </div>
+        <div class="field" style="align-self:end">
+          <button id="refresh" class="btn btn-secondary">Обновить доступность</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Policies -->
+    <div class="card" id="policies-card" style="display:none">
+      <h2 class="card-title">Правила бронирования</h2>
+      <div id="policy-list"></div>
+    </div>
+
+    <!-- Floor plan -->
+    <div class="card" id="floor-plan-card" style="display:none">
+      <h2 class="card-title">План этажа</h2>
+      <figure class="floor-plan" id="floor-plan-figure">
+        <div style="position:relative;display:inline-block;width:100%">
+          <img id="floor-plan-image" alt="План этажа" style="max-width:100%;display:block">
+          <div id="floor-plan-overlay" class="plan-overlay"></div>
+        </div>
+        <figcaption id="floor-plan-caption" style="margin-top:8px;font-size:13px;color:var(--text-2)"></figcaption>
+      </figure>
+    </div>
+
+    <!-- Desks -->
+    <div class="card">
+      <h2 class="card-title">Рабочие места</h2>
+      <div id="desks" class="desk-grid">
+        <p class="empty">Выберите офис и этаж</p>
+      </div>
+    </div>
+
+    <!-- My bookings -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 class="card-title" style="margin:0">Мои бронирования</h2>
+        <button id="refresh-bookings" class="btn btn-secondary btn-sm">Обновить</button>
+      </div>
+      <div id="my-bookings"><p class="empty">Нет активных бронирований</p></div>
+    </div>
+
+    <!-- Messages -->
+    <div class="card" id="messages-card">
+      <h2 class="card-title">Уведомления</h2>
+      <div id="messages" class="messages"></div>
+    </div>
+  </div>
+
+  <template id="desk-card-template">
+    <article class="desk-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <h3 class="desk-card-title"></h3>
+        <span class="badge"></span>
+      </div>
+      <div class="desk-meta">
+        <span class="desk-type"></span>
+        <span class="desk-zone"></span>
+        <span class="desk-assigned"></span>
+      </div>
+      <button class="btn btn-primary btn-sm reserve" style="margin-top:auto">Забронировать</button>
+    </article>
+  </template>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

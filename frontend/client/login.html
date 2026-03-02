@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Вход — Бронирование мест</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <div class="logo">🗓️</div>
+    <h1>Бронирование мест</h1>
+    <p class="subtitle">Войдите в свой аккаунт</p>
+    <form id="login-form" class="stack">
+      <div class="field">
+        <label for="username">Логин</label>
+        <input id="username" type="text" placeholder="ivan.ivanov" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="password">Пароль</label>
+        <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
+      </div>
+      <div id="error-msg" class="error-msg hidden"></div>
+      <button type="submit" class="btn btn-primary btn-block">Войти</button>
+    </form>
+    <p class="auth-links">Нет аккаунта? <a href="./register.html">Зарегистрироваться</a></p>
+  </div>
+  <script>
+  const API_BASE = "http://localhost:8000";
+  const form = document.getElementById("login-form");
+  const errorMsg = document.getElementById("error-msg");
+
+  if (localStorage.getItem("user_token") && localStorage.getItem("user_username")) {
+    window.location.href = "./index.html";
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorMsg.classList.add("hidden");
+    const username = document.getElementById("username").value.trim();
+    const password = document.getElementById("password").value;
+    try {
+      const resp = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ username, password }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.detail || `Ошибка ${resp.status}`);
+      }
+      const { access_token } = await resp.json();
+      localStorage.setItem("user_token", access_token);
+      localStorage.setItem("user_username", username);
+      window.location.href = "./index.html";
+    } catch (e) {
+      errorMsg.textContent = e.message;
+      errorMsg.classList.remove("hidden");
+    }
+  });
+  </script>
+</body>
+</html>

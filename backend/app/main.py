@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
 from .auth import get_password_hash, verify_password, create_access_token, require_admin
+from .config import settings
 from .database import Base, engine, get_db, SessionLocal
 
 # Static files directory (matches docker-compose volume: ./backend/static:/app/static)
@@ -301,7 +302,7 @@ async def get_desk_qr(
     if not desk:
         raise HTTPException(status_code=404, detail="Desk not found")
 
-    checkin_url = str(request.base_url) + f"checkin/{desk.qr_token}"
+    checkin_url = f"{settings.FRONTEND_URL}/checkin.html?token={desk.qr_token}"
     qr = qrcode.QRCode(box_size=8, border=2)
     qr.add_data(checkin_url)
     qr.make(fit=True)

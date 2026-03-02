@@ -30,11 +30,19 @@ services:
     volumes:
       - ./backend/static:/app/static
 
-  frontend:
-    build: ./frontend
+  frontend-client:
+    build: ./frontend/client
     restart: unless-stopped
     ports:
       - "3000:80"
+    depends_on:
+      - backend
+
+  frontend-admin:
+    build: ./frontend/admin
+    restart: unless-stopped
+    ports:
+      - "3001:80"
     depends_on:
       - backend
 

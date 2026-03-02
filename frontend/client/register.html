@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Регистрация — Бронирование мест</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <div class="logo">🗓️</div>
+    <h1>Бронирование мест</h1>
+    <p class="subtitle">Создайте аккаунт</p>
+    <form id="register-form" class="stack">
+      <div class="field">
+        <label for="username">Логин</label>
+        <input id="username" type="text" placeholder="ivan.ivanov" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" type="email" placeholder="ivan@company.ru" autocomplete="email" required>
+      </div>
+      <div class="field">
+        <label for="password">Пароль</label>
+        <input id="password" type="password" placeholder="Минимум 6 символов" autocomplete="new-password" required minlength="6">
+      </div>
+      <div id="error-msg" class="error-msg hidden"></div>
+      <button type="submit" class="btn btn-primary btn-block">Зарегистрироваться</button>
+    </form>
+    <p class="auth-links">Уже есть аккаунт? <a href="./login.html">Войти</a></p>
+  </div>
+  <script>
+  const API_BASE = "http://localhost:8000";
+  const form = document.getElementById("register-form");
+  const errorMsg = document.getElementById("error-msg");
+
+  if (localStorage.getItem("user_token")) {
+    window.location.href = "./index.html";
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorMsg.classList.add("hidden");
+    const username = document.getElementById("username").value.trim();
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    try {
+      const regResp = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, email, password, role: "user" }),
+      });
+      if (!regResp.ok) {
+        const body = await regResp.json().catch(() => ({}));
+        throw new Error(body.detail || `Ошибка ${regResp.status}`);
+      }
+      const loginResp = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ username, password }),
+      });
+      if (!loginResp.ok) {
+        throw new Error("Регистрация прошла успешно. Войдите вручную.");
+      }
+      const { access_token } = await loginResp.json();
+      localStorage.setItem("user_token", access_token);
+      localStorage.setItem("user_username", username);
+      window.location.href = "./index.html";
+    } catch (e) {
+      errorMsg.textContent = e.message;
+      errorMsg.classList.remove("hidden");
+    }
+  });
+  </script>
+</body>
+</html>

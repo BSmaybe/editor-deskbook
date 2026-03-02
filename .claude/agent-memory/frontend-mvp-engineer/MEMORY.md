@@ -8,42 +8,58 @@
 - CSS custom properties in `styles.css`, no Tailwind or component libraries
 - Backend: FastAPI at `http://localhost:8000` (hardcoded `API_BASE`)
 
-### File Locations
-- `frontend/index.html` + `frontend/app.js` — user-facing SPA
-- `frontend/admin.html` + `frontend/admin.js` — admin panel (separate page)
-- `frontend/checkin.html` — standalone QR check-in landing page (Phase 2, plain inline script)
-- `frontend/styles.css` — shared stylesheet for all pages
+### Folder Structure
+- `frontend/` root — original legacy files (do NOT modify)
+- `frontend/client/` — redesigned user-facing app (port 3000): `login.html`, `register.html`, `index.html`, `app.js` (ES module), `checkin.html`, `styles.css`, `Dockerfile`, `nginx.conf`
+- `frontend/admin/` — redesigned admin panel (port 3001): `index.html`, `admin.js` (plain script), `styles.css`, `Dockerfile`, `nginx.conf`
 
 ### Auth Pattern
-- User auth: token stored in `localStorage` as `user_token`, username as `user_username`
-- Admin auth: token stored as `admin_token`, username as `admin_username`
-- Both use `Authorization: Bearer <token>` header via `apiRequest()` helper
-- For standalone pages without `apiRequest()`, fetch directly with explicit headers
+- User auth: `user_token` + `user_username` in localStorage
+- Admin auth: `admin_token` + `admin_username` in localStorage
+- Both use `Authorization: Bearer <token>` via `apiRequest()` helper
+- Client: auth guard at top of app.js redirects to `./login.html` if no token
+- Admin: shows `#login-overlay` div; hides it and shows `#admin-app` on success
 
 ### API Conventions
-- `apiRequest(path, options)` helper centralizes auth headers + error parsing
-- Errors follow `{ detail: "..." }` (FastAPI default)
-- 204 responses return `null`; others return `.json()`
-- Binary responses (QR PNG): fetch raw, use `resp.blob()` then `URL.createObjectURL()`
+- `apiRequest(path, options)` centralizes auth headers + error parsing
+- Errors: `{ detail: "..." }` (FastAPI default)
+- 204 responses return `null`; others `.json()`
+- Binary (QR PNG): fetch raw, `resp.blob()`, `URL.createObjectURL()`
+- File upload (floor plan): `FormData` + fetch directly (no Content-Type header — browser sets boundary)
+
+### Design System (client/ and admin/ share same tokens)
+- Tokens: `--bg`, `--surface`, `--border`, `--text`, `--text-2`, `--accent`, `--accent-hover`, `--success-bg/text`, `--danger-bg/text`, `--radius`, `--shadow`, `--shadow-md`
+- Buttons: `.btn .btn-primary/secondary/danger .btn-block .btn-sm`
+- Form: `.field` (label+input flex col), `.stack` (flex col gap 16px)
+- Auth: `.auth-page` (full-screen gradient), `.auth-card` (max-w 380px card)
+- Badges: `.badge.available/busy/checked-in/not-checked-in`
+- Messages: `.message.info/success/error`, auto-remove after 6s
+
+### Admin Layout
+- `.admin-layout`: CSS grid 220px sidebar + 1fr main
+- `.sidebar`: dark #1e293b, sticky 100vh
+- Tab switching: `.nav-item[data-tab]` shows `#tab-{name}`, hides others
+- `admin.js` is NOT a module — uses traditional function syntax (no `import/export`)
 
 ### Component Patterns
-- Reusable button factories: `makeDeleteBtn(label, onClick)`, `makeQrBtn(desk)` in admin.js
-- Badge helper function `checkinBadge(checkedInAt)` returns a `<span>` DOM node
-- `.btn-row` CSS class for horizontal button groups in table action cells
-- State is a plain object (`const state = { offices, floors, desks, ... }`) — no reactive framework
+- `makeDeleteBtn(label, onClick)` → `.btn.btn-danger.btn-sm`
+- `makeCancelBtn(reservationId)` → wraps makeDeleteBtn
+- QR: fetch blob from `/desks/{id}/qr`, `window.open(URL.createObjectURL(blob))`
+- `.btn-row` for action button groups in table cells
+- State: `const state = { offices, floors, desks, ... }` plain object
 
-### CSS Conventions
-- Badge variants: `.badge.available`, `.badge.busy`, `.badge.checked-in`, `.badge.not-checked-in`
-- Standalone page layout: `.checkin-page` (full-viewport flex centering) + `.login-card` (shared modal card)
-- `.hidden` class toggles visibility (display:none)
-- `.button.small`, `.button.secondary`, `.button.danger` modifier classes
+### nginx
+- client: `index login.html` (root → login)
+- admin: `index index.html`
 
 ### Phase 2 Features (implemented)
-- `checkin.html`: reads `?token=` from URL, pre-fills username from localStorage, calls `POST /checkin/{token}?user_id={username}`
-- Admin QR button: fetches `GET /desks/{id}/qr` as blob, opens object URL in new tab
-- My Bookings: shows `checked_in_at` status badge per booking (green if checked in, grey if not)
+- `checkin.html`: `?token=` from URL, pre-fills from localStorage, `POST /checkin/{token}?user_id=`
+- Admin QR button per desk row
+- My Bookings: `checked_in_at` badge
 
 ### Known Patterns to Watch
-- `admin.js` uses `type="module"` script; standalone pages must use plain `<script>` (no module imports)
-- Table action cells are built with `tr.innerHTML = ...` then querySelector; append buttons after innerHTML is set
-- Floor select in user app is disabled until an office is selected
+- `admin.js` must NOT use ES module syntax (loaded as plain `<script>`)
+- `app.js` in client uses `type="module"` — ES2020+ fine
+- Set `tr.innerHTML` first, then `querySelector` + `append` buttons (innerHTML clears listeners)
+- Floor select disabled until office selected
+- Admin init validates saved token via `/offices` before showing UI
