@@ -7,6 +7,45 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <!-- Login / Register overlay -->
+    <div id="login-overlay" class="login-overlay">
+      <div class="login-card">
+        <div>
+          <h2 id="auth-title">Вход в систему</h2>
+        </div>
+        <div id="form-login" class="stack">
+          <label class="field">
+            <span>Логин</span>
+            <input id="login-username" type="text" placeholder="ivan.ivanov" autocomplete="username" />
+          </label>
+          <label class="field">
+            <span>Пароль</span>
+            <input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password" />
+          </label>
+        </div>
+        <div id="form-register" class="stack hidden">
+          <label class="field">
+            <span>Логин</span>
+            <input id="reg-username" type="text" placeholder="ivan.ivanov" autocomplete="username" />
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input id="reg-email" type="email" placeholder="ivan@company.ru" autocomplete="email" />
+          </label>
+          <label class="field">
+            <span>Пароль</span>
+            <input id="reg-password" type="password" placeholder="••••••••" autocomplete="new-password" />
+          </label>
+        </div>
+        <div id="auth-error" class="message error hidden"></div>
+        <button id="auth-submit-btn" class="button">Войти</button>
+        <p style="text-align:center;margin:0;font-size:13px;color:var(--text-secondary)">
+          <span id="auth-toggle-text">Нет аккаунта?</span>
+          <a id="auth-toggle-link" href="#" style="color:var(--accent)">Зарегистрироваться</a>
+        </p>
+      </div>
+    </div>
+
     <div class="page">
       <header class="header">
         <div>
@@ -15,6 +54,8 @@
         </div>
         <div class="header-actions">
           <div class="status" id="api-status">API: не проверено</div>
+          <span id="logged-as" class="hidden" style="font-size:13px;color:var(--text-secondary)"></span>
+          <button id="logout-btn" class="button secondary small hidden">Выйти</button>
           <a href="./admin.html" class="button secondary small">Панель администратора →</a>
         </div>
       </header>
@@ -24,7 +65,7 @@
         <div class="grid">
           <label class="field">
             <span>Ваш логин</span>
-            <input id="user-id" type="text" placeholder="ivan.ivanov" />
+            <input id="user-id" type="text" readonly style="background:var(--bg);cursor:default" />
           </label>
           <label class="field">
             <span>Дата</span>

@@ -1,26 +1,43 @@
 const API_BASE = "http://localhost:8000";
 
 // ── DOM refs ────────────────────────────────────────────────────────────────
-const officeSelect        = document.getElementById("office-select");
-const floorSelect         = document.getElementById("floor-select");
-const desksContainer      = document.getElementById("desks");
-const messages            = document.getElementById("messages");
-const refreshButton       = document.getElementById("refresh");
-const refreshBookings     = document.getElementById("refresh-bookings");
-const apiStatus           = document.getElementById("api-status");
-const policyList          = document.getElementById("policy-list");
-const policyEmpty         = document.getElementById("policy-empty");
+const officeSelect         = document.getElementById("office-select");
+const floorSelect          = document.getElementById("floor-select");
+const desksContainer       = document.getElementById("desks");
+const messages             = document.getElementById("messages");
+const refreshButton        = document.getElementById("refresh");
+const refreshBookings      = document.getElementById("refresh-bookings");
+const apiStatus            = document.getElementById("api-status");
+const policyList           = document.getElementById("policy-list");
+const policyEmpty          = document.getElementById("policy-empty");
 const floorPlanPlaceholder = document.getElementById("floor-plan-placeholder");
-const floorPlanFigure     = document.getElementById("floor-plan-figure");
-const floorPlanImage      = document.getElementById("floor-plan-image");
-const floorPlanCaption    = document.getElementById("floor-plan-caption");
-const floorPlanOverlay    = document.getElementById("floor-plan-overlay");
-const userInput           = document.getElementById("user-id");
-const dateInput           = document.getElementById("reservation-date");
-const startInput          = document.getElementById("start-time");
-const endInput            = document.getElementById("end-time");
-const myBookingsContainer = document.getElementById("my-bookings");
-const deskTemplate        = document.getElementById("desk-card-template");
+const floorPlanFigure      = document.getElementById("floor-plan-figure");
+const floorPlanImage       = document.getElementById("floor-plan-image");
+const floorPlanCaption     = document.getElementById("floor-plan-caption");
+const floorPlanOverlay     = document.getElementById("floor-plan-overlay");
+const userInput            = document.getElementById("user-id");
+const dateInput            = document.getElementById("reservation-date");
+const startInput           = document.getElementById("start-time");
+const endInput             = document.getElementById("end-time");
+const myBookingsContainer  = document.getElementById("my-bookings");
+const deskTemplate         = document.getElementById("desk-card-template");
+
+// Auth DOM refs
+const loginOverlay    = document.getElementById("login-overlay");
+const authTitle       = document.getElementById("auth-title");
+const formLogin       = document.getElementById("form-login");
+const formRegister    = document.getElementById("form-register");
+const loginUsername   = document.getElementById("login-username");
+const loginPassword   = document.getElementById("login-password");
+const regUsername     = document.getElementById("reg-username");
+const regEmail        = document.getElementById("reg-email");
+const regPassword     = document.getElementById("reg-password");
+const authError       = document.getElementById("auth-error");
+const authSubmitBtn   = document.getElementById("auth-submit-btn");
+const authToggleLink  = document.getElementById("auth-toggle-link");
+const authToggleText  = document.getElementById("auth-toggle-text");
+const loggedAs        = document.getElementById("logged-as");
+const logoutBtn       = document.getElementById("logout-btn");
 
 // ── State ───────────────────────────────────────────────────────────────────
 const state = {
@@ -31,15 +48,41 @@ const state = {
   policies: [],
 };
 
+let isLoginMode = true;
+
 dateInput.value = new Date().toISOString().slice(0, 10);
 
-// Restore saved username
-if (localStorage.getItem("user_id")) {
-  userInput.value = localStorage.getItem("user_id");
+// ── Auth helpers ─────────────────────────────────────────────────────────────
+function getToken() {
+  return localStorage.getItem("user_token");
 }
-userInput.addEventListener("change", () => {
-  localStorage.setItem("user_id", userInput.value.trim());
-});
+
+function setToken(token, username) {
+  localStorage.setItem("user_token", token);
+  localStorage.setItem("user_username", username);
+  showUserUI(username);
+}
+
+function clearToken() {
+  localStorage.removeItem("user_token");
+  localStorage.removeItem("user_username");
+  userInput.value = "";
+  showLoginOverlay();
+}
+
+function showLoginOverlay() {
+  loginOverlay.classList.remove("hidden");
+  logoutBtn.classList.add("hidden");
+  loggedAs.classList.add("hidden");
+}
+
+function showUserUI(username) {
+  loginOverlay.classList.add("hidden");
+  loggedAs.textContent = username;
+  loggedAs.classList.remove("hidden");
+  logoutBtn.classList.remove("hidden");
+  userInput.value = username;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function addMessage(text, type = "info") {
@@ -57,7 +100,12 @@ function setApiStatus(ok) {
 }
 
 async function apiRequest(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const token = getToken();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {}),
+  };
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -176,11 +224,10 @@ async function refreshAvailability() {
 async function loadMyBookings() {
   const userId = userInput.value.trim();
   if (!userId) {
-    myBookingsContainer.innerHTML = '<div class="empty">Введите ваш логин, чтобы увидеть бронирования.</div>';
+    myBookingsContainer.innerHTML = '<div class="empty">Войдите в систему, чтобы увидеть бронирования.</div>';
     return;
   }
   try {
-    // Load all reservations and filter client-side by user_id
     const all = await apiRequest("/reservations");
     const mine = all.filter((r) => r.user_id === userId && r.status === "active");
     renderMyBookings(mine);
@@ -203,7 +250,7 @@ async function cancelBooking(reservationId) {
 async function reserveDesk(deskId) {
   const userId = userInput.value.trim();
   if (!userId) {
-    addMessage("Укажите ваш логин для бронирования.", "error");
+    addMessage("Войдите в систему для бронирования.", "error");
     return;
   }
   try {
@@ -330,6 +377,27 @@ function renderMyBookings(bookings) {
   myBookingsContainer.append(list);
 }
 
+// ── Auth toggle ──────────────────────────────────────────────────────────────
+function switchAuthMode(loginMode) {
+  isLoginMode = loginMode;
+  if (loginMode) {
+    authTitle.textContent = "Вход в систему";
+    formLogin.classList.remove("hidden");
+    formRegister.classList.add("hidden");
+    authSubmitBtn.textContent = "Войти";
+    authToggleText.textContent = "Нет аккаунта?";
+    authToggleLink.textContent = "Зарегистрироваться";
+  } else {
+    authTitle.textContent = "Регистрация";
+    formLogin.classList.add("hidden");
+    formRegister.classList.remove("hidden");
+    authSubmitBtn.textContent = "Зарегистрироваться";
+    authToggleText.textContent = "Уже есть аккаунт?";
+    authToggleLink.textContent = "Войти";
+  }
+  authError.classList.add("hidden");
+}
+
 // ── Events ───────────────────────────────────────────────────────────────────
 officeSelect.addEventListener("change", (e) => {
   loadFloors(e.target.value);
@@ -345,9 +413,106 @@ floorSelect.addEventListener("change", (e) => {
 
 refreshButton.addEventListener("click", () => refreshAvailability());
 refreshBookings.addEventListener("click", () => loadMyBookings());
-userInput.addEventListener("change", () => loadMyBookings());
+
+authToggleLink.addEventListener("click", (e) => {
+  e.preventDefault();
+  switchAuthMode(!isLoginMode);
+});
+
+authSubmitBtn.addEventListener("click", async () => {
+  authError.classList.add("hidden");
+  if (isLoginMode) {
+    const username = loginUsername.value.trim();
+    const password = loginPassword.value;
+    if (!username || !password) {
+      authError.textContent = "Введите логин и пароль.";
+      authError.classList.remove("hidden");
+      return;
+    }
+    try {
+      const form = new URLSearchParams({ username, password });
+      const resp = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: form,
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.detail || `Ошибка ${resp.status}`);
+      }
+      const data = await resp.json();
+      setToken(data.access_token, username);
+      addMessage(`Добро пожаловать, ${username}!`, "success");
+      await loadOffices();
+      await loadMyBookings();
+    } catch (e) {
+      authError.textContent = e.message;
+      authError.classList.remove("hidden");
+    }
+  } else {
+    const username = regUsername.value.trim();
+    const email = regEmail.value.trim();
+    const password = regPassword.value;
+    if (!username || !email || !password) {
+      authError.textContent = "Заполните все поля.";
+      authError.classList.remove("hidden");
+      return;
+    }
+    try {
+      const resp = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, email, password, role: "user" }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.detail || `Ошибка ${resp.status}`);
+      }
+      // Auto-login after registration
+      const form = new URLSearchParams({ username, password });
+      const loginResp = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: form,
+      });
+      const data = await loginResp.json();
+      setToken(data.access_token, username);
+      addMessage(`Аккаунт создан. Добро пожаловать, ${username}!`, "success");
+      await loadOffices();
+      await loadMyBookings();
+    } catch (e) {
+      authError.textContent = e.message;
+      authError.classList.remove("hidden");
+    }
+  }
+});
+
+loginPassword.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") authSubmitBtn.click();
+});
+
+logoutBtn.addEventListener("click", () => {
+  clearToken();
+  addMessage("Вы вышли из системы.", "info");
+});
 
 // ── Init ─────────────────────────────────────────────────────────────────────
-checkApi();
-loadOffices();
-loadMyBookings();
+async function init() {
+  await checkApi();
+  const token = getToken();
+  const username = localStorage.getItem("user_username");
+  if (token && username) {
+    try {
+      await apiRequest("/health");
+      showUserUI(username);
+      await loadOffices();
+      await loadMyBookings();
+    } catch {
+      clearToken();
+    }
+  } else {
+    showLoginOverlay();
+  }
+}
+
+init();
