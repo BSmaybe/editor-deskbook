@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, time
+import uuid
+from datetime import date, datetime, time, timedelta
 from typing import Optional
 
 from sqlalchemy import and_
@@ -109,6 +110,7 @@ def create_desk(db: Session, payload: schemas.DeskCreate) -> models.Desk:
         raise ValueError("Fixed desks must have an assigned employee.")
     if data.get("type") == "flex":
         data["assigned_to"] = None
+    data["qr_token"] = str(uuid.uuid4())
     desk = models.Desk(**data)
     db.add(desk)
     db.commit()
@@ -140,6 +142,95 @@ def delete_desk(db: Session, desk_id: int) -> None:
         raise KeyError("desk")
     db.delete(desk)
     db.commit()
+
+
+def get_desk_by_qr_token(db: Session, qr_token: str) -> Optional[models.Desk]:
+    return db.query(models.Desk).filter(models.Desk.qr_token == qr_token).first()
+
+
+def checkin_reservation(
+    db: Session, qr_token: str, user_id: str
+) -> models.Reservation:
+    """Check in a user to their active reservation for today via QR token."""
+    desk = get_desk_by_qr_token(db, qr_token)
+    if desk is None:
+        raise KeyError("desk")
+
+    today = datetime.utcnow().date()
+
+    reservation = (
+        db.query(models.Reservation)
+        .filter(
+            models.Reservation.desk_id == desk.id,
+            models.Reservation.user_id == user_id,
+            models.Reservation.reservation_date == today,
+            models.Reservation.status == "active",
+            models.Reservation.checked_in_at.is_(None),
+        )
+        .first()
+    )
+    if reservation is None:
+        raise ValueError("No active reservation for today")
+
+    reservation.checked_in_at = datetime.utcnow()
+    db.commit()
+    db.refresh(reservation)
+    return reservation
+
+
+def cancel_noshow_reservations(db: Session) -> int:
+    """Cancel active reservations where check-in is overdue past the policy timeout.
+
+    Joins Reservation -> Desk -> Floor -> Office -> Policy to determine
+    the no_show_timeout_minutes for each reservation's office. Defaults to 15
+    minutes when no policy exists for an office.
+    """
+    DEFAULT_TIMEOUT = 15
+    now_utc = datetime.utcnow()
+
+    # Fetch all active, unchecked-in reservations that have a start_time set
+    active_reservations = (
+        db.query(models.Reservation)
+        .join(models.Desk, models.Reservation.desk_id == models.Desk.id)
+        .join(models.Floor, models.Desk.floor_id == models.Floor.id)
+        .filter(
+            models.Reservation.status == "active",
+            models.Reservation.checked_in_at.is_(None),
+            models.Reservation.start_time.is_not(None),
+        )
+        .all()
+    )
+
+    # Build a map of office_id -> no_show_timeout_minutes from policies
+    # Use the first policy found for each office (most specific wins)
+    policies = db.query(models.Policy).all()
+    office_timeout: dict[Optional[int], int] = {}
+    for policy in policies:
+        oid = policy.office_id
+        if oid not in office_timeout:
+            office_timeout[oid] = policy.no_show_timeout_minutes
+
+    cancelled_count = 0
+    for res in active_reservations:
+        # Walk up to find the office_id for this reservation
+        desk = res.desk
+        floor = desk.floor if desk else None
+        office_id = floor.office_id if floor else None
+
+        # Determine the applicable timeout: office-specific policy first, then global (None key), then default
+        timeout = office_timeout.get(office_id, office_timeout.get(None, DEFAULT_TIMEOUT))
+
+        # Combine reservation_date + start_time to get the scheduled start as a naive UTC datetime
+        scheduled_start = datetime.combine(res.reservation_date, res.start_time)
+
+        if now_utc >= scheduled_start + timedelta(minutes=timeout):
+            res.status = "cancelled"
+            cancelled_count += 1
+
+    if cancelled_count:
+        db.commit()
+
+    return cancelled_count
 
 
 # ---------------------------------------------------------------------------

@@ -2,20 +2,23 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import date, time
+import io
 from pathlib import Path
 import shutil
 import uuid
 from typing import Optional
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
 from .auth import get_password_hash, verify_password, create_access_token, require_admin
-from .database import Base, engine, get_db
+from .database import Base, engine, get_db, SessionLocal
 
 # Static files directory (matches docker-compose volume: ./backend/static:/app/static)
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -27,7 +30,22 @@ async def lifespan(app: FastAPI):
     # Import all models so they are registered with Base before create_all
     from . import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
+
+    scheduler = AsyncIOScheduler()
+
+    def run_noshow_check() -> None:
+        db = SessionLocal()
+        try:
+            count = crud.cancel_noshow_reservations(db)
+            if count:
+                print(f"[no-show] Cancelled {count} reservations")
+        finally:
+            db.close()
+
+    scheduler.add_job(run_noshow_check, "interval", minutes=1)
+    scheduler.start()
     yield
+    scheduler.shutdown()
 
 
 app = FastAPI(title="Desk Booking API", version="0.1.0", lifespan=lifespan)
@@ -270,6 +288,47 @@ async def delete_desk(desk_id: int, db: Session = Depends(get_db)) -> schemas.Me
     except KeyError:
         raise HTTPException(status_code=404, detail="Desk not found")
     return schemas.Message(message="deleted")
+
+
+@app.get("/desks/{desk_id}/qr", dependencies=[Depends(require_admin)])
+async def get_desk_qr(
+    desk_id: int, request: Request, db: Session = Depends(get_db)
+) -> StreamingResponse:
+    """Return a QR code PNG that encodes the check-in URL for a desk."""
+    import qrcode  # imported here so startup is not blocked if qrcode is missing
+
+    desk = db.query(models.Desk).filter(models.Desk.id == desk_id).first()
+    if not desk:
+        raise HTTPException(status_code=404, detail="Desk not found")
+
+    checkin_url = str(request.base_url) + f"checkin/{desk.qr_token}"
+    qr = qrcode.QRCode(box_size=8, border=2)
+    qr.add_data(checkin_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="image/png")
+
+
+@app.post("/checkin/{qr_token}", response_model=schemas.Reservation)
+async def checkin(
+    qr_token: str,
+    user_id: str = Query(...),
+    db: Session = Depends(get_db),
+) -> models.Reservation:
+    """Check in to an active reservation via QR token.
+
+    The QR token is embedded in the QR code printed on/near each desk.
+    Callers must supply their user_id as a query parameter.
+    """
+    try:
+        return crud.checkin_reservation(db, qr_token, user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Desk not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------

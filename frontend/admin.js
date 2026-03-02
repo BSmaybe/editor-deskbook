@@ -255,6 +255,32 @@ function renderFloorsTable() {
   }
 }
 
+function makeQrBtn(desk) {
+  const btn = document.createElement("button");
+  btn.className = "button secondary small";
+  btn.textContent = "QR";
+  btn.title = `Показать QR-код для места «${desk.label}»`;
+  btn.addEventListener("click", async () => {
+    const token = getToken();
+    try {
+      const resp = await fetch(`${API_BASE}/desks/${desk.id}/qr`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        addMessage(`Не удалось получить QR: ${body.detail || resp.status}`, "error");
+        return;
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener");
+    } catch (e) {
+      addMessage(`Ошибка при загрузке QR: ${e.message}`, "error");
+    }
+  });
+  return btn;
+}
+
 function renderDesksTable() {
   desksBody.innerHTML = "";
   if (!state.desks.length) {
@@ -264,7 +290,11 @@ function renderDesksTable() {
   for (const d of state.desks) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${d.id}</td><td>${floorName_(d.floor_id)}</td><td>${d.label}</td><td>${d.type === "fixed" ? "Закреплённое" : "Гибкое"}</td><td>${d.zone || "—"}</td><td>${d.assigned_to || "—"}</td><td></td>`;
-    tr.querySelector("td:last-child").append(
+    const actionCell = tr.querySelector("td:last-child");
+    const btnRow = document.createElement("div");
+    btnRow.className = "btn-row";
+    btnRow.append(
+      makeQrBtn(d),
       makeDeleteBtn("Удалить", async () => {
         if (!confirm(`Удалить место «${d.label}»?`)) return;
         try {
@@ -276,6 +306,7 @@ function renderDesksTable() {
         }
       })
     );
+    actionCell.append(btnRow);
     desksBody.append(tr);
   }
 }

@@ -354,6 +354,18 @@ function renderDesks() {
   renderPlanMarkers(floorPlanOverlay, state.desks);
 }
 
+function checkinBadge(checkedInAt) {
+  const badge = document.createElement("span");
+  if (checkedInAt) {
+    badge.className = "badge checked-in";
+    badge.textContent = `Отмечен в ${checkedInAt.slice(11, 16)}`;
+  } else {
+    badge.className = "badge not-checked-in";
+    badge.textContent = "Нет отметки";
+  }
+  return badge;
+}
+
 function renderMyBookings(bookings) {
   myBookingsContainer.innerHTML = "";
   if (!bookings.length) {
@@ -365,13 +377,24 @@ function renderMyBookings(bookings) {
   for (const b of bookings) {
     const item = document.createElement("div");
     item.className = "booking-item";
-    item.innerHTML = `
-      <div class="booking-info">
-        <strong>Место #${b.desk_id}</strong>
-        <span>${b.reservation_date} · ${b.start_time?.slice(0,5) ?? "весь день"} – ${b.end_time?.slice(0,5) ?? ""}</span>
-      </div>
-      <button class="button danger small">Отменить</button>`;
-    item.querySelector("button").addEventListener("click", () => cancelBooking(b.id));
+
+    const info = document.createElement("div");
+    info.className = "booking-info";
+
+    const title = document.createElement("strong");
+    title.textContent = `Место #${b.desk_id}`;
+
+    const meta = document.createElement("span");
+    meta.textContent = `${b.reservation_date} · ${b.start_time?.slice(0, 5) ?? "весь день"} – ${b.end_time?.slice(0, 5) ?? ""}`;
+
+    info.append(title, meta, checkinBadge(b.checked_in_at));
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "button danger small";
+    cancelBtn.textContent = "Отменить";
+    cancelBtn.addEventListener("click", () => cancelBooking(b.id));
+
+    item.append(info, cancelBtn);
     list.append(item);
   }
   myBookingsContainer.append(list);

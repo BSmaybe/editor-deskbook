@@ -238,6 +238,16 @@ body {
   color: #991b1b;
 }
 
+.badge.checked-in {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge.not-checked-in {
+  background: #f3f4f6;
+  color: var(--muted);
+}
+
 .desk-meta {
   display: grid;
   gap: 8px;
@@ -508,4 +518,19 @@ table tr:hover td {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* ── Check-in standalone page ─────────────────────────────────────────────── */
+.checkin-page {
+  min-height: 100vh;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.checkin-card {
+  width: 100%;
+  max-width: 400px;
 }

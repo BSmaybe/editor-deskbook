@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
@@ -97,6 +97,7 @@ class DeskCreate(DeskBase):
 class Desk(DeskBase):
     model_config = ConfigDict(from_attributes=True)
     id: PositiveInt
+    qr_token: str
 
 
 class DeskUpdate(BaseModel):
@@ -135,6 +136,7 @@ class Reservation(ReservationBase):
     model_config = ConfigDict(from_attributes=True)
     id: PositiveInt
     status: str = Field("active", pattern="^(active|cancelled)$")
+    checked_in_at: Optional[datetime] = None
 
 
 class AvailabilityResponse(BaseModel):

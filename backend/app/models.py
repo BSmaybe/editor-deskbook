@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time
 from typing import Optional
 
 from sqlalchemy import (
     CheckConstraint,
     Date,
+    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -83,6 +84,9 @@ class Desk(Base):
     zone: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     position_x: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     position_y: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    qr_token: Mapped[str] = mapped_column(
+        String(36), unique=True, nullable=False, index=True
+    )
 
     floor: Mapped[Floor] = relationship("Floor", back_populates="desks")
     reservations: Mapped[list[Reservation]] = relationship(
@@ -109,6 +113,9 @@ class Reservation(Base):
     start_time: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
     end_time: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    checked_in_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[date] = mapped_column(
         Date, nullable=False, server_default=func.current_date()
     )

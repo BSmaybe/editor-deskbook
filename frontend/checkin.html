@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Отметка о посещении</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="checkin-page">
+      <div class="login-card checkin-card">
+        <div>
+          <h2 id="checkin-title">Отметка о посещении</h2>
+          <p class="subtitle" id="checkin-subtitle">Введите ваш логин, чтобы подтвердить занятие места.</p>
+        </div>
+
+        <div id="checkin-form-wrap" class="stack">
+          <label class="field">
+            <span>Ваш логин</span>
+            <input
+              id="checkin-username"
+              type="text"
+              placeholder="ivan.ivanov"
+              autocomplete="username"
+              autocapitalize="none"
+            />
+          </label>
+          <div id="checkin-error" class="message error hidden"></div>
+          <button id="checkin-submit" class="button">Отметиться</button>
+        </div>
+
+        <div id="checkin-success" class="hidden">
+          <div class="message success" style="text-align:center;font-size:15px;padding:20px 16px">
+            Вы отмечены! Место забронировано.
+          </div>
+          <a href="./index.html" class="button secondary" style="display:block;text-align:center;margin-top:12px">
+            На главную
+          </a>
+        </div>
+
+        <div id="checkin-invalid" class="hidden">
+          <div class="message error" style="text-align:center;font-size:15px;padding:20px 16px">
+            Ссылка недействительна или QR-код не найден.
+          </div>
+          <a href="./index.html" class="button secondary" style="display:block;text-align:center;margin-top:12px">
+            На главную
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const API_BASE = "http://localhost:8000";
+
+      const params = new URLSearchParams(window.location.search);
+      const qrToken = params.get("token");
+
+      const titleEl        = document.getElementById("checkin-title");
+      const subtitleEl     = document.getElementById("checkin-subtitle");
+      const formWrap       = document.getElementById("checkin-form-wrap");
+      const errorEl        = document.getElementById("checkin-error");
+      const submitBtn      = document.getElementById("checkin-submit");
+      const usernameInput  = document.getElementById("checkin-username");
+      const successSection = document.getElementById("checkin-success");
+      const invalidSection = document.getElementById("checkin-invalid");
+
+      if (!qrToken) {
+        formWrap.classList.add("hidden");
+        invalidSection.classList.remove("hidden");
+        titleEl.textContent = "Ссылка недействительна";
+        subtitleEl.textContent = "Параметр token отсутствует в URL.";
+      }
+
+      function showError(msg) {
+        errorEl.textContent = msg;
+        errorEl.classList.remove("hidden");
+      }
+
+      function hideError() {
+        errorEl.classList.add("hidden");
+      }
+
+      async function doCheckin() {
+        hideError();
+        const username = usernameInput.value.trim();
+        if (!username) {
+          showError("Введите ваш логин.");
+          usernameInput.focus();
+          return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Отправка...";
+
+        try {
+          const url = `${API_BASE}/checkin/${encodeURIComponent(qrToken)}?user_id=${encodeURIComponent(username)}`;
+          const resp = await fetch(url, { method: "POST" });
+
+          if (resp.ok) {
+            formWrap.classList.add("hidden");
+            successSection.classList.remove("hidden");
+            titleEl.textContent = "Готово!";
+            subtitleEl.textContent = "";
+          } else {
+            const body = await resp.json().catch(() => ({}));
+            const detail = body.detail || `Ошибка ${resp.status}`;
+            if (resp.status === 404) {
+              formWrap.classList.add("hidden");
+              invalidSection.classList.remove("hidden");
+              titleEl.textContent = "QR-код не найден";
+              subtitleEl.textContent = detail;
+            } else {
+              showError(detail);
+              submitBtn.disabled = false;
+              submitBtn.textContent = "Отметиться";
+            }
+          }
+        } catch {
+          showError("Не удалось связаться с сервером. Проверьте подключение.");
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Отметиться";
+        }
+      }
+
+      submitBtn.addEventListener("click", doCheckin);
+      usernameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") doCheckin();
+      });
+
+      // Pre-fill from localStorage if user is already logged in on the main app
+      const storedUsername = localStorage.getItem("user_username");
+      if (storedUsername) {
+        usernameInput.value = storedUsername;
+      }
+    </script>
+  </body>
+</html>
