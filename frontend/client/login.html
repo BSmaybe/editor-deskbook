@@ -3,14 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Вход — Бронирование мест</title>
+  <title>Вход — DeskBook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="auth-page">
   <div class="auth-card">
-    <div class="logo">🗓️</div>
-    <h1>Бронирование мест</h1>
-    <p class="subtitle">Войдите в свой аккаунт</p>
+    <div class="auth-logo">
+      <div class="auth-logo-icon">
+        <i data-lucide="calendar-days" style="width:22px;height:22px"></i>
+      </div>
+      <div class="auth-logo-text">
+        <h1>DeskBook</h1>
+        <p>Система бронирования мест</p>
+      </div>
+    </div>
+    <h2 class="auth-heading">Добро пожаловать</h2>
+    <p class="auth-sub">Войдите в свой аккаунт</p>
     <form id="login-form" class="stack">
       <div class="field">
         <label for="username">Логин</label>
@@ -21,12 +32,15 @@
         <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
       </div>
       <div id="error-msg" class="error-msg hidden"></div>
-      <button type="submit" class="btn btn-primary btn-block">Войти</button>
+      <button type="submit" class="btn btn-primary btn-block" style="height:42px;font-size:15px">
+        <i data-lucide="log-in" style="width:16px;height:16px"></i>
+        Войти
+      </button>
     </form>
-    <p class="auth-links">Нет аккаунта? <a href="./register.html">Зарегистрироваться</a></p>
+    <p class="auth-links">Нет аккаунта? <a href="./register.html">Зарегистрироваться →</a></p>
   </div>
   <script>
-  const API_BASE = "http://localhost:8000";
+  const API_BASE = "/api";
   const form = document.getElementById("login-form");
   const errorMsg = document.getElementById("error-msg");
 
@@ -68,6 +82,8 @@
       errorMsg.classList.remove("hidden");
     }
   });
+
+  if (window.lucide) lucide.createIcons();
   </script>
 </body>
 </html>

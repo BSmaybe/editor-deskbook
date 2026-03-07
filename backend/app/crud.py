@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 
-from sqlalchemy import and_, desc, func
+from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.orm import Session
 
 from . import models, schemas
@@ -144,6 +144,36 @@ def delete_desk(db: Session, desk_id: int) -> None:
     db.commit()
 
 
+def create_desks_from_map(
+    db: Session, floor_id: int, desks: list[schemas.DeskFromMap]
+) -> list[models.Desk]:
+    floor = db.query(models.Floor).filter(models.Floor.id == floor_id).first()
+    if floor is None:
+        raise KeyError("floor")
+    # Validate fixed desks
+    for d in desks:
+        if d.type == "fixed" and not d.assigned_to:
+            raise ValueError(f"Fixed desk '{d.label}' must have assigned_to.")
+    # Delete all existing desks for this floor (cascades reservations)
+    db.query(models.Desk).filter(models.Desk.floor_id == floor_id).delete()
+    db.flush()
+    # Create new desks
+    created = []
+    for d in desks:
+        data = d.model_dump()
+        if data["type"] == "flex":
+            data["assigned_to"] = None
+        data["floor_id"] = floor_id
+        data["qr_token"] = str(uuid.uuid4())
+        desk = models.Desk(**data)
+        db.add(desk)
+        created.append(desk)
+    db.commit()
+    for desk in created:
+        db.refresh(desk)
+    return created
+
+
 def get_desk_by_qr_token(db: Session, qr_token: str) -> Optional[models.Desk]:
     return db.query(models.Desk).filter(models.Desk.qr_token == qr_token).first()
 
@@ -256,6 +286,7 @@ def check_availability(
         return schemas.AvailabilityResponse(
             available=False, reason="Desk is assigned to another employee."
         )
+    # Check desk-level overlap
     active = (
         db.query(models.Reservation)
         .filter(
@@ -331,11 +362,18 @@ def create_reservation(db: Session, payload: schemas.ReservationCreate) -> model
         raise ValueError("Desk is assigned to another employee.")
 
     # Enforce booking policy for the office this desk belongs to
+    # Office-specific policy takes precedence over global (office_id=NULL) fallback
     floor = db.query(models.Floor).filter(models.Floor.id == desk.floor_id).first()
     if floor is not None:
         policy = (
             db.query(models.Policy)
-            .filter(models.Policy.office_id == floor.office_id)
+            .filter(
+                or_(
+                    models.Policy.office_id == floor.office_id,
+                    models.Policy.office_id.is_(None),
+                )
+            )
+            .order_by(models.Policy.office_id.desc().nullslast())
             .first()
         )
         if policy is not None:
@@ -389,6 +427,25 @@ def create_reservation(db: Session, payload: schemas.ReservationCreate) -> model
             ):
                 raise ValueError("Desk already reserved for the requested time.")
 
+    # Check user-level overlap: prevent booking multiple desks at the same time
+    user_conflicts = (
+        db.query(models.Reservation)
+        .filter(
+            models.Reservation.user_id == payload.user_id,
+            models.Reservation.reservation_date == payload.reservation_date,
+            models.Reservation.status == "active",
+            models.Reservation.desk_id != payload.desk_id,
+        )
+        .with_for_update()
+        .all()
+    )
+    for res in user_conflicts:
+        if res.start_time and res.end_time and payload.start_time and payload.end_time:
+            if _time_overlaps(
+                payload.start_time, payload.end_time, res.start_time, res.end_time
+            ):
+                raise ValueError("Вы уже забронировали другое место на это время.")
+
     reservation = models.Reservation(
         desk_id=payload.desk_id,
         user_id=payload.user_id,
@@ -401,6 +458,52 @@ def create_reservation(db: Session, payload: schemas.ReservationCreate) -> model
     db.commit()
     db.refresh(reservation)
     return reservation
+
+
+def create_reservations_batch(
+    db: Session,
+    user_id: str,
+    payload: schemas.ReservationBatchCreate,
+) -> schemas.ReservationBatchResult:
+    """Attempt to create one reservation per date in payload.dates.
+
+    Each date is attempted in its own transaction so that failures on one date
+    do not roll back successful bookings on other dates.  Overlap conflicts
+    (ValueError from create_reservation) are silently collected in `skipped`;
+    any other unexpected errors are collected in `errors`.
+    """
+    created: list[models.Reservation] = []
+    skipped: list[date] = []
+    errors: list[str] = []
+
+    for reservation_date in payload.dates:
+        single = schemas.ReservationCreate(
+            desk_id=payload.desk_id,
+            user_id=user_id,
+            reservation_date=reservation_date,
+            start_time=payload.start_time,
+            end_time=payload.end_time,
+        )
+        try:
+            reservation = create_reservation(db, single)
+            created.append(reservation)
+        except ValueError:
+            # Conflict (overlap, policy violation, fixed-desk mismatch, etc.)
+            skipped.append(reservation_date)
+            # Roll back the failed transaction so the session is usable for the next iteration
+            db.rollback()
+        except KeyError as exc:
+            # Desk not found — not a per-date issue, propagate immediately
+            raise exc
+        except Exception as exc:
+            errors.append(f"{reservation_date}: {exc}")
+            db.rollback()
+
+    return schemas.ReservationBatchResult(
+        created=created,
+        skipped=skipped,
+        errors=errors,
+    )
 
 
 def cancel_reservation(db: Session, reservation_id: int) -> models.Reservation:
@@ -636,6 +739,39 @@ def get_user_by_email(db: Session, email: str) -> Optional[models.User]:
     return db.query(models.User).filter(models.User.email == email).first()
 
 
+def get_users(db: Session) -> list[models.User]:
+    return db.query(models.User).order_by(models.User.id).all()
+
+
+def get_team(db: Session, username: str) -> list[models.User]:
+    """Return users sharing the same non-null department as username, excluding self."""
+    user = db.query(models.User).filter_by(username=username).first()
+    if not user or not user.department:
+        return []
+    return (
+        db.query(models.User)
+        .filter(
+            models.User.department == user.department,
+            models.User.username != username,
+        )
+        .order_by(models.User.full_name)
+        .all()
+    )
+
+
+def update_user_profile(
+    db: Session, username: str, data: schemas.UserProfileUpdate
+) -> models.User:
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if user is None:
+        raise KeyError("user")
+    for key, value in data.model_dump(exclude_unset=True).items():
+        setattr(user, key, value)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def create_user(
     db: Session, username: str, email: str, hashed_password: str, role: str = "user"
 ) -> models.User:
@@ -649,3 +785,133 @@ def create_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+# ---------------------------------------------------------------------------
+# Favorites
+# ---------------------------------------------------------------------------
+
+def get_favorites(db: Session, username: str) -> list[models.Desk]:
+    rows = db.query(models.FavoriteDesk).filter_by(user_id=username).all()
+    desk_ids = [r.desk_id for r in rows]
+    if not desk_ids:
+        return []
+    return db.query(models.Desk).filter(models.Desk.id.in_(desk_ids)).all()
+
+
+def add_favorite(db: Session, username: str, desk_id: int) -> models.FavoriteDesk:
+    desk = db.query(models.Desk).filter_by(id=desk_id).first()
+    if not desk:
+        raise ValueError("desk_not_found")
+    existing = db.query(models.FavoriteDesk).filter_by(user_id=username, desk_id=desk_id).first()
+    if existing:
+        raise ValueError("already_favorite")
+    fav = models.FavoriteDesk(user_id=username, desk_id=desk_id)
+    db.add(fav)
+    db.commit()
+    db.refresh(fav)
+    return fav
+
+
+def remove_favorite(db: Session, username: str, desk_id: int) -> None:
+    fav = db.query(models.FavoriteDesk).filter_by(user_id=username, desk_id=desk_id).first()
+    if not fav:
+        raise ValueError("not_favorite")
+    db.delete(fav)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Departments
+# ---------------------------------------------------------------------------
+
+def list_departments(db: Session) -> list[models.Department]:
+    return db.query(models.Department).order_by(models.Department.name).all()
+
+
+def create_department(db: Session, name: str) -> models.Department:
+    existing = db.query(models.Department).filter(
+        models.Department.name.ilike(name.strip())
+    ).first()
+    if existing:
+        raise ValueError("already_exists")
+    dept = models.Department(name=name.strip())
+    db.add(dept)
+    db.commit()
+    db.refresh(dept)
+    return dept
+
+
+def delete_department(db: Session, dept_id: int) -> None:
+    dept = db.query(models.Department).filter_by(id=dept_id).first()
+    if not dept:
+        raise ValueError("not_found")
+    db.delete(dept)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# User search
+# ---------------------------------------------------------------------------
+
+def search_users(
+    db: Session,
+    q: str,
+    limit: int = 10,
+    date: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+) -> list[dict]:
+    pattern = f"%{q}%"
+    users = (
+        db.query(models.User)
+        .filter(
+            or_(
+                models.User.username.ilike(pattern),
+                models.User.full_name.ilike(pattern),
+                models.User.department.ilike(pattern),
+            )
+        )
+        .limit(limit)
+        .all()
+    )
+
+    result = []
+    for user in users:
+        location = None
+        if date:
+            q_resv = db.query(models.Reservation).filter(
+                models.Reservation.user_id == user.username,
+                models.Reservation.reservation_date == date,
+                models.Reservation.status == "active",
+            )
+            if start_time and end_time:
+                q_resv = q_resv.filter(
+                    models.Reservation.start_time < end_time,
+                    models.Reservation.end_time > start_time,
+                )
+            resv = q_resv.first()
+            if resv:
+                desk = db.query(models.Desk).filter_by(id=resv.desk_id).first()
+                if desk:
+                    floor = db.query(models.Floor).filter_by(id=desk.floor_id).first()
+                    office = db.query(models.Office).filter_by(id=floor.office_id).first() if floor else None
+                    location = {
+                        "desk_id": desk.id,
+                        "desk_label": desk.label,
+                        "floor_id": floor.id if floor else None,
+                        "floor_name": floor.name if floor else None,
+                        "office_id": office.id if office else None,
+                        "office_name": office.name if office else None,
+                    }
+        result.append({
+            "id": user.id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "department": user.department,
+            "position": user.position,
+            "phone": user.phone,
+            "user_status": user.user_status,
+            "location": location,
+        })
+    return result

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic_settings import BaseSettings
 
 
@@ -9,6 +11,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     FRONTEND_URL: str = "http://localhost:3000"
+    ADMIN_REGISTER_SECRET: Optional[str] = None
 
     class Config:
         env_file = ".env"

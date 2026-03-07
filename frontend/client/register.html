@@ -3,14 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Регистрация — Бронирование мест</title>
+  <title>Регистрация — DeskBook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="auth-page">
   <div class="auth-card">
-    <div class="logo">🗓️</div>
-    <h1>Бронирование мест</h1>
-    <p class="subtitle">Создайте аккаунт</p>
+    <div class="auth-logo">
+      <div class="auth-logo-icon">
+        <i data-lucide="calendar-days" style="width:22px;height:22px"></i>
+      </div>
+      <div class="auth-logo-text">
+        <h1>DeskBook</h1>
+        <p>Система бронирования мест</p>
+      </div>
+    </div>
+    <h2 class="auth-heading">Создать аккаунт</h2>
+    <p class="auth-sub">Заполните форму для регистрации</p>
     <form id="register-form" class="stack">
       <div class="field">
         <label for="username">Логин</label>
@@ -25,12 +36,15 @@
         <input id="password" type="password" placeholder="Минимум 6 символов" autocomplete="new-password" required minlength="6">
       </div>
       <div id="error-msg" class="error-msg hidden"></div>
-      <button type="submit" class="btn btn-primary btn-block">Зарегистрироваться</button>
+      <button type="submit" class="btn btn-primary btn-block" style="height:42px;font-size:15px">
+        <i data-lucide="user-plus" style="width:16px;height:16px"></i>
+        Зарегистрироваться
+      </button>
     </form>
-    <p class="auth-links">Уже есть аккаунт? <a href="./login.html">Войти</a></p>
+    <p class="auth-links">Уже есть аккаунт? <a href="./login.html">Войти →</a></p>
   </div>
   <script>
-  const API_BASE = "http://localhost:8000";
+  const API_BASE = "/api";
   const form = document.getElementById("register-form");
   const errorMsg = document.getElementById("error-msg");
 
@@ -71,6 +85,8 @@
       errorMsg.classList.remove("hidden");
     }
   });
+
+  if (window.lucide) lucide.createIcons();
   </script>
 </body>
 </html>

@@ -3,14 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Отметка о посещении</title>
+  <title>Отметка о посещении — DeskBook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="auth-page">
   <div class="auth-card">
-    <div class="logo">📍</div>
-    <h1 id="checkin-title">Отметка о посещении</h1>
-    <p class="subtitle" id="checkin-subtitle">Введите ваш логин, чтобы подтвердить занятие места.</p>
+    <div class="auth-logo">
+      <div class="auth-logo-icon">
+        <i data-lucide="map-pin" style="width:22px;height:22px"></i>
+      </div>
+      <div class="auth-logo-text">
+        <h1>DeskBook</h1>
+        <p>Система бронирования мест</p>
+      </div>
+    </div>
+    <h2 class="auth-heading" id="checkin-title">Отметка о посещении</h2>
+    <p class="auth-sub" id="checkin-subtitle">Введите ваш логин, чтобы подтвердить занятие места.</p>
 
     <div id="checkin-form-wrap" class="stack">
       <div class="field">
@@ -24,7 +35,10 @@
         >
       </div>
       <div id="checkin-error" class="error-msg hidden"></div>
-      <button id="checkin-submit" class="btn btn-primary btn-block">Отметиться</button>
+      <button id="checkin-submit" class="btn btn-primary btn-block" style="height:42px;font-size:15px">
+        <i data-lucide="check-circle" style="width:16px;height:16px"></i>
+        Отметиться
+      </button>
     </div>
 
     <div id="checkin-success" class="hidden">
@@ -47,7 +61,7 @@
   </div>
 
   <script>
-  const API_BASE = "http://localhost:8000";
+  const API_BASE = "/api";
 
   const params   = new URLSearchParams(window.location.search);
   const qrToken  = params.get("token");
@@ -61,7 +75,6 @@
   const successSection = document.getElementById("checkin-success");
   const invalidSection = document.getElementById("checkin-invalid");
 
-  // Pre-fill from localStorage if already logged in
   const storedUsername = localStorage.getItem("user_username");
   if (storedUsername) {
     usernameInput.value = storedUsername;
@@ -129,6 +142,8 @@
   usernameInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") doCheckin();
   });
+
+  if (window.lucide) lucide.createIcons();
   </script>
 </body>
 </html>

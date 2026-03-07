@@ -46,6 +46,26 @@ def _decode_token(token: str, db: Session) -> Optional[models.User]:
     return db.query(models.User).filter(models.User.username == username).first()
 
 
+def get_current_user(
+    token: Optional[str] = Depends(_oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> models.User:
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = _decode_token(token, db)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
+
+
 def require_admin(
     token: Optional[str] = Depends(_oauth2_scheme),
     db: Session = Depends(get_db),

@@ -11,13 +11,15 @@ from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
+from sqlalchemy import text
+
 from . import crud, models, schemas
-from .auth import get_password_hash, verify_password, create_access_token, require_admin
+from .auth import get_password_hash, verify_password, create_access_token, require_admin, get_current_user
 from .config import settings
 from .database import Base, engine, get_db, SessionLocal
 
@@ -30,6 +32,38 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 async def lifespan(app: FastAPI):
     # Import all models so they are registered with Base before create_all
     from . import models  # noqa: F401
+
+    # Startup migration: add profile columns to existing users table if they don't exist yet
+    _profile_migrations = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name   VARCHAR(255);",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS department  VARCHAR(120);",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS position    VARCHAR(120);",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone       VARCHAR(30);",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status VARCHAR(20) NOT NULL DEFAULT 'available';",
+        # Phase 5: replace zone with space_type on desks
+        "ALTER TABLE desks ADD COLUMN IF NOT EXISTS space_type VARCHAR(30) NOT NULL DEFAULT 'desk';",
+        "ALTER TABLE desks DROP COLUMN IF EXISTS zone;",
+        # Tile dimensions (normalized 0-1)
+        "ALTER TABLE desks ADD COLUMN IF NOT EXISTS w FLOAT NOT NULL DEFAULT 0.07;",
+        "ALTER TABLE desks ADD COLUMN IF NOT EXISTS h FLOAT NOT NULL DEFAULT 0.05;",
+    ]
+    try:
+        with engine.connect() as conn:
+            for stmt in _profile_migrations:
+                conn.execute(text(stmt))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS favorite_desks (
+                    id      SERIAL PRIMARY KEY,
+                    user_id VARCHAR(120) NOT NULL,
+                    desk_id INTEGER NOT NULL REFERENCES desks(id) ON DELETE CASCADE,
+                    CONSTRAINT uq_favorite_desk UNIQUE (user_id, desk_id)
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_favorite_desks_user_id ON favorite_desks(user_id)"))
+            conn.commit()
+    except Exception as _exc:
+        print(f"[startup migration] Warning: {_exc}")
+
     Base.metadata.create_all(bind=engine)
 
     scheduler = AsyncIOScheduler()
@@ -68,6 +102,16 @@ app.add_middleware(
 
 @app.post("/auth/register", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(payload: schemas.UserRegister, db: Session = Depends(get_db)) -> models.User:
+    # Block admin self-registration unless correct secret provided
+    if payload.role == "admin":
+        if (
+            not settings.ADMIN_REGISTER_SECRET
+            or payload.admin_secret != settings.ADMIN_REGISTER_SECRET
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Admin registration requires a valid admin_secret",
+            )
     if crud.get_user_by_username(db, payload.username):
         raise HTTPException(status_code=409, detail="Username already taken")
     if crud.get_user_by_email(db, payload.email):
@@ -95,6 +139,152 @@ async def login(
         )
     token = create_access_token({"sub": user.username, "role": user.role})
     return schemas.Token(access_token=token)
+
+
+# ---------------------------------------------------------------------------
+# Users (profiles)
+# ---------------------------------------------------------------------------
+
+@app.get("/users/search", response_model=list[schemas.UserWithLocation], tags=["users"])
+async def search_users(
+    q: str = Query(..., min_length=2, description="Поисковый запрос (мин. 2 символа)"),
+    limit: int = Query(10, ge=1, le=50),
+    date: Optional[str] = Query(None, description="Дата в формате YYYY-MM-DD"),
+    start_time: Optional[str] = Query(None, description="Начало в формате HH:MM"),
+    end_time: Optional[str] = Query(None, description="Конец в формате HH:MM"),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return crud.search_users(db, q, limit, date, start_time, end_time)
+
+
+@app.get("/users", response_model=list[schemas.UserPublic])
+async def list_users(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[models.User]:
+    return crud.get_users(db)
+
+
+# ---------------------------------------------------------------------------
+# Team  (registered BEFORE /users/{username} to avoid route capture)
+# ---------------------------------------------------------------------------
+
+@app.get("/users/team", response_model=list[schemas.UserPublic], tags=["users"])
+async def get_team(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[models.User]:
+    return crud.get_team(db, current_user.username)
+
+
+# ---------------------------------------------------------------------------
+# Favorites  (registered BEFORE /users/{username} to avoid route capture)
+# ---------------------------------------------------------------------------
+
+@app.get("/users/me/favorites", response_model=list[schemas.Desk], tags=["favorites"])
+async def list_favorites(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[models.Desk]:
+    return crud.get_favorites(db, current_user.username)
+
+
+@app.post("/users/me/favorites/{desk_id}", status_code=201, tags=["favorites"])
+async def add_favorite(
+    desk_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        crud.add_favorite(db, current_user.username, desk_id)
+        return {"desk_id": desk_id}
+    except ValueError as e:
+        err = str(e)
+        if err == "desk_not_found":
+            raise HTTPException(404, "Стол не найден")
+        raise HTTPException(409, "Уже в избранном")
+
+
+@app.delete("/users/me/favorites/{desk_id}", status_code=204, response_class=Response, tags=["favorites"])
+async def remove_favorite(
+    desk_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    try:
+        crud.remove_favorite(db, current_user.username, desk_id)
+    except ValueError:
+        raise HTTPException(404, "Не найдено в избранном")
+    return Response(status_code=204)
+
+
+@app.get("/users/{username}", response_model=schemas.UserPublic)
+async def get_user(
+    username: str,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> models.User:
+    user = crud.get_user_by_username(db, username)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@app.patch("/users/{username}/profile", response_model=schemas.UserPublic)
+async def update_user_profile(
+    username: str,
+    payload: schemas.UserProfileUpdate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> models.User:
+    if current_user.role != "admin" and current_user.username != username:
+        raise HTTPException(status_code=403, detail="You can only edit your own profile")
+    try:
+        return crud.update_user_profile(db, username, payload)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+# ---------------------------------------------------------------------------
+# Departments
+# ---------------------------------------------------------------------------
+
+@app.get("/departments", response_model=list[schemas.Department], tags=["departments"])
+async def list_departments(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return crud.list_departments(db)
+
+
+@app.post("/departments", response_model=schemas.Department, status_code=201, tags=["departments"])
+async def create_department(
+    payload: schemas.DepartmentCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "admin":
+        raise HTTPException(403, "Только для администраторов")
+    try:
+        return crud.create_department(db, payload.name)
+    except ValueError:
+        raise HTTPException(409, "Отдел с таким названием уже существует")
+
+
+@app.delete("/departments/{dept_id}", status_code=204, response_class=Response, tags=["departments"])
+async def delete_department(
+    dept_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "admin":
+        raise HTTPException(403, "Только для администраторов")
+    try:
+        crud.delete_department(db, dept_id)
+    except ValueError:
+        raise HTTPException(404, "Отдел не найден")
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
@@ -227,11 +417,56 @@ async def upload_floor_plan(
     destination = STATIC_DIR / filename
     with destination.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    plan_url = f"{request.base_url}static/{filename}"
+    plan_url = f"/api/static/{filename}"
     try:
         return crud.update_floor(db, floor_id, schemas.FloorUpdate(plan_url=plan_url))
     except KeyError:
         raise HTTPException(status_code=404, detail="Floor not found")
+
+
+@app.post(
+    "/floors/{floor_id}/desks-from-map",
+    response_model=list[schemas.Desk],
+    dependencies=[Depends(require_admin)],
+)
+async def create_desks_from_map(
+    floor_id: int,
+    payload: list[schemas.DeskFromMap],
+    db: Session = Depends(get_db),
+) -> list[models.Desk]:
+    if not payload:
+        raise HTTPException(status_code=400, detail="Desk list cannot be empty")
+    try:
+        return crud.create_desks_from_map(db, floor_id, payload)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Floor not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Floor reservations (floor map view — all active bookings for a floor)
+# ---------------------------------------------------------------------------
+
+@app.get("/floors/{floor_id}/reservations", response_model=list[schemas.Reservation])
+async def list_floor_reservations(
+    floor_id: int,
+    date: Optional[date] = Query(default=None),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[models.Reservation]:
+    """All active reservations for a floor on a given date. JWT required (any role)."""
+    desks = db.query(models.Desk).filter(models.Desk.floor_id == floor_id).all()
+    desk_ids = {d.id for d in desks}
+    if not desk_ids:
+        return []
+    q = db.query(models.Reservation).filter(
+        models.Reservation.desk_id.in_(desk_ids),
+        models.Reservation.status == "active",
+    )
+    if date:
+        q = q.filter(models.Reservation.reservation_date == date)
+    return q.all()
 
 
 # ---------------------------------------------------------------------------
@@ -243,23 +478,6 @@ async def list_desks(
     floor_id: Optional[int] = Query(default=None), db: Session = Depends(get_db)
 ) -> list[models.Desk]:
     return crud.list_desks(db, floor_id)
-
-
-@app.post(
-    "/desks",
-    response_model=schemas.Desk,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
-)
-async def create_desk(
-    payload: schemas.DeskCreate, db: Session = Depends(get_db)
-) -> models.Desk:
-    try:
-        return crud.create_desk(db, payload)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Floor not found")
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @app.patch(
@@ -366,8 +584,12 @@ async def list_reservations(
     date_to: Optional[date] = Query(default=None),
     office_id: Optional[int] = Query(default=None),
     status: Optional[str] = Query(default=None),
+    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[models.Reservation]:
+    # Regular users can only see their own reservations
+    if current_user.role != "admin":
+        user_id = current_user.username
     return crud.list_reservations(
         db, desk_id, reservation_date, user_id, date_from, date_to, office_id, status
     )
@@ -375,8 +597,12 @@ async def list_reservations(
 
 @app.post("/reservations", response_model=schemas.Reservation, status_code=status.HTTP_201_CREATED)
 async def create_reservation(
-    payload: schemas.ReservationCreate, db: Session = Depends(get_db)
+    payload: schemas.ReservationCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> models.Reservation:
+    # Force user_id from JWT — do not trust the request body
+    payload.user_id = current_user.username
     if payload.start_time >= payload.end_time:
         raise HTTPException(status_code=400, detail="Start time must be before end time")
     try:
@@ -387,14 +613,56 @@ async def create_reservation(
         raise HTTPException(status_code=409, detail=str(exc))
 
 
+@app.post("/reservations/batch", response_model=schemas.ReservationBatchResult)
+async def create_reservations_batch(
+    payload: schemas.ReservationBatchCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> schemas.ReservationBatchResult:
+    """Create recurring/batch reservations for multiple dates in one request.
+
+    Each date is attempted independently — conflicts on individual dates are
+    collected in `skipped` rather than failing the whole request.  Returns
+    HTTP 409 only when every requested date was skipped or errored.
+    """
+    if payload.start_time >= payload.end_time:
+        raise HTTPException(status_code=400, detail="Start time must be before end time")
+    try:
+        result = crud.create_reservations_batch(db, current_user.username, payload)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Desk not found")
+    # If nothing was created at all, signal a conflict
+    if not result.created:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "No reservations could be created",
+                "skipped": [str(d) for d in result.skipped],
+                "errors": result.errors,
+            },
+        )
+    return result
+
+
 @app.post("/reservations/{reservation_id}/cancel", response_model=schemas.Reservation)
 async def cancel_reservation(
-    reservation_id: int, db: Session = Depends(get_db)
+    reservation_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> models.Reservation:
-    try:
-        return crud.cancel_reservation(db, reservation_id)
-    except KeyError:
+    reservation = db.query(models.Reservation).filter(
+        models.Reservation.id == reservation_id
+    ).first()
+    if reservation is None:
         raise HTTPException(status_code=404, detail="Reservation not found")
+    if current_user.role != "admin" and reservation.user_id != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only cancel your own reservations")
+    if reservation.status == "cancelled":
+        raise HTTPException(status_code=409, detail="Reservation is already cancelled")
+    reservation.status = "cancelled"
+    db.commit()
+    db.refresh(reservation)
+    return reservation
 
 
 # ---------------------------------------------------------------------------

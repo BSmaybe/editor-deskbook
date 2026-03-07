@@ -1,4 +1,20 @@
-const API_BASE = "http://localhost:8000";
+const API_BASE = "/api";
+
+const SPACE_LABELS = {
+  desk: "Рабочий стол",
+  meeting_room: "Переговорная",
+  call_room: "Call-room",
+  open_space: "Open Space",
+  lounge: "Лаунж",
+};
+
+const SPACE_COLORS = {
+  desk:         "#2563eb",
+  meeting_room: "#7c3aed",
+  call_room:    "#0891b2",
+  open_space:   "#16a34a",
+  lounge:       "#d97706",
+};
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const loginOverlay     = document.getElementById("login-overlay");
@@ -6,7 +22,6 @@ const loginError       = document.getElementById("login-error");
 const adminApp         = document.getElementById("admin-app");
 const sidebarUsername  = document.getElementById("sidebar-username");
 const logoutBtn        = document.getElementById("logout-btn");
-const messages         = document.getElementById("messages");
 
 // Tables
 const officesBody      = document.getElementById("offices-body");
@@ -24,13 +39,6 @@ const floorOfficeSelect = document.getElementById("floor-office-select");
 const floorName         = document.getElementById("floor-name");
 const planFloorSelect   = document.getElementById("plan-floor-select");
 const planFile          = document.getElementById("plan-file");
-
-// Desk form
-const deskFloorSelect = document.getElementById("desk-floor-select");
-const deskLabel       = document.getElementById("desk-label");
-const deskType        = document.getElementById("desk-type");
-const deskZone        = document.getElementById("desk-zone");
-const deskAssigned    = document.getElementById("desk-assigned");
 
 // Policy form
 const policyOfficeSelect = document.getElementById("policy-office-select");
@@ -71,6 +79,7 @@ function showAdminUI(username) {
   loginOverlay.classList.add("hidden");
   adminApp.classList.remove("hidden");
   sidebarUsername.textContent = username;
+  if (window.lucide) lucide.createIcons();
 }
 
 function showLoginOverlay() {
@@ -78,16 +87,27 @@ function showLoginOverlay() {
   adminApp.classList.add("hidden");
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function addMessage(text, type) {
+// ── Toast notifications ───────────────────────────────────────────────────────
+function showToast(text, type) {
   type = type || "info";
-  const item = document.createElement("div");
-  item.className = "message " + type;
+  var container = document.getElementById("admin-toast");
+  if (!container) return;
+  var item = document.createElement("div");
+  item.className = "admin-toast-item " + type;
   item.textContent = text;
-  messages.prepend(item);
-  setTimeout(function () { item.remove(); }, 6000);
+  container.prepend(item);
+  requestAnimationFrame(function () { item.classList.add("visible"); });
+  var duration = type === "error" ? 7000 : 3500;
+  setTimeout(function () {
+    item.classList.remove("visible");
+    setTimeout(function () { item.remove(); }, 300);
+  }, duration);
 }
 
+// Backwards compat alias
+function addMessage(text, type) { showToast(text, type); }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 async function apiRequest(path, options) {
   options = options || {};
   const token = getToken();
@@ -118,10 +138,10 @@ function makeCancelBtn(reservationId) {
     if (!confirm("Отменить это бронирование?")) return;
     try {
       await apiRequest("/reservations/" + reservationId + "/cancel", { method: "POST" });
-      addMessage("Бронирование отменено.", "success");
+      showToast("Бронирование отменено.", "success");
       await loadReservations();
     } catch (e) {
-      addMessage("Ошибка: " + e.message, "error");
+      showToast("Ошибка: " + e.message, "error");
     }
   });
 }
@@ -131,7 +151,7 @@ async function checkApi() {
   try {
     await apiRequest("/health");
   } catch {
-    addMessage("API недоступно. Запустите backend на http://localhost:8000.", "error");
+    showToast("API недоступно. Убедитесь, что backend запущен.", "error");
   }
 }
 
@@ -141,7 +161,7 @@ async function loadOffices() {
     renderOfficesTable();
     populateOfficeSelects();
   } catch (e) {
-    addMessage("Не удалось загрузить офисы: " + e.message, "error");
+    showToast("Не удалось загрузить офисы: " + e.message, "error");
   }
 }
 
@@ -151,7 +171,7 @@ async function loadFloors() {
     renderFloorsTable();
     populateFloorSelects();
   } catch (e) {
-    addMessage("Не удалось загрузить этажи: " + e.message, "error");
+    showToast("Не удалось загрузить этажи: " + e.message, "error");
   }
 }
 
@@ -160,7 +180,7 @@ async function loadDesks() {
     state.desks = await apiRequest("/desks");
     renderDesksTable();
   } catch (e) {
-    addMessage("Не удалось загрузить рабочие места: " + e.message, "error");
+    showToast("Не удалось загрузить рабочие места: " + e.message, "error");
   }
 }
 
@@ -169,7 +189,7 @@ async function loadPolicies() {
     state.policies = await apiRequest("/policies");
     renderPoliciesTable();
   } catch (e) {
-    addMessage("Не удалось загрузить политики: " + e.message, "error");
+    showToast("Не удалось загрузить политики: " + e.message, "error");
   }
 }
 
@@ -192,7 +212,7 @@ async function loadReservations() {
     state.reservations = await apiRequest("/reservations" + (query ? "?" + query : ""));
     renderReservationsTable();
   } catch (e) {
-    addMessage("Не удалось загрузить бронирования: " + e.message, "error");
+    showToast("Не удалось загрузить бронирования: " + e.message, "error");
   }
 }
 
@@ -205,7 +225,6 @@ async function loadAnalytics() {
     document.getElementById("kpi-cancelled").textContent = data.total_cancelled;
     document.getElementById("kpi-noshow").textContent    = data.noshow_rate + "%";
 
-    // Occupancy bars
     const occupancyEl = document.getElementById("occupancy-list");
     occupancyEl.innerHTML = "";
     if (!data.occupancy_by_office || !data.occupancy_by_office.length) {
@@ -227,30 +246,28 @@ async function loadAnalytics() {
       });
     }
 
-    // Top desks
-    const desksBody = document.getElementById("top-desks-body");
-    desksBody.innerHTML = (data.top_desks && data.top_desks.length)
+    const topDesksBody = document.getElementById("top-desks-body");
+    topDesksBody.innerHTML = (data.top_desks && data.top_desks.length)
       ? data.top_desks.map(function (d) {
           return "<tr><td>" + d.label + "</td><td>" + d.floor_name + "</td><td>" + d.office_name + "</td><td><strong>" + d.total + "</strong></td></tr>";
         }).join("")
       : '<tr><td colspan="4" class="empty">Нет данных</td></tr>';
 
-    // Top users
-    const usersBody = document.getElementById("top-users-body");
-    usersBody.innerHTML = (data.top_users && data.top_users.length)
+    const topUsersBody = document.getElementById("top-users-body");
+    topUsersBody.innerHTML = (data.top_users && data.top_users.length)
       ? data.top_users.map(function (u) {
           return "<tr><td>" + u.user_id + "</td><td><strong>" + u.total + "</strong></td></tr>";
         }).join("")
       : '<tr><td colspan="2" class="empty">Нет данных</td></tr>';
 
   } catch (e) {
-    addMessage("Аналитика: " + e.message, "error");
+    showToast("Аналитика: " + e.message, "error");
   }
 }
 
 async function loadAll() {
   await loadOffices();
-  await Promise.all([loadFloors(), loadPolicies(), loadReservations()]);
+  await Promise.all([loadFloors(), loadPolicies(), loadReservations(), loadDepartments()]);
   await loadDesks();
   await loadAnalytics();
 }
@@ -281,10 +298,10 @@ function renderOfficesTable() {
         if (!confirm("Удалить офис «" + o.name + "»?")) return;
         try {
           await apiRequest("/offices/" + o.id, { method: "DELETE" });
-          addMessage("Офис «" + o.name + "» удалён.", "success");
+          showToast("Офис «" + o.name + "» удалён.", "success");
           await loadAll();
         } catch (e) {
-          addMessage("Ошибка: " + e.message, "error");
+          showToast("Ошибка: " + e.message, "error");
         }
       })
     );
@@ -309,10 +326,10 @@ function renderFloorsTable() {
         if (!confirm("Удалить этаж «" + f.name + "»?")) return;
         try {
           await apiRequest("/floors/" + f.id, { method: "DELETE" });
-          addMessage("Этаж «" + f.name + "» удалён.", "success");
+          showToast("Этаж «" + f.name + "» удалён.", "success");
           await loadAll();
         } catch (e) {
-          addMessage("Ошибка: " + e.message, "error");
+          showToast("Ошибка: " + e.message, "error");
         }
       })
     );
@@ -321,6 +338,7 @@ function renderFloorsTable() {
 }
 
 function renderDesksTable() {
+  if (!desksBody) return;
   desksBody.innerHTML = "";
   if (!state.desks.length) {
     desksBody.innerHTML = '<tr><td colspan="7" class="empty">Нет рабочих мест.</td></tr>';
@@ -333,7 +351,7 @@ function renderDesksTable() {
       "<td>" + getFloorName(d.floor_id) + "</td>" +
       "<td>" + d.label + "</td>" +
       "<td>" + (d.type === "fixed" ? "Закреплённое" : "Гибкое") + "</td>" +
-      "<td>" + (d.zone || "—") + "</td>" +
+      "<td>" + (SPACE_LABELS[d.space_type] || d.space_type || "—") + "</td>" +
       "<td>" + (d.assigned_to || "—") + "</td>" +
       "<td></td>"
     );
@@ -341,7 +359,6 @@ function renderDesksTable() {
     var btnRow = document.createElement("div");
     btnRow.className = "btn-row";
 
-    // QR button
     var qrBtn = document.createElement("button");
     qrBtn.className = "btn btn-secondary btn-sm";
     qrBtn.textContent = "QR";
@@ -354,13 +371,13 @@ function renderDesksTable() {
         });
         if (!resp.ok) {
           var body = await resp.json().catch(function () { return {}; });
-          addMessage("Не удалось получить QR: " + (body.detail || resp.status), "error");
+          showToast("Не удалось получить QR: " + (body.detail || resp.status), "error");
           return;
         }
         var blob = await resp.blob();
         window.open(URL.createObjectURL(blob), "_blank", "noopener");
       } catch (e) {
-        addMessage("Ошибка при загрузке QR: " + e.message, "error");
+        showToast("Ошибка при загрузке QR: " + e.message, "error");
       }
     });
 
@@ -368,10 +385,10 @@ function renderDesksTable() {
       if (!confirm("Удалить место «" + d.label + "»?")) return;
       try {
         await apiRequest("/desks/" + d.id, { method: "DELETE" });
-        addMessage("Место «" + d.label + "» удалено.", "success");
+        showToast("Место «" + d.label + "» удалено.", "success");
         await loadDesks();
       } catch (e) {
-        addMessage("Ошибка: " + e.message, "error");
+        showToast("Ошибка: " + e.message, "error");
       }
     });
 
@@ -403,10 +420,10 @@ function renderPoliciesTable() {
         if (!confirm("Удалить политику «" + p.name + "»?")) return;
         try {
           await apiRequest("/policies/" + p.id, { method: "DELETE" });
-          addMessage("Политика «" + p.name + "» удалена.", "success");
+          showToast("Политика «" + p.name + "» удалена.", "success");
           await loadPolicies();
         } catch (e) {
-          addMessage("Ошибка: " + e.message, "error");
+          showToast("Ошибка: " + e.message, "error");
         }
       })
     );
@@ -448,7 +465,6 @@ function populateOfficeSelects() {
   [floorOfficeSelect, policyOfficeSelect, document.getElementById("filter-office")].forEach(function (sel) {
     if (!sel) return;
     var val = sel.value;
-    // Preserve the first placeholder option text per select
     var placeholder = sel === document.getElementById("filter-office") ? "Все офисы" : "Выберите офис";
     sel.innerHTML = '<option value="">' + placeholder + '</option>';
     state.offices.forEach(function (o) {
@@ -462,7 +478,7 @@ function populateOfficeSelects() {
 }
 
 function populateFloorSelects() {
-  [deskFloorSelect, planFloorSelect, document.getElementById("placement-floor-select")].forEach(function (sel) {
+  [planFloorSelect, document.getElementById("placement-floor-select")].forEach(function (sel) {
     if (!sel) return;
     var val = sel.value;
     sel.innerHTML = '<option value="">Выберите этаж</option>';
@@ -477,12 +493,434 @@ function populateFloorSelects() {
 }
 
 // ── Placement editor ──────────────────────────────────────────────────────────
-var selectedDeskForPlacement = null;
+var pendingDesks     = [];
+var placementFloorId = null;
+var _selectedIdx     = null;
+var _placementMode   = "select"; // "select" | "desk" | "room"
+
+var TILE_W  = { desk: 0.03, room: 0.08 };
+var TILE_H  = { desk: 0.02, room: 0.05 };
+var MIN_W   = 0.01, MAX_W = 0.30;
+var MIN_H   = 0.01, MAX_H = 0.30;
+var ANCHOR_R = 6; // SVG units for desk anchor radius
+
+function isBlockType(spaceType) {
+  return spaceType === "meeting_room" || spaceType === "call_room" ||
+         spaceType === "open_space"   || spaceType === "lounge";
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// ── Desk anchor (small dot, center = position_x + w/2, position_y + h/2) ────
+function createAnchor(d, idx, img) {
+  var ns    = "http://www.w3.org/2000/svg";
+  var dw    = d.w || TILE_W.desk;
+  var dh    = d.h || TILE_H.desk;
+  var acx   = (d.position_x + dw / 2) * 1000;
+  var acy   = (d.position_y + dh / 2) * 1000;
+  var isSel = idx === _selectedIdx;
+
+  var g = document.createElementNS(ns, "g");
+  g.classList.add("placement-anchor");
+  if (isSel) g.classList.add("selected");
+
+  var ring = null, previewRect = null;
+  if (isSel) {
+    // Dashed ring around dot
+    ring = document.createElementNS(ns, "circle");
+    ring.setAttribute("cx", String(acx));
+    ring.setAttribute("cy", String(acy));
+    ring.setAttribute("r",  String(ANCHOR_R + 7));
+    ring.setAttribute("fill",             "none");
+    ring.setAttribute("stroke",           "#3b82f6");
+    ring.setAttribute("stroke-width",     "3");
+    ring.setAttribute("stroke-dasharray", "5 3");
+    ring.setAttribute("pointer-events",   "none");
+    g.appendChild(ring);
+
+    // Dashed preview of client tile size
+    previewRect = document.createElementNS(ns, "rect");
+    previewRect.setAttribute("x",               String(d.position_x * 1000));
+    previewRect.setAttribute("y",               String(d.position_y * 1000));
+    previewRect.setAttribute("width",           String(dw * 1000));
+    previewRect.setAttribute("height",          String(dh * 1000));
+    previewRect.setAttribute("rx",              "5");
+    previewRect.setAttribute("fill",            "none");
+    previewRect.setAttribute("stroke",          "#3b82f6");
+    previewRect.setAttribute("stroke-width",    "2");
+    previewRect.setAttribute("stroke-dasharray","6 4");
+    previewRect.setAttribute("opacity",         "0.45");
+    previewRect.setAttribute("pointer-events",  "none");
+    g.appendChild(previewRect);
+  }
+
+  // Anchor dot
+  var dot = document.createElementNS(ns, "circle");
+  dot.setAttribute("cx",           String(acx));
+  dot.setAttribute("cy",           String(acy));
+  dot.setAttribute("r",            String(ANCHOR_R));
+  dot.setAttribute("fill",         SPACE_COLORS["desk"] || "#2563eb");
+  dot.setAttribute("stroke",       "white");
+  dot.setAttribute("stroke-width", "4");
+  g.appendChild(dot);
+
+  // Drag: separate click-select from drag so renderMarkers() doesn't kill pointer capture
+  var _anchorMoved = false;
+  g.addEventListener("pointerdown", function (e) {
+    e.stopPropagation();
+    e.preventDefault();
+    _anchorMoved = false;
+    g.setPointerCapture(e.pointerId);
+    // Do NOT call selectDesk here — it triggers renderMarkers() which destroys this element
+  });
+
+  g.addEventListener("pointermove", function (e) {
+    if (!g.hasPointerCapture(e.pointerId)) return;
+    _anchorMoved = true;
+    var ir  = img.getBoundingClientRect();
+    var mx  = Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width));
+    var my  = Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height));
+    var cdw = pendingDesks[idx].w || TILE_W.desk;
+    var cdh = pendingDesks[idx].h || TILE_H.desk;
+    var nx  = Math.round(Math.max(0, Math.min(1 - cdw, mx - cdw / 2)) * 1000) / 1000;
+    var ny  = Math.round(Math.max(0, Math.min(1 - cdh, my - cdh / 2)) * 1000) / 1000;
+    pendingDesks[idx].position_x = nx;
+    pendingDesks[idx].position_y = ny;
+    var nacx = (nx + cdw / 2) * 1000;
+    var nacy = (ny + cdh / 2) * 1000;
+    dot.setAttribute("cx", String(nacx));
+    dot.setAttribute("cy", String(nacy));
+    if (ring)        { ring.setAttribute("cx", String(nacx)); ring.setAttribute("cy", String(nacy)); }
+    if (previewRect) { previewRect.setAttribute("x", String(nx * 1000)); previewRect.setAttribute("y", String(ny * 1000)); }
+  });
+
+  g.addEventListener("pointerup", function (e) {
+    if (!g.hasPointerCapture(e.pointerId)) return;
+    if (_anchorMoved) {
+      // Drag ended: commit selection and re-render to sync selection visuals
+      _selectedIdx = idx;
+      renderMarkers();
+      updatePropertiesPanel();
+    } else {
+      // Simple click: toggle selection
+      selectDesk(idx);
+    }
+  });
+
+  return g;
+}
+
+// ── Room / large-space block (rect with resize handle) ────────────────────
+function createBlock(d, idx, img) {
+  var ns    = "http://www.w3.org/2000/svg";
+  var tileW = (d.w || TILE_W.room) * 1000;
+  var tileH = (d.h || TILE_H.room) * 1000;
+  var tx    = d.position_x * 1000;
+  var ty    = d.position_y * 1000;
+  var isSel = idx === _selectedIdx;
+
+  var g = document.createElementNS(ns, "g");
+  g.classList.add("placement-block");
+  if (isSel) g.classList.add("selected");
+
+  var rect = document.createElementNS(ns, "rect");
+  rect.setAttribute("x",            String(tx));
+  rect.setAttribute("y",            String(ty));
+  rect.setAttribute("width",        String(tileW));
+  rect.setAttribute("height",       String(tileH));
+  rect.setAttribute("rx",           "8");
+  rect.setAttribute("fill",         SPACE_COLORS[d.space_type] || "#7c3aed");
+  rect.setAttribute("fill-opacity", "0.7");
+  rect.setAttribute("stroke",       "white");
+  rect.setAttribute("stroke-width", "4");
+  g.appendChild(rect);
+
+  var outline = null;
+  if (isSel) {
+    outline = document.createElementNS(ns, "rect");
+    outline.setAttribute("x",               String(tx - 4));
+    outline.setAttribute("y",               String(ty - 4));
+    outline.setAttribute("width",           String(tileW + 8));
+    outline.setAttribute("height",          String(tileH + 8));
+    outline.setAttribute("rx",              "10");
+    outline.setAttribute("fill",            "none");
+    outline.setAttribute("stroke",          "#3b82f6");
+    outline.setAttribute("stroke-width",    "3");
+    outline.setAttribute("stroke-dasharray","8 4");
+    outline.setAttribute("pointer-events",  "none");
+    g.appendChild(outline);
+  }
+
+  // Drag (move block) — same click-vs-drag split as anchor
+  var _blockMoved = false;
+  g.addEventListener("pointerdown", function (e) {
+    e.stopPropagation();
+    e.preventDefault();
+    _blockMoved = false;
+    g.setPointerCapture(e.pointerId);
+  });
+
+  g.addEventListener("pointermove", function (e) {
+    if (!g.hasPointerCapture(e.pointerId)) return;
+    _blockMoved = true;
+    var ir = img.getBoundingClientRect();
+    var x  = Math.round(Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width))  * 1000) / 1000;
+    var y  = Math.round(Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height)) * 1000) / 1000;
+    pendingDesks[idx].position_x = x;
+    pendingDesks[idx].position_y = y;
+    rect.setAttribute("x", String(x * 1000));
+    rect.setAttribute("y", String(y * 1000));
+    if (outline) {
+      outline.setAttribute("x", String(x * 1000 - 4));
+      outline.setAttribute("y", String(y * 1000 - 4));
+    }
+    _repositionHandle(handle, x * 1000, y * 1000,
+      (pendingDesks[idx].w || TILE_W.room) * 1000,
+      (pendingDesks[idx].h || TILE_H.room) * 1000);
+  });
+
+  g.addEventListener("pointerup", function (e) {
+    if (!g.hasPointerCapture(e.pointerId)) return;
+    if (_blockMoved) {
+      _selectedIdx = idx;
+      renderMarkers();
+      updatePropertiesPanel();
+    } else {
+      selectDesk(idx);
+    }
+  });
+
+  // Resize handle (only for selected blocks)
+  var handle = null;
+  if (isSel) {
+    handle = document.createElementNS(ns, "rect");
+    handle.classList.add("resize-handle");
+    _repositionHandle(handle, tx, ty, tileW, tileH);
+    handle.setAttribute("rx",           "3");
+    handle.setAttribute("fill",         "#3b82f6");
+    handle.setAttribute("stroke",       "white");
+    handle.setAttribute("stroke-width", "3");
+
+    handle.addEventListener("pointerdown", function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+    });
+
+    handle.addEventListener("pointermove", function (e) {
+      if (!handle.hasPointerCapture(e.pointerId)) return;
+      var ir     = img.getBoundingClientRect();
+      var mouseX = Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width));
+      var mouseY = Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height));
+      var newW   = Math.round(Math.max(MIN_W, Math.min(MAX_W, mouseX - pendingDesks[idx].position_x)) * 1000) / 1000;
+      var newH   = Math.round(Math.max(MIN_H, Math.min(MAX_H, mouseY - pendingDesks[idx].position_y)) * 1000) / 1000;
+      pendingDesks[idx].w = newW;
+      pendingDesks[idx].h = newH;
+      var newTW = newW * 1000, newTH = newH * 1000;
+      rect.setAttribute("width",  String(newTW));
+      rect.setAttribute("height", String(newTH));
+      if (outline) { outline.setAttribute("width", String(newTW + 8)); outline.setAttribute("height", String(newTH + 8)); }
+      _repositionHandle(handle, pendingDesks[idx].position_x * 1000, pendingDesks[idx].position_y * 1000, newTW, newTH);
+      var wIn = document.getElementById("prop-w");
+      var hIn = document.getElementById("prop-h");
+      if (wIn) wIn.value = newW;
+      if (hIn) hIn.value = newH;
+    });
+
+    g.appendChild(handle);
+  }
+
+  return g;
+}
+
+// Helper: reposition resize handle to bottom-right corner of a block
+function _repositionHandle(handle, tx, ty, tileW, tileH) {
+  if (!handle) return;
+  var HS = 16;
+  handle.setAttribute("x",      String(tx + tileW - HS / 2));
+  handle.setAttribute("y",      String(ty + tileH - HS / 2));
+  handle.setAttribute("width",  String(HS));
+  handle.setAttribute("height", String(HS));
+}
+
+// Highlight selected tile and scroll list row into view
+function selectDesk(idx) {
+  _selectedIdx = idx;
+  renderMarkers();
+  updatePropertiesPanel();
+
+  var listEl = document.getElementById("desk-list-editor");
+  listEl.querySelectorAll(".desk-row").forEach(function (r, j) {
+    r.classList.toggle("selected", j === idx);
+  });
+  var row = listEl.querySelectorAll(".desk-row")[idx];
+  if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function updatePropertiesPanel() {
+  var emptyEl = document.getElementById("tile-properties-empty");
+  var formEl  = document.getElementById("tile-properties-form");
+  if (!emptyEl || !formEl) return;
+
+  if (_selectedIdx === null || !pendingDesks[_selectedIdx]) {
+    emptyEl.style.display = "";
+    formEl.style.display  = "none";
+    return;
+  }
+
+  var d = pendingDesks[_selectedIdx];
+  emptyEl.style.display = "none";
+  formEl.style.display  = "";
+
+  document.getElementById("prop-label").value     = d.label || "";
+  document.getElementById("prop-space").value     = d.space_type || "desk";
+  document.getElementById("prop-desk-type").value = d.type || "flex";
+  document.getElementById("prop-w").value         = d.w || TILE_W.desk;
+  document.getElementById("prop-h").value         = d.h || TILE_H.desk;
+}
+
+function setPlacementMode(mode) {
+  _placementMode = mode;
+  var overlay = document.getElementById("placement-overlay");
+  var isAdd   = mode === "desk" || mode === "room";
+  if (overlay) overlay.style.cursor = isAdd ? "crosshair" : "default";
+  document.querySelectorAll(".placement-mode-btn").forEach(function (btn) {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+  renderMarkers();
+}
 
 function initPlacementEditor() {
   var floorSel = document.getElementById("placement-floor-select");
+  var overlay  = document.getElementById("placement-overlay");
+  var img      = document.getElementById("placement-plan-img");
+
+  // Mode toolbar
+  document.querySelectorAll(".placement-mode-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () { setPlacementMode(btn.dataset.mode); });
+  });
+
   floorSel.addEventListener("change", function () {
-    loadPlacementFloor(floorSel.value);
+    placementFloorId = floorSel.value || null;
+    loadPlacementFloor(placementFloorId);
+  });
+
+  document.getElementById("save-map-btn").addEventListener("click", saveMapDesks);
+  document.getElementById("clear-map-btn").addEventListener("click", function () {
+    if (!confirm("Очистить все плитки с плана этажа?")) return;
+    pendingDesks = [];
+    _selectedIdx = null;
+    renderPlacementEditor();
+    updatePropertiesPanel();
+  });
+
+  // Properties panel event listeners
+  document.getElementById("prop-label").addEventListener("input", function () {
+    if (_selectedIdx === null) return;
+    pendingDesks[_selectedIdx].label = this.value;
+    renderMarkers();
+    // Also update the matching list row label
+    var rows = document.getElementById("desk-list-editor").querySelectorAll(".desk-input-label");
+    if (rows[_selectedIdx]) rows[_selectedIdx].value = this.value;
+  });
+
+  document.getElementById("prop-space").addEventListener("change", function () {
+    if (_selectedIdx === null) return;
+    pendingDesks[_selectedIdx].space_type = this.value;
+    renderMarkers();
+    var rows = document.getElementById("desk-list-editor").querySelectorAll(".desk-select-space");
+    if (rows[_selectedIdx]) rows[_selectedIdx].value = this.value;
+  });
+
+  document.getElementById("prop-desk-type").addEventListener("change", function () {
+    if (_selectedIdx === null) return;
+    pendingDesks[_selectedIdx].type = this.value;
+    var rows = document.getElementById("desk-list-editor").querySelectorAll(".desk-select");
+    if (rows[_selectedIdx]) rows[_selectedIdx].value = this.value;
+  });
+
+  document.getElementById("prop-w").addEventListener("input", function () {
+    if (_selectedIdx === null) return;
+    var v = Math.max(MIN_W, Math.min(MAX_W, parseFloat(this.value) || MIN_W));
+    pendingDesks[_selectedIdx].w = v;
+    renderMarkers();
+  });
+
+  document.getElementById("prop-h").addEventListener("input", function () {
+    if (_selectedIdx === null) return;
+    var v = Math.max(MIN_H, Math.min(MAX_H, parseFloat(this.value) || MIN_H));
+    pendingDesks[_selectedIdx].h = v;
+    renderMarkers();
+  });
+
+  document.getElementById("prop-delete-btn").addEventListener("click", function () {
+    if (_selectedIdx === null) return;
+    pendingDesks.splice(_selectedIdx, 1);
+    _selectedIdx = null;
+    renderPlacementEditor();
+    updatePropertiesPanel();
+  });
+
+  // Click on overlay/SVG background → add object (only in desk/room mode)
+  var addStart = null;
+  overlay.addEventListener("pointerdown", function (e) {
+    var isObj = e.target.closest && (e.target.closest(".placement-anchor") || e.target.closest(".placement-block"));
+    if (isObj) return;
+    if (_placementMode !== "desk" && _placementMode !== "room") return;
+    addStart = { x: e.clientX, y: e.clientY };
+  });
+  overlay.addEventListener("pointerup", function (e) {
+    if (!addStart) return;
+    var isObj = e.target.closest && (e.target.closest(".placement-anchor") || e.target.closest(".placement-block"));
+    if (isObj) { addStart = null; return; }
+    var dx = e.clientX - addStart.x, dy = e.clientY - addStart.y;
+    addStart = null;
+    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) return;
+    var ir      = img.getBoundingClientRect();
+    var mx      = Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width));
+    var my      = Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height));
+    var autoIdx = pendingDesks.length + 1;
+    var isRoom  = _placementMode === "room";
+    var newW    = isRoom ? TILE_W.room : TILE_W.desk;
+    var newH    = isRoom ? TILE_H.room : TILE_H.desk;
+    // For desks: center anchor on cursor. For rooms: top-left at cursor.
+    var posX    = isRoom ? mx : Math.max(0, mx - newW / 2);
+    var posY    = isRoom ? my : Math.max(0, my - newH / 2);
+    pendingDesks.push({
+      label:       isRoom ? "R-" + autoIdx : "D-" + autoIdx,
+      type:        "flex",
+      space_type:  isRoom ? "meeting_room" : "desk",
+      assigned_to: "",
+      position_x:  Math.round(posX * 1000) / 1000,
+      position_y:  Math.round(posY * 1000) / 1000,
+      w:           newW,
+      h:           newH,
+    });
+    _selectedIdx = pendingDesks.length - 1;
+    renderPlacementEditor();
+    updatePropertiesPanel();
+  });
+
+  // Del / Backspace to delete selected desk
+  document.addEventListener("keydown", function (e) {
+    if (_selectedIdx === null) return;
+    if (e.key !== "Delete" && e.key !== "Backspace") return;
+    var active = document.activeElement;
+    if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT")) return;
+    pendingDesks.splice(_selectedIdx, 1);
+    _selectedIdx = null;
+    renderPlacementEditor();
+    updatePropertiesPanel();
+  });
+
+  // Deselect on Escape
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && _selectedIdx !== null) {
+      _selectedIdx = null;
+      selectDesk(null);
+    }
   });
 }
 
@@ -491,7 +929,8 @@ async function loadPlacementFloor(floorId) {
   var noplan = document.getElementById("placement-no-plan");
   area.style.display = "none";
   noplan.classList.add("hidden");
-  selectedDeskForPlacement = null;
+  pendingDesks = [];
+  _selectedIdx = null;
   if (!floorId) return;
 
   var floor = state.floors.find(function (f) { return String(f.id) === String(floorId); });
@@ -502,109 +941,161 @@ async function loadPlacementFloor(floorId) {
   area.style.display = "";
 
   try {
-    var desks = await apiRequest("/desks?floor_id=" + floorId);
-    renderPlacementOverlay(desks, img);
-    renderUnplacedDesks(desks, img);
-  } catch (e) {
-    addMessage("Ошибка загрузки мест: " + e.message, "error");
+    var existing = await apiRequest("/desks?floor_id=" + floorId);
+    pendingDesks = existing.map(function (d) {
+      return {
+        label:      d.label,
+        type:       d.type || "flex",
+        space_type: d.space_type || "desk",
+        assigned_to: d.assigned_to || "",
+        position_x: typeof d.position_x === "number" ? d.position_x : null,
+        position_y: typeof d.position_y === "number" ? d.position_y : null,
+        w: typeof d.w === "number" ? d.w : TILE_W.desk,
+        h: typeof d.h === "number" ? d.h : TILE_H.desk,
+      };
+    });
+  } catch {
+    pendingDesks = [];
   }
+
+  renderPlacementEditor();
+  updatePropertiesPanel();
 }
 
-function renderPlacementOverlay(desks, img) {
-  var overlay = document.getElementById("placement-overlay");
-  overlay.innerHTML = "";
+function renderPlacementEditor() {
+  var img     = document.getElementById("placement-plan-img");
+  var svgEl   = document.getElementById("placement-svg");
+  var listEl  = document.getElementById("desk-list-editor");
+  var countEl = document.getElementById("desk-count");
 
-  // Click on plan to place selected desk
-  overlay.onclick = async function (e) {
-    if (!selectedDeskForPlacement) return;
-    var rect = img.getBoundingClientRect();
-    var x = (e.clientX - rect.left) / rect.width;
-    var y = (e.clientY - rect.top) / rect.height;
-    try {
-      await apiRequest("/desks/" + selectedDeskForPlacement.id, {
-        method: "PATCH",
-        body: JSON.stringify({
-          position_x: Math.round(x * 1000) / 1000,
-          position_y: Math.round(y * 1000) / 1000,
-        }),
-      });
-      selectedDeskForPlacement = null;
-      var floorId = document.getElementById("placement-floor-select").value;
-      var updated = await apiRequest("/desks?floor_id=" + floorId);
-      renderPlacementOverlay(updated, img);
-      renderUnplacedDesks(updated, img);
-      addMessage("Место размещено.", "success");
-    } catch (e) {
-      addMessage("Ошибка: " + e.message, "error");
-    }
-  };
+  if (svgEl) svgEl.innerHTML = "";
+  countEl.textContent = pendingDesks.length;
+  listEl.innerHTML = "";
 
-  // Draw placed desk markers
-  desks.filter(function (d) {
-    return typeof d.position_x === "number" && typeof d.position_y === "number";
-  }).forEach(function (d) {
-    var marker = document.createElement("div");
-    marker.title = d.label + " — нажмите чтобы снять";
-    marker.style.cssText = (
-      "position:absolute;width:28px;height:28px;border-radius:50%;" +
-      "background:var(--accent);color:white;font-size:10px;font-weight:700;" +
-      "display:flex;align-items:center;justify-content:center;" +
-      "transform:translate(-50%,-50%);cursor:pointer;" +
-      "border:2px solid white;box-shadow:var(--shadow);"
-    );
-    marker.style.left = (d.position_x * 100) + "%";
-    marker.style.top  = (d.position_y * 100) + "%";
-    marker.textContent = d.label.slice(0, 2).toUpperCase();
-    marker.onclick = async function (e) {
-      e.stopPropagation();
-      if (!confirm("Снять стол «" + d.label + "» с плана?")) return;
-      try {
-        await apiRequest("/desks/" + d.id, {
-          method: "PATCH",
-          body: JSON.stringify({ position_x: null, position_y: null }),
-        });
-        var floorId = document.getElementById("placement-floor-select").value;
-        var updated = await apiRequest("/desks?floor_id=" + floorId);
-        renderPlacementOverlay(updated, img);
-        renderUnplacedDesks(updated, img);
-      } catch (e) {
-        addMessage("Ошибка: " + e.message, "error");
+  pendingDesks.forEach(function (d, i) {
+    // SVG marker on plan (edit mode dispatch)
+    if (d.position_x !== null && d.position_y !== null && svgEl) {
+      if (isBlockType(d.space_type)) {
+        svgEl.appendChild(createBlock(d, i, img));
+      } else {
+        svgEl.appendChild(createAnchor(d, i, img));
       }
-    };
-    overlay.append(marker);
+    }
+
+    // List row
+    var row = document.createElement("div");
+    row.className = "desk-row" + (i === _selectedIdx ? " selected" : "");
+
+    row.innerHTML = (
+      "<input class='desk-input desk-input-label' value='" + escHtml(d.label) + "' placeholder='Метка'>" +
+      "<select class='desk-select'>" +
+        "<option value='flex'"  + (d.type === "flex"  ? " selected" : "") + ">Гибкое</option>" +
+        "<option value='fixed'" + (d.type === "fixed" ? " selected" : "") + ">Закреплённое</option>" +
+      "</select>" +
+      "<select class='desk-select desk-select-space'>" +
+        "<option value='desk'"         + (d.space_type === "desk"         ? " selected" : "") + ">Стол</option>" +
+        "<option value='meeting_room'" + (d.space_type === "meeting_room" ? " selected" : "") + ">Переговорная</option>" +
+        "<option value='call_room'"    + (d.space_type === "call_room"    ? " selected" : "") + ">Call-room</option>" +
+        "<option value='open_space'"   + (d.space_type === "open_space"   ? " selected" : "") + ">Open Space</option>" +
+        "<option value='lounge'"       + (d.space_type === "lounge"       ? " selected" : "") + ">Лаунж</option>" +
+      "</select>" +
+      "<input class='desk-input desk-input-assigned' value='" + escHtml(d.assigned_to || "") + "' placeholder='Назначен (fixed)'>" +
+      "<button class='desk-del-btn' title='Удалить место'><i data-lucide='trash-2' style='width:13px;height:13px'></i></button>"
+    );
+
+    var labelInput    = row.querySelector(".desk-input-label");
+    var typeSelect    = row.querySelectorAll(".desk-select")[0];
+    var spaceSelect   = row.querySelector(".desk-select-space");
+    var assignedInput = row.querySelector(".desk-input-assigned");
+    var delBtn        = row.querySelector(".desk-del-btn");
+
+    labelInput.addEventListener("input", function () {
+      pendingDesks[i].label = this.value;
+      renderMarkers();
+    });
+    typeSelect.addEventListener("change", function () {
+      pendingDesks[i].type = this.value;
+      renderMarkers();
+    });
+    spaceSelect.addEventListener("change", function () {
+      pendingDesks[i].space_type = this.value;
+      renderMarkers();
+    });
+    assignedInput.addEventListener("input", function () {
+      pendingDesks[i].assigned_to = this.value;
+    });
+
+    delBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      pendingDesks.splice(i, 1);
+      if (_selectedIdx === i) _selectedIdx = null;
+      else if (_selectedIdx !== null && _selectedIdx > i) _selectedIdx--;
+      renderPlacementEditor();
+      updatePropertiesPanel();
+    });
+
+    row.addEventListener("pointerdown", function (e) {
+      if (e.target === delBtn || delBtn.contains(e.target)) return;
+      if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+      selectDesk(i);
+    });
+
+    listEl.appendChild(row);
+  });
+
+  if (window.lucide) lucide.createIcons({ nodes: [listEl] });
+}
+
+// Re-render SVG markers (called on any data change or selectDesk)
+function renderMarkers() {
+  var img   = document.getElementById("placement-plan-img");
+  var svgEl = document.getElementById("placement-svg");
+  if (!svgEl) return;
+  svgEl.innerHTML = "";
+
+  pendingDesks.forEach(function (d, i) {
+    if (d.position_x === null || d.position_y === null) return;
+    if (isBlockType(d.space_type)) {
+      svgEl.appendChild(createBlock(d, i, img));
+    } else {
+      svgEl.appendChild(createAnchor(d, i, img));
+    }
   });
 }
 
-function renderUnplacedDesks(desks, img) {
-  var container    = document.getElementById("unplaced-desks");
-  var allPlacedMsg = document.getElementById("all-placed-msg");
-  container.innerHTML = "";
-  var unplaced = desks.filter(function (d) {
-    return d.position_x === null || d.position_x === undefined ||
-           d.position_y === null || d.position_y === undefined;
-  });
-  if (!unplaced.length) {
-    allPlacedMsg.classList.remove("hidden");
+async function saveMapDesks() {
+  if (!placementFloorId) { showToast("Выберите этаж.", "error"); return; }
+  var withPos = pendingDesks.filter(function (d) { return d.position_x !== null; });
+  if (!withPos.length) { showToast("Нет размещённых столов.", "error"); return; }
+  var invalid = withPos.filter(function (d) { return d.type === "fixed" && !(d.assigned_to || "").trim(); });
+  if (invalid.length) {
+    showToast("Закреплённые (fixed) места должны иметь назначенного сотрудника: " + invalid.map(function (d) { return d.label || "?"; }).join(", "), "error");
     return;
   }
-  allPlacedMsg.classList.add("hidden");
-  unplaced.forEach(function (d) {
-    var btn = document.createElement("button");
-    btn.className = "btn btn-secondary btn-sm";
-    btn.textContent = d.label + (d.zone ? " · " + d.zone : "");
-    btn.style.textAlign = "left";
-    btn.onclick = function () {
-      selectedDeskForPlacement = d;
-      document.querySelectorAll("#unplaced-desks .btn").forEach(function (b) {
-        b.style.background = "";
-        b.style.color = "";
-      });
-      btn.style.background = "var(--accent)";
-      btn.style.color = "white";
-      addMessage("Выбран стол «" + d.label + "». Кликните на план для размещения.", "info");
-    };
-    container.append(btn);
-  });
+  if (!confirm("Сохранение пересоздаст все столы этажа (старые будут удалены). Продолжить?")) return;
+
+  try {
+    var body = withPos.map(function (d) {
+      return {
+        label:       (d.label || "").trim() || ("D-" + (withPos.indexOf(d) + 1)),
+        type:        d.type || "flex",
+        space_type:  d.space_type || "desk",
+        assigned_to: (d.assigned_to || "").trim() || null,
+        position_x:  d.position_x,
+        position_y:  d.position_y,
+        w:           d.w || TILE_W.desk,
+        h:           d.h || TILE_H.desk,
+      };
+    });
+    await apiRequest("/floors/" + placementFloorId + "/desks-from-map", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    showToast("Сохранено: " + body.length + " " + (body.length === 1 ? "стол" : "столов") + ".", "success");
+    await loadDesks();
+  } catch (e) {
+    showToast("Ошибка сохранения: " + e.message, "error");
+  }
 }
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
@@ -653,7 +1144,7 @@ document.getElementById("login-form").addEventListener("submit", async function 
     }
     var data = await resp.json();
     setToken(data.access_token, username);
-    addMessage("Добро пожаловать, " + username + "!", "success");
+    showToast("Добро пожаловать, " + username + "!", "success");
     await loadAll();
   } catch (e) {
     loginError.textContent = e.message;
@@ -668,13 +1159,13 @@ document.getElementById("login-password").addEventListener("keydown", function (
 // ── Logout ────────────────────────────────────────────────────────────────────
 logoutBtn.addEventListener("click", function () {
   clearToken();
-  addMessage("Вы вышли из панели администратора.", "info");
+  showToast("Вы вышли из панели администратора.", "info");
 });
 
 // ── Refresh buttons ───────────────────────────────────────────────────────────
 document.getElementById("refresh-offices").addEventListener("click", loadOffices);
 document.getElementById("refresh-floors").addEventListener("click", loadFloors);
-document.getElementById("refresh-desks").addEventListener("click", loadDesks);
+document.getElementById("refresh-desks")?.addEventListener("click", loadDesks);
 document.getElementById("refresh-policies").addEventListener("click", loadPolicies);
 document.getElementById("refresh-reservations").addEventListener("click", loadReservations);
 document.getElementById("refresh-analytics").addEventListener("click", loadAnalytics);
@@ -682,18 +1173,18 @@ document.getElementById("refresh-analytics").addEventListener("click", loadAnaly
 // ── Create office ─────────────────────────────────────────────────────────────
 document.getElementById("create-office-btn").addEventListener("click", async function () {
   var name = officeName.value.trim();
-  if (!name) { addMessage("Введите название офиса.", "error"); return; }
+  if (!name) { showToast("Введите название офиса.", "error"); return; }
   try {
     await apiRequest("/offices", {
       method: "POST",
       body: JSON.stringify({ name: name, address: officeAddress.value.trim() || null }),
     });
-    addMessage("Офис «" + name + "» создан.", "success");
+    showToast("Офис «" + name + "» создан.", "success");
     officeName.value = "";
     officeAddress.value = "";
     await loadAll();
   } catch (e) {
-    addMessage("Ошибка: " + e.message, "error");
+    showToast("Ошибка: " + e.message, "error");
   }
 });
 
@@ -701,17 +1192,17 @@ document.getElementById("create-office-btn").addEventListener("click", async fun
 document.getElementById("create-floor-btn").addEventListener("click", async function () {
   var officeId = Number(floorOfficeSelect.value);
   var name = floorName.value.trim();
-  if (!officeId || !name) { addMessage("Выберите офис и введите название этажа.", "error"); return; }
+  if (!officeId || !name) { showToast("Выберите офис и введите название этажа.", "error"); return; }
   try {
     await apiRequest("/floors", {
       method: "POST",
       body: JSON.stringify({ office_id: officeId, name: name }),
     });
-    addMessage("Этаж «" + name + "» создан.", "success");
+    showToast("Этаж «" + name + "» создан.", "success");
     floorName.value = "";
     await loadAll();
   } catch (e) {
-    addMessage("Ошибка: " + e.message, "error");
+    showToast("Ошибка: " + e.message, "error");
   }
 });
 
@@ -719,7 +1210,7 @@ document.getElementById("create-floor-btn").addEventListener("click", async func
 document.getElementById("upload-plan-btn").addEventListener("click", async function () {
   var floorId = planFloorSelect.value;
   var file = planFile.files[0];
-  if (!floorId || !file) { addMessage("Выберите этаж и файл PNG.", "error"); return; }
+  if (!floorId || !file) { showToast("Выберите этаж и файл PNG.", "error"); return; }
   try {
     var token = getToken();
     var formData = new FormData();
@@ -733,37 +1224,11 @@ document.getElementById("upload-plan-btn").addEventListener("click", async funct
       var body = await resp.json().catch(function () { return {}; });
       throw new Error(body.detail || ("Ошибка " + resp.status));
     }
-    addMessage("План этажа загружен.", "success");
+    showToast("План этажа загружен.", "success");
     planFile.value = "";
     await loadFloors();
   } catch (e) {
-    addMessage("Ошибка: " + e.message, "error");
-  }
-});
-
-// ── Create desk ───────────────────────────────────────────────────────────────
-document.getElementById("create-desk-btn").addEventListener("click", async function () {
-  var floorId = Number(deskFloorSelect.value);
-  var label = deskLabel.value.trim();
-  if (!floorId || !label) { addMessage("Выберите этаж и введите метку.", "error"); return; }
-  try {
-    await apiRequest("/desks", {
-      method: "POST",
-      body: JSON.stringify({
-        floor_id: floorId,
-        label: label,
-        type: deskType.value,
-        zone: deskZone.value.trim() || null,
-        assigned_to: deskAssigned.value.trim() || null,
-      }),
-    });
-    addMessage("Место «" + label + "» создано.", "success");
-    deskLabel.value = "";
-    deskZone.value = "";
-    deskAssigned.value = "";
-    await loadDesks();
-  } catch (e) {
-    addMessage("Ошибка: " + e.message, "error");
+    showToast("Ошибка: " + e.message, "error");
   }
 });
 
@@ -771,7 +1236,7 @@ document.getElementById("create-desk-btn").addEventListener("click", async funct
 document.getElementById("create-policy-btn").addEventListener("click", async function () {
   var officeId = Number(policyOfficeSelect.value);
   var name = policyName.value.trim();
-  if (!officeId || !name) { addMessage("Выберите офис и введите название политики.", "error"); return; }
+  if (!officeId || !name) { showToast("Выберите офис и введите название политики.", "error"); return; }
   try {
     await apiRequest("/policies", {
       method: "POST",
@@ -785,11 +1250,67 @@ document.getElementById("create-policy-btn").addEventListener("click", async fun
         no_show_timeout_minutes: Number(policyNoshow.value),
       }),
     });
-    addMessage("Политика «" + name + "» создана.", "success");
+    showToast("Политика «" + name + "» создана.", "success");
     policyName.value = "";
     await loadPolicies();
   } catch (e) {
-    addMessage("Ошибка: " + e.message, "error");
+    showToast("Ошибка: " + e.message, "error");
+  }
+});
+
+// ── Departments ───────────────────────────────────────────────────────────────
+
+async function loadDepartments() {
+  const tbody = document.getElementById("departments-body");
+  if (!tbody) return;
+  try {
+    const depts = await apiRequest("/departments");
+    if (!depts.length) {
+      tbody.innerHTML = '<tr><td colspan="2" class="empty">Нет отделов</td></tr>';
+      return;
+    }
+    tbody.innerHTML = "";
+    for (const d of depts) {
+      const tr = document.createElement("tr");
+      const tdName = document.createElement("td");
+      tdName.textContent = d.name;
+      const tdAct = document.createElement("td");
+      tdAct.append(makeDeleteBtn("Удалить", async function () {
+        if (!confirm("Удалить отдел «" + d.name + "»?")) return;
+        try {
+          await apiRequest("/departments/" + d.id, { method: "DELETE" });
+          showToast("Отдел «" + d.name + "» удалён.", "success");
+          await loadDepartments();
+        } catch (e) {
+          showToast("Ошибка: " + e.message, "error");
+        }
+      }));
+      tr.append(tdName, tdAct);
+      tbody.append(tr);
+    }
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="2" class="empty">Ошибка загрузки</td></tr>';
+  }
+}
+
+document.getElementById("refresh-departments")?.addEventListener("click", loadDepartments);
+
+document.getElementById("add-dept-btn")?.addEventListener("click", async () => {
+  const nameInput = document.getElementById("dept-name");
+  const msgEl     = document.getElementById("dept-msg");
+  const name = nameInput?.value.trim();
+  if (!name) { if (msgEl) msgEl.innerHTML = '<span class="error-msg">Введите название</span>'; return; }
+  try {
+    await apiRequest("/departments", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    if (msgEl) msgEl.innerHTML = '<span class="success-msg">Отдел добавлен</span>';
+    if (nameInput) nameInput.value = "";
+    await loadDepartments();
+    setTimeout(() => { if (msgEl) msgEl.innerHTML = ""; }, 3000);
+  } catch (e) {
+    if (msgEl) msgEl.innerHTML = '<span class="error-msg">' + e.message + '</span>';
   }
 });
 
@@ -810,6 +1331,7 @@ async function init() {
   } else {
     showLoginOverlay();
     initPlacementEditor();
+    if (window.lucide) lucide.createIcons();
   }
 }
 

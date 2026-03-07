@@ -5,6 +5,7 @@ from typing import Optional
 
 from sqlalchemy import (
     CheckConstraint,
+    Column,
     Date,
     DateTime,
     Float,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     Time,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -32,9 +34,17 @@ class User(Base):
     created_at: Mapped[date] = mapped_column(
         Date, nullable=False, server_default=func.current_date()
     )
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    department: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    position: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    user_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="available")
 
     __table_args__ = (
         CheckConstraint("role IN ('admin', 'user')", name="ck_users_role"),
+        CheckConstraint(
+            "user_status IN ('available', 'busy', 'away')", name="ck_users_user_status"
+        ),
     )
 
 
@@ -80,10 +90,12 @@ class Desk(Base):
     )
     label: Mapped[str] = mapped_column(String(40), nullable=False)
     type: Mapped[str] = mapped_column(String(10), nullable=False, server_default="flex")
+    space_type: Mapped[str] = mapped_column(String(30), nullable=False, server_default="desk")
     assigned_to: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
-    zone: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     position_x: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     position_y: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    w: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.07")
+    h: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.05")
     qr_token: Mapped[str] = mapped_column(
         String(36), unique=True, nullable=False, index=True
     )
@@ -95,6 +107,10 @@ class Desk(Base):
 
     __table_args__ = (
         CheckConstraint("type IN ('flex', 'fixed')", name="ck_desks_type"),
+        CheckConstraint(
+            "space_type IN ('desk','meeting_room','call_room','open_space','lounge')",
+            name="ck_desks_space_type",
+        ),
         Index("idx_desks_floor_id", "floor_id"),
     )
 
@@ -158,3 +174,18 @@ class Policy(Base):
         ),
         Index("idx_policies_office_id", "office_id"),
     )
+
+
+class Department(Base):
+    __tablename__ = "departments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+
+
+class FavoriteDesk(Base):
+    __tablename__ = "favorite_desks"
+    id      = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(120), nullable=False, index=True)
+    desk_id = Column(Integer, ForeignKey("desks.id", ondelete="CASCADE"), nullable=False)
+    __table_args__ = (UniqueConstraint("user_id", "desk_id", name="uq_favorite_desk"),)

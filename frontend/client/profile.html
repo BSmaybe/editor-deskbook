@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Профиль — DeskBook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-brand">
+      <a href="./index.html" class="btn btn-secondary btn-sm btn-icon" title="Назад" style="border-radius:8px">
+        <i data-lucide="arrow-left" style="width:16px;height:16px"></i>
+      </a>
+      <div class="header-brand-icon">
+        <i data-lucide="calendar-days" style="width:16px;height:16px"></i>
+      </div>
+      <h1>DeskBook</h1>
+    </div>
+    <div class="header-user">
+      <button id="logout-btn" class="btn btn-secondary btn-sm">Выйти</button>
+    </div>
+  </header>
+
+  <div class="page" style="max-width:760px">
+
+    <!-- Hero -->
+    <div class="card" style="text-align:center;padding:36px 24px 28px">
+      <div class="profile-avatar-lg" id="profile-avatar"></div>
+      <div class="profile-name" id="profile-name">
+        <span id="profile-name-text"></span>
+        <span id="profile-status-badge" class="status-badge" style="display:none"></span>
+      </div>
+      <div class="profile-sub" id="profile-sub">Сотрудник</div>
+    </div>
+
+    <!-- Profile edit form -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-header">
+        <h2 class="card-title">
+          <i data-lucide="user-cog" style="width:16px;height:16px"></i>
+          Редактировать профиль
+        </h2>
+      </div>
+      <form id="profile-form" novalidate>
+        <div class="profile-form">
+          <div class="field field-full">
+            <label for="pf-full-name">ФИО</label>
+            <input type="text" id="pf-full-name" name="full_name" placeholder="Иванов Иван Иванович">
+          </div>
+          <div class="field">
+            <label for="pf-department">Отдел</label>
+            <select id="pf-department" name="department">
+              <option value="">— не выбран —</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pf-position">Должность</label>
+            <input type="text" id="pf-position" name="position" placeholder="Инженер">
+          </div>
+          <div class="field">
+            <label for="pf-phone">Телефон</label>
+            <input type="tel" id="pf-phone" name="phone" placeholder="+7 (000) 000-00-00">
+          </div>
+          <div class="field">
+            <label for="pf-status">Статус</label>
+            <select id="pf-status" name="user_status">
+              <option value="available">Доступен</option>
+              <option value="busy">Занят</option>
+              <option value="away">Отсутствует</option>
+            </select>
+          </div>
+        </div>
+        <div id="profile-form-msg" style="margin-top:14px"></div>
+        <div style="margin-top:16px">
+          <button type="submit" class="btn btn-primary" id="profile-save-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Stats row -->
+    <div class="grid-3" style="margin-top:16px">
+      <div class="card" style="text-align:center;padding:20px">
+        <div style="font-size:28px;font-weight:700;color:var(--primary)" id="stat-total">—</div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:4px">Всего броней</div>
+      </div>
+      <div class="card" style="text-align:center;padding:20px">
+        <div style="font-size:28px;font-weight:700;color:var(--success)" id="stat-today">—</div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:4px">Сегодня</div>
+      </div>
+      <div class="card" style="text-align:center;padding:20px">
+        <div style="font-size:28px;font-weight:700;color:var(--warning)" id="stat-upcoming">—</div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:4px">Предстоящих</div>
+      </div>
+    </div>
+
+    <!-- Upcoming bookings -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-header">
+        <h2 class="card-title">
+          <i data-lucide="calendar-clock" style="width:16px;height:16px"></i>
+          Мои бронирования
+        </h2>
+        <button id="refresh-btn" class="btn btn-secondary btn-sm">Обновить</button>
+      </div>
+      <div id="bookings-list"><p class="empty">Загрузка...</p></div>
+    </div>
+
+    <!-- Favorites -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-header">
+        <h2 class="card-title"><i data-lucide="star" style="width:16px;height:16px"></i> Избранные места</h2>
+      </div>
+      <div id="favorites-list"><p class="empty">Загрузка...</p></div>
+    </div>
+
+    <!-- My team -->
+    <div class="card" style="margin-top:16px" id="team-card">
+      <div class="card-header">
+        <h2 class="card-title"><i data-lucide="users" style="width:16px;height:16px"></i> Моя команда</h2>
+        <span id="team-dept-label" style="font-size:12px;color:var(--text-2)"></span>
+      </div>
+      <div id="team-list"><p class="empty">Загрузка...</p></div>
+    </div>
+
+  </div>
+
+  <script type="module">
+  const API_BASE = "/api";
+
+  function isTokenExpired(token) {
+    try {
+      const p = JSON.parse(atob(token.split(".")[1]));
+      return p.exp * 1000 < Date.now();
+    } catch { return true; }
+  }
+
+  const token    = localStorage.getItem("user_token");
+  const username = localStorage.getItem("user_username");
+  if (!token || !username || isTokenExpired(token)) {
+    localStorage.removeItem("user_token");
+    localStorage.removeItem("user_username");
+    window.location.href = "./login.html";
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Fill header/hero with username as fallback; loadProfile() may override
+  document.getElementById("profile-name-text").textContent = username;
+  document.getElementById("profile-sub").textContent = username.includes(".")
+    ? username.split(".").map(s => s[0].toUpperCase() + s.slice(1)).join(" ")
+    : username;
+  document.getElementById("profile-avatar").textContent = username.slice(0, 2).toUpperCase();
+
+  const STATUS_LABELS = { available: "Доступен", busy: "Занят", away: "Отсутствует" };
+  const STATUS_CLASSES = { available: "status-available", busy: "status-busy", away: "status-away" };
+
+  function renderStatusBadge(status) {
+    const badge = document.getElementById("profile-status-badge");
+    if (!status || !STATUS_LABELS[status]) { badge.style.display = "none"; return; }
+    badge.textContent = STATUS_LABELS[status];
+    badge.className = `status-badge ${STATUS_CLASSES[status]}`;
+    badge.style.display = "";
+  }
+
+  async function apiFetch(path, options = {}) {
+    const r = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) },
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+    if (r.status === 204) return null;
+    return r.json();
+  }
+
+  async function loadDepartments(currentDept) {
+    const sel = document.getElementById("pf-department");
+    if (!sel) return;
+    try {
+      const depts = await apiFetch("/departments");
+      sel.innerHTML = '<option value="">— не выбран —</option>';
+      for (const d of depts) {
+        const opt = document.createElement("option");
+        opt.value = d.name;
+        opt.textContent = d.name;
+        if (d.name === currentDept) opt.selected = true;
+        sel.append(opt);
+      }
+      // If current dept not in list, add it as option so it's preserved
+      if (currentDept && !depts.find(d => d.name === currentDept)) {
+        const opt = document.createElement("option");
+        opt.value = currentDept;
+        opt.textContent = currentDept + " (не в списке)";
+        opt.selected = true;
+        sel.append(opt);
+      }
+    } catch {
+      // Fallback: keep as plain select with current value
+      if (currentDept) {
+        const opt = document.createElement("option");
+        opt.value = currentDept;
+        opt.textContent = currentDept;
+        opt.selected = true;
+        sel.append(opt);
+      }
+    }
+  }
+
+  async function loadProfile() {
+    try {
+      const data = await apiFetch(`/users/${encodeURIComponent(username)}`);
+      if (data.full_name) {
+        document.getElementById("profile-name-text").textContent = data.full_name;
+        document.getElementById("profile-avatar").textContent = data.full_name.slice(0, 2).toUpperCase();
+        document.getElementById("profile-sub").textContent = username;
+      }
+      renderStatusBadge(data.user_status);
+      document.getElementById("pf-full-name").value = data.full_name ?? "";
+      document.getElementById("pf-position").value = data.position ?? "";
+      document.getElementById("pf-phone").value = data.phone ?? "";
+      if (data.user_status) document.getElementById("pf-status").value = data.user_status;
+      await loadDepartments(data.department ?? "");
+    } catch (e) {
+      await loadDepartments("");
+    }
+  }
+
+  async function saveProfile(e) {
+    e.preventDefault();
+    const msgEl = document.getElementById("profile-form-msg");
+    const saveBtn = document.getElementById("profile-save-btn");
+    msgEl.innerHTML = "";
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Сохраняю...";
+
+    const body = {
+      full_name: document.getElementById("pf-full-name").value.trim() || null,
+      department: document.getElementById("pf-department").value || null,
+      position: document.getElementById("pf-position").value.trim() || null,
+      phone: document.getElementById("pf-phone").value.trim() || null,
+      user_status: document.getElementById("pf-status").value || null,
+    };
+
+    try {
+      const data = await apiFetch(`/users/${encodeURIComponent(username)}/profile`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+      if (data?.full_name) {
+        document.getElementById("profile-name-text").textContent = data.full_name;
+        document.getElementById("profile-avatar").textContent = data.full_name.slice(0, 2).toUpperCase();
+        document.getElementById("profile-sub").textContent = username;
+      }
+      renderStatusBadge(data?.user_status);
+      msgEl.innerHTML = '<div class="success-msg">Профиль сохранён.</div>';
+    } catch (err) {
+      msgEl.innerHTML = `<div class="error-msg">${err.message}</div>`;
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Сохранить";
+    }
+  }
+
+  document.getElementById("profile-form").addEventListener("submit", saveProfile);
+
+  async function cancelBooking(id) {
+    if (!confirm("Отменить бронирование?")) return;
+    await fetch(`${API_BASE}/reservations/${id}/cancel`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    loadBookings();
+  }
+
+  async function loadBookings() {
+    const container = document.getElementById("bookings-list");
+    try {
+      const all = await apiFetch(`/reservations?user_id=${encodeURIComponent(username)}`);
+      const active = all.filter(b => b.status === "active");
+      active.sort((a, b) => (a.reservation_date + a.start_time) > (b.reservation_date + b.start_time) ? 1 : -1);
+
+      const todayBookings    = active.filter(b => b.reservation_date === today);
+      const upcomingBookings = active.filter(b => b.reservation_date > today);
+
+      document.getElementById("stat-total").textContent = active.length;
+      document.getElementById("stat-today").textContent = todayBookings.length;
+      document.getElementById("stat-upcoming").textContent = upcomingBookings.length;
+
+      if (!active.length) {
+        container.innerHTML = '<p class="empty">Нет активных бронирований</p>';
+        return;
+      }
+
+      container.innerHTML = "";
+      const list = document.createElement("div");
+      list.className = "booking-list";
+
+      for (const b of active) {
+        const isToday = b.reservation_date === today;
+        const isPast  = b.reservation_date < today;
+
+        const item = document.createElement("div");
+        item.className = "booking-item";
+        if (isToday) item.style.borderColor = "var(--primary-border)";
+        if (isPast)  item.style.opacity = ".6";
+
+        const dateObj = new Date(b.reservation_date + "T00:00:00");
+        const dateStr = dateObj.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" });
+        const timeStr = `${b.start_time?.slice(0, 5) ?? "?"} – ${b.end_time?.slice(0, 5) ?? "?"}`;
+
+        let checkinHtml = "";
+        if (b.checked_in_at) {
+          checkinHtml = `<span class="badge checked-in" style="width:fit-content">✓ Отмечен в ${b.checked_in_at.slice(11, 16)}</span>`;
+        } else if (!isPast) {
+          checkinHtml = `<span class="badge not-checked-in" style="width:fit-content">Нет отметки</span>`;
+        }
+
+        item.innerHTML = `
+          <div class="booking-info" style="flex:1">
+            <strong>Место #${b.desk_id}</strong>
+            <span>${dateStr} · ${timeStr}${isToday ? ' <strong style="color:var(--primary)">· Сегодня</strong>' : ''}</span>
+            ${checkinHtml}
+          </div>
+          ${!isPast ? `<button class="btn btn-danger btn-sm" data-id="${b.id}">Отменить</button>` : ""}`;
+
+        item.querySelector("[data-id]")?.addEventListener("click", (e) => {
+          cancelBooking(parseInt(e.currentTarget.dataset.id));
+        });
+
+        list.append(item);
+      }
+      container.append(list);
+    } catch (e) {
+      container.innerHTML = `<p class="empty">Ошибка загрузки: ${e.message}</p>`;
+    }
+  }
+
+  document.getElementById("refresh-btn").addEventListener("click", loadBookings);
+  document.getElementById("logout-btn").addEventListener("click", () => {
+    localStorage.removeItem("user_token");
+    localStorage.removeItem("user_username");
+    window.location.href = "./login.html";
+  });
+
+  const SPACE_LABELS_FAV = { desk: "Рабочий стол", meeting_room: "Переговорная", call_room: "Call-room", open_space: "Open Space", lounge: "Лаунж" };
+
+  async function removeFav(btn, deskId) {
+    try {
+      await apiFetch(`/users/me/favorites/${deskId}`, { method: "DELETE" });
+      btn.closest(".booking-item").remove();
+      const list = document.getElementById("favorites-list");
+      if (list && !list.querySelector(".booking-item")) {
+        list.innerHTML = '<p class="empty">Пока нет избранных мест</p>';
+      }
+    } catch (e) {
+      alert(`Ошибка: ${e.message}`);
+    }
+  }
+
+  async function loadFavoriteDesks() {
+    const container = document.getElementById("favorites-list");
+    if (!container) return;
+    try {
+      const desks = await apiFetch("/users/me/favorites");
+      if (!desks.length) {
+        container.innerHTML = '<p class="empty">Пока нет избранных мест</p>';
+        return;
+      }
+      const list = document.createElement("div");
+      list.className = "booking-list";
+      for (const d of desks) {
+        const item = document.createElement("div");
+        item.className = "booking-item";
+        const spaceLabel = SPACE_LABELS_FAV[d.space_type] ?? d.space_type ?? "Место";
+        item.innerHTML = `
+          <div class="booking-info">
+            <strong>${d.label}</strong>
+            <span>${spaceLabel} · ${d.type === "fixed" ? "Закреплённое" : "Гибкое"}</span>
+          </div>`;
+        const removeBtn = document.createElement("button");
+        removeBtn.className = "btn btn-secondary btn-sm";
+        removeBtn.textContent = "★ Убрать";
+        removeBtn.addEventListener("click", () => removeFav(removeBtn, d.id));
+        item.append(removeBtn);
+        list.append(item);
+      }
+      container.innerHTML = "";
+      container.append(list);
+    } catch (e) {
+      container.innerHTML = `<p class="empty">Ошибка: ${e.message}</p>`;
+    }
+  }
+
+  async function loadTeam() {
+    const container = document.getElementById("team-list");
+    const deptLabel = document.getElementById("team-dept-label");
+    if (!container) return;
+    try {
+      const members = await apiFetch("/users/team");
+      const me = await apiFetch(`/users/${encodeURIComponent(username)}`);
+      if (deptLabel && me.department) deptLabel.textContent = me.department;
+
+      if (!members.length) {
+        const msg = me.department
+          ? "В вашем отделе пока нет других сотрудников"
+          : "Укажите отдел в профиле, чтобы видеть команду";
+        container.innerHTML = `<p class="empty">${msg}</p>`;
+        return;
+      }
+
+      const list = document.createElement("div");
+      list.className = "booking-list";
+
+      for (const m of members) {
+        const displayName = m.full_name || m.username;
+        const initials    = displayName.slice(0, 2).toUpperCase();
+        const sub         = [m.position, m.department].filter(Boolean).join(" · ");
+
+        const item = document.createElement("div");
+        item.className = "booking-item";
+        item.style.alignItems = "center";
+        item.innerHTML = `
+          <div style="width:36px;height:36px;border-radius:50%;background:var(--primary-light);color:var(--primary);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0">${initials}</div>
+          <div class="booking-info" style="flex:1">
+            <strong>${displayName}</strong>
+            ${sub ? `<span>${sub}</span>` : ""}
+          </div>`;
+
+        const findBtn = document.createElement("a");
+        findBtn.href  = `./index.html?find=${encodeURIComponent(m.username)}`;
+        findBtn.className = "btn btn-secondary btn-sm";
+        findBtn.textContent = "Найти на карте";
+        item.append(findBtn);
+        list.append(item);
+      }
+
+      container.innerHTML = "";
+      container.append(list);
+    } catch (e) {
+      container.innerHTML = `<p class="empty">Ошибка загрузки команды</p>`;
+    }
+  }
+
+  loadProfile();
+  loadBookings();
+  loadFavoriteDesks();
+  loadTeam();
+  </script>
+  <script>if (window.lucide) lucide.createIcons();</script>
+</body>
+</html>

@@ -77,21 +77,37 @@ class DeskBase(BaseModel):
     floor_id: PositiveInt
     label: str = Field(..., min_length=1, max_length=40)
     type: str = Field("flex", pattern="^(flex|fixed)$")
+    space_type: str = Field("desk", pattern="^(desk|meeting_room|call_room|open_space|lounge)$")
     assigned_to: Optional[str] = Field(None, max_length=120)
-    zone: Optional[str] = Field(None, max_length=120)
     position_x: Optional[float] = Field(None, ge=0, le=1)
     position_y: Optional[float] = Field(None, ge=0, le=1)
+    w: float = Field(0.07, ge=0.01, le=1)
+    h: float = Field(0.05, ge=0.01, le=1)
 
     def model_post_init(self, __context: object) -> None:
         self.label = _strip(self.label) or ""
         if self.assigned_to is not None:
             self.assigned_to = _strip(self.assigned_to) or None
-        if self.zone is not None:
-            self.zone = _strip(self.zone) or None
 
 
 class DeskCreate(DeskBase):
     pass
+
+
+class DeskFromMap(BaseModel):
+    label: str = Field(..., min_length=1, max_length=40)
+    type: str = Field("flex", pattern="^(flex|fixed)$")
+    space_type: str = Field("desk", pattern="^(desk|meeting_room|call_room|open_space|lounge)$")
+    assigned_to: Optional[str] = Field(None, max_length=120)
+    position_x: float = Field(..., ge=0, le=1)
+    position_y: float = Field(..., ge=0, le=1)
+    w: float = Field(0.07, ge=0.01, le=1)
+    h: float = Field(0.05, ge=0.01, le=1)
+
+    def model_post_init(self, __context: object) -> None:
+        self.label = (self.label or "").strip()
+        if self.assigned_to is not None:
+            self.assigned_to = self.assigned_to.strip() or None
 
 
 class Desk(DeskBase):
@@ -103,8 +119,8 @@ class Desk(DeskBase):
 class DeskUpdate(BaseModel):
     label: Optional[str] = Field(None, min_length=1, max_length=40)
     type: Optional[str] = Field(None, pattern="^(flex|fixed)$")
+    space_type: Optional[str] = Field(None, pattern="^(desk|meeting_room|call_room|open_space|lounge)$")
     assigned_to: Optional[str] = Field(None, max_length=120)
-    zone: Optional[str] = Field(None, max_length=120)
     position_x: Optional[float] = Field(None, ge=0, le=1)
     position_y: Optional[float] = Field(None, ge=0, le=1)
 
@@ -113,8 +129,6 @@ class DeskUpdate(BaseModel):
             self.label = _strip(self.label) or ""
         if self.assigned_to is not None:
             self.assigned_to = _strip(self.assigned_to) or None
-        if self.zone is not None:
-            self.zone = _strip(self.zone) or None
 
 
 class ReservationBase(BaseModel):
@@ -142,6 +156,23 @@ class Reservation(ReservationBase):
 class AvailabilityResponse(BaseModel):
     available: bool
     reason: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Batch reservations
+# ---------------------------------------------------------------------------
+
+class ReservationBatchCreate(BaseModel):
+    desk_id: PositiveInt
+    dates: list[date] = Field(..., min_length=1, max_length=60)
+    start_time: time = Field(..., description="Start time in HH:MM format")
+    end_time: time = Field(..., description="End time in HH:MM format")
+
+
+class ReservationBatchResult(BaseModel):
+    created: list[Reservation]
+    skipped: list[date]
+    errors: list[str]
 
 
 class PolicyBase(BaseModel):
@@ -216,6 +247,7 @@ class UserRegister(BaseModel):
     email: str = Field(..., max_length=320)
     password: str = Field(..., min_length=6)
     role: str = Field("user", pattern="^(admin|user)$")
+    admin_secret: Optional[str] = None
 
 
 class UserResponse(BaseModel):
@@ -224,8 +256,72 @@ class UserResponse(BaseModel):
     username: str
     email: str
     role: str
+    full_name: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    phone: Optional[str] = None
+    user_status: str = "available"
 
 
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class UserPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    username: str
+    full_name: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    phone: Optional[str] = None
+    user_status: str = "available"
+
+
+class UserLocation(BaseModel):
+    desk_id: int
+    desk_label: Optional[str] = None
+    floor_id: int
+    floor_name: Optional[str] = None
+    office_id: int
+    office_name: Optional[str] = None
+
+
+class UserWithLocation(UserPublic):
+    location: Optional[UserLocation] = None
+
+
+class UserProfileUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, max_length=255)
+    department: Optional[str] = Field(None, max_length=120)
+    position: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=30)
+    user_status: Optional[str] = Field(None, pattern="^(available|busy|away)$")
+
+
+# ---------------------------------------------------------------------------
+# Departments
+# ---------------------------------------------------------------------------
+
+class DepartmentCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+
+class Department(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+
+
+# ---------------------------------------------------------------------------
+# Favorites
+# ---------------------------------------------------------------------------
+
+class FavoriteCreate(BaseModel):
+    desk_id: PositiveInt
+
+
+class FavoriteItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    desk_id: int

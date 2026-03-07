@@ -59,20 +59,91 @@
 - My Bookings: `checked_in_at` badge
 
 ### Phase 3 Features (implemented in admin/)
-- **Placement editor** (`#placement-panel` in `#tab-floors`): select floor, view PNG plan with overlay; click unplaced desk button then click plan image to PATCH position_x/y (0.0–1.0); placed desks render as circles; click circle to unplace (PATCH null)
+- **Placement editor** (`#placement-panel` in `#tab-floors`): select floor → PNG loads; click anywhere on plan → local `pendingDesks` entry added (not saved); sidebar list shows editable fields per desk (label, type, zone, assigned_to, delete button); "Сохранить план" → `POST /floors/{id}/desks-from-map` with full array; "Очистить всё" resets; click marker to delete
+  - On floor load, existing server desks populate `pendingDesks[]` as initial state — user edits and re-saves all at once
+  - No `POST /desks` or `PATCH /desks/{id}` used in placement editor
+  - `deskFloorSelect`, `deskLabel`, `deskType`, `deskZone`, `deskAssigned` removed from both HTML and JS
+  - `#tab-desks` is now read-only (table + refresh only, no create form)
 - **Reservation filters** (`#tab-reservations`): filter bar (office, date-from, date-to, user, status); builds URLSearchParams appended to `GET /reservations`; Apply and Reset buttons wired to `loadReservations()`
 - **Analytics tab** (`#tab-analytics`): KPI cards, occupancy progress bars per office, top desks table, top users table; calls `GET /analytics`; auto-loads on tab switch and inside `loadAll()`
 
 ### Populate selects pattern (admin)
 - `populateOfficeSelects()` fills: `floorOfficeSelect`, `policyOfficeSelect`, `#filter-office`
   - `#filter-office` gets placeholder "Все офисы"; others get "Выберите офис"
-- `populateFloorSelects()` fills: `deskFloorSelect`, `planFloorSelect`, `#placement-floor-select`
+- `populateFloorSelects()` fills: `planFloorSelect`, `#placement-floor-select` (deskFloorSelect removed)
+
+### Phase 4 Features (implemented in client/)
+- **Profile edit** (`profile.html`): `GET /users/{username}` pre-fills form on load; `PATCH /users/{username}/profile` saves; hero name displays `full_name` with username as fallback; status badge rendered via `renderStatusBadge()` using `.status-badge .status-available/busy/away` classes
+- **Colleague card in map popup** (`app.js`): `fetchColleagueCard(bookedBy, popup)` is async, called from `showMapPopup` only when `booked.user_id !== _username`; renders `.colleague-card` with avatar initials, name, position, department, phone, status badge; guards against popup closed during fetch using `popup.isConnected`; graceful fallback to username-only if `/users/{id}` fails
+
+### Design System Additions (Phase 4)
+- `.status-badge` + `.status-available/busy/away` — pill badge with `::before` dot indicator
+- `.profile-form` — 2-col grid; `.field-full` spans both columns; collapses to 1-col at 768px
+- `.colleague-card` — flex row, border, 8px radius, `var(--bg-2)` background
+- `.colleague-card-avatar` — 40x40px circle, `var(--primary)` bg, white initials
+- `.colleague-card-info`, `.colleague-card-name`, `.colleague-card-row` — flex column info panel
+- Profile `apiFetch` is extended from old read-only version: now accepts `options` arg with method/body for PATCH
+
+### Phase 5 UX Improvements (implemented in client/)
+- **localStorage restore** (`dk_office`, `dk_floor` keys): saved on select change, restored in `init()` after `loadOffices()`; validates saved floor still exists in `state.floors` before restoring
+- **Floor plan card always visible**: `#floor-plan-card` has no `style="display:none"` in HTML; `renderFloorPlan(null)` shows placeholder; `loadFloors()` calls `renderFloorPlan(null)` instead of hiding card; placeholder text differs: null floor → "Выберите офис и этаж...", floor without plan → "У этого этажа нет плана."
+- **Colleague click → desk highlight**: `_highlightedDeskId` module-level var; `highlightDesk(deskId)` adds `.highlighted` + amber pulse + SVG dashed line from 50%/50% to marker position; click same colleague again toggles off; `renderPlanMarkers` resets state on re-render; only colleagues with desk `position_x` are clickable; IIFE closure captures `r`/`item` in loop
+
+### Design System Additions (Phase 5)
+- `.plan-marker.highlighted` — amber `#f59e0b` bg with `!important`, scale(1.3), `pulse-highlight` keyframe animation
+- `.colleague-item.active-colleague` — `var(--primary-light)` bg + `var(--primary-border)` border
+
+### Phase 6 Features — Favorites (implemented in client/)
+- `state.favorites` is a `Set<number>` of desk IDs
+- `loadFavorites()` calls `GET /users/me/favorites` → populates `state.favorites`; called in `init()` before `loadMyBookings()`
+- `renderPlanMarkers` adds `.favorite` class to marker if `state.favorites.has(d.id)` (after mine/available/busy block)
+- `showSidePanel` renders star button `#_sp_fav` in header; click handler calls `POST` or `DELETE /users/me/favorites/{id}`, updates `state.favorites`, toggles `.favorite` on marker, updates button text/title without full re-render
+- `_favFilterActive` boolean + `renderPlanMarkersFiltered()` wrapper: filters `state.desks` to favorites only when active; replaces direct `renderPlanMarkers(floorPlanOverlay, state.desks)` calls in `refreshAvailability` and `renderFloorPlan`
+- `fav-filter-btn` in `index.html` (4th slot in second grid-4); toggles `.btn-primary`/`.btn-secondary` and star symbol
+- `profile.html`: favorites card with `#favorites-list`; `loadFavoriteDesks()` renders `.booking-list` of favorite desks; `removeFav(btn, deskId)` calls `DELETE` and removes item from DOM; called at end of init sequence
+- CSS: `.plan-marker.favorite` — amber `#fbbf24` border; `::after` pseudo-element shows `★` at top-right corner (top:-8px right:-8px)
+
+### Design System Additions (Phase 6)
+- `.plan-marker.favorite` — `border-color: #fbbf24`
+- `.plan-marker.favorite::after` — absolute `★` at top:-8px right:-8px, color `#f59e0b`, pointer-events none
+
+### Phase 7 Features — Colleague Search (implemented in client/)
+- Search bar `#colleague-search-bar` added in `#floor-plan-card` between `card-header` and `.map-workspace` in `index.html`
+- IIFE `initColleagueSearch()` in `app.js` (between Events and Init sections): debounced 300ms input → `GET /users/search?q=&limit=10`; renders dropdown with avatar/name/sub; `mousedown` + `e.preventDefault()` prevents blur before click
+- On result select: looks up `state.floorReservations.find(r => r.user_id === u.username)` → calls `highlightDesk(resv.desk_id)`; shows `addMessage` if no booking on current floor
+- Escape key + clear button both call `clearSearch()` which also resets highlight via `highlightDesk(null)`
+- Outside click closes dropdown via `document.addEventListener("click", ...)` checking `e.target.closest("#colleague-search-bar")`
+- CSS classes: `.search-bar`, `.search-input-wrap`, `#colleague-search`, `.search-clear-btn`, `.search-dropdown`, `.search-result-item`, `.search-result-avatar`, `.search-result-info`, `.search-result-name`, `.search-result-sub`, `.search-empty`
+- Lucide `search` icon inside `.search-input-wrap` — initialized by existing `lucide.createIcons()` in `init()`
+
+### Phase 8 Features (implemented in client/)
+
+#### Space-type filter pills
+- `#space-filter-bar` in `index.html` between `#map-legend` and `.search-bar`
+- `_activeSpaceFilters = new Set()` module-level; cleared on every `renderPlanMarkers()` call (floor change resets filter)
+- `renderSpaceFilter(desks)` — called from end of `renderPlanMarkers()`; hides bar if ≤1 type; renders "Все" pill + one pill per type; re-renders itself on every click to update active states
+- `applySpaceFilter()` — iterates `.plan-marker` elements; toggles `.filtered-out`; empty set = show all
+- Multiple selection: clicking selected pill deselects it; "Все" clears all
+- CSS: `.space-filter-bar`, `.space-filter-pill`, `.space-filter-pill.active`, `.space-filter-pill-dot`, `.plan-marker.filtered-out {opacity:0.12; pointer-events:none}`
+
+#### Recurring booking UI
+- Only shown when `avail?.available` — injected via `mapSidePanel.append(recurSection)` at end of `showSidePanel()`
+- Toggle: `.recur-toggle-btn` (▶ icon rotates 90deg when `.open`) + `.recur-body` (display:none/.open=block)
+- Default: Mon–Fri pre-selected; end date = today+60d
+- Date generation: loop from `max(selectedDate, tomorrow)` to endDate; `cursor.getDay()` checked against `_selectedDays`
+- `reserveBatch(deskId, dates, startTime, endTime)` → `POST /api/reservations/batch` → `{ created, skipped, errors }`
+- Validation: `endDate < minDate` (not `<= today` — avoids timezone comparison bug)
+- CSS: `.recur-section`, `.recur-toggle-btn`, `.recur-toggle-icon`, `.recur-body.open`, `.recur-days`, `.recur-day-btn.active`, `.recur-end-row`
 
 ### Known Patterns to Watch
 - `admin.js` must NOT use ES module syntax (loaded as plain `<script>`)
 - `app.js` in client uses `type="module"` — ES2020+ fine
 - Set `tr.innerHTML` first, then `querySelector` + `append` buttons (innerHTML clears listeners)
 - Admin init validates saved token via `/offices` before showing UI
-- `initPlacementEditor()` called in both authenticated and unauthenticated branches of `init()` so the change listener is always attached before `loadAll()` populates the select
-- Placement overlay uses `overlay.onclick = fn` (assignment, not addEventListener) to avoid stacking duplicate handlers on re-render
-- `renderUnplacedDesks` checks both `=== null` and `=== undefined` since the API may omit the field entirely rather than sending null
+- `initPlacementEditor()` called in both authenticated and unauthenticated branches of `init()` so the change listener + save/clear buttons are always wired before `loadAll()` populates the select
+- Placement overlay uses `overlay.onclick = fn` (assignment, not addEventListener) to avoid stacking duplicate handlers on re-render; `renderPlacementEditor` only removes `.map-marker` children, does NOT reassign `overlay.onclick`
+- Marker onclick uses IIFE closure `(function(idx){...})(i)` to capture the correct index at time of creation, since `forEach` index `i` would otherwise be stale on click
+- `renderFloorPlan(null)` is the canonical "no floor" call — always visible card with placeholder, never `display:none`
+- `renderPlanMarkers` resets `_highlightedDeskId`, removes `#desk-pointer-line` SVG, clears `_activeSpaceFilters`, and calls `renderSpaceFilter` + `applySpaceFilter` on every re-render
+- `renderPlanMarkersFiltered()` is the canonical call for rendering markers — wraps `renderPlanMarkers` with favorites filter logic
+- Date validation: always compare `endDate < minDate` (Date objects from "YYYY-MM-DDT00:00:00") not `<= today` to avoid time-of-day edge cases
