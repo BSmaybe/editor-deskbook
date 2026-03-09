@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from sqlalchemy import text
 
-from . import crud, models, schemas
+from . import crud, models, schemas, map_service
 from .auth import get_password_hash, verify_password, create_access_token, require_admin, get_current_user
 from .config import settings
 from .database import Base, engine, get_db, SessionLocal
@@ -63,6 +63,40 @@ async def lifespan(app: FastAPI):
             conn.commit()
     except Exception as _exc:
         print(f"[startup migration] Warning: {_exc}")
+
+    # v2: floor map revision workflow
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS floor_map_revisions (
+                    id           SERIAL PRIMARY KEY,
+                    floor_id     INTEGER NOT NULL REFERENCES floors(id) ON DELETE CASCADE,
+                    status       VARCHAR(20) NOT NULL DEFAULT 'draft'
+                                 CONSTRAINT ck_fmr_status CHECK (status IN ('draft','published','archived')),
+                    plan_svg     TEXT,
+                    desks_json   TEXT NOT NULL DEFAULT '[]',
+                    zones_json   TEXT NOT NULL DEFAULT '[]',
+                    version      INTEGER NOT NULL DEFAULT 1,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    published_at TIMESTAMPTZ,
+                    created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_fmr_floor_id ON floor_map_revisions(floor_id)"
+            ))
+            conn.execute(text(
+                "ALTER TABLE floors ADD COLUMN IF NOT EXISTS published_map_revision_id"
+                " INTEGER REFERENCES floor_map_revisions(id) ON DELETE SET NULL"
+            ))
+            conn.execute(text(
+                "ALTER TABLE floors ADD COLUMN IF NOT EXISTS draft_map_revision_id"
+                " INTEGER REFERENCES floor_map_revisions(id) ON DELETE SET NULL"
+            ))
+            conn.commit()
+    except Exception as _exc:
+        print(f"[startup migration v2] Warning: {_exc}")
 
     Base.metadata.create_all(bind=engine)
 
@@ -442,6 +476,118 @@ async def create_desks_from_map(
         raise HTTPException(status_code=404, detail="Floor not found")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Floor map revisions (SVG-based editor — draft/published workflow)
+# ---------------------------------------------------------------------------
+
+@app.get("/floors/{floor_id}/map", response_model=schemas.FloorMapRevisionResponse)
+async def get_floor_map(
+    floor_id: int,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> schemas.FloorMapRevisionResponse:
+    """Admin: returns draft if one exists, otherwise published. 404 if neither."""
+    result = map_service.get_draft_or_published(db, floor_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No map revision found for this floor")
+    return result
+
+
+@app.get("/floors/{floor_id}/map/published", response_model=schemas.FloorMapRevisionResponse)
+async def get_published_floor_map(
+    floor_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> schemas.FloorMapRevisionResponse:
+    """Any authenticated user: returns only the published revision. 404 if none."""
+    try:
+        result = map_service.get_published_response(db, floor_id)
+    except map_service.NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=404, detail="No published map for this floor")
+    return result
+
+
+@app.put(
+    "/floors/{floor_id}/map/draft",
+    response_model=schemas.FloorMapRevisionResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def save_floor_map_draft(
+    floor_id: int,
+    payload: schemas.FloorMapRevisionPayload,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> schemas.FloorMapRevisionResponse:
+    """Admin: save full draft snapshot."""
+    try:
+        return map_service.save_draft_revision(db, floor_id, payload, user_id=current_user.id)
+    except map_service.NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except map_service.ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.post(
+    "/floors/{floor_id}/map/draft/plan-svg",
+    response_model=schemas.FloorMapRevisionResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def upload_floor_plan_svg(
+    floor_id: int,
+    request: Request,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> schemas.FloorMapRevisionResponse:
+    """Admin: upload raw SVG body (max 5 MB). Sanitized and stored in draft."""
+    raw_svg = (await request.body()).decode("utf-8", errors="replace")
+    try:
+        return map_service.upload_svg_to_draft(db, floor_id, raw_svg, user_id=current_user.id)
+    except map_service.NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post(
+    "/floors/{floor_id}/map/publish",
+    response_model=schemas.FloorMapRevisionResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def publish_floor_map(
+    floor_id: int,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> schemas.FloorMapRevisionResponse:
+    """Admin: atomically publish the current draft revision."""
+    try:
+        return map_service.publish_draft_revision(db, floor_id, user_id=current_user.id)
+    except map_service.NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.delete(
+    "/floors/{floor_id}/map/draft",
+    status_code=204,
+    response_class=Response,
+    dependencies=[Depends(require_admin)],
+)
+async def discard_floor_map_draft(
+    floor_id: int,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Admin: discard draft revision. 204 no-op if no draft exists."""
+    try:
+        map_service.discard_draft_revision(db, floor_id)
+    except map_service.NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------

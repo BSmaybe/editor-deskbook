@@ -72,6 +72,24 @@ class Floor(Base):
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     plan_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    published_map_revision_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey(
+            "floor_map_revisions.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_floor_published_rev",
+        ),
+        nullable=True,
+    )
+    draft_map_revision_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey(
+            "floor_map_revisions.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_floor_draft_rev",
+        ),
+        nullable=True,
+    )
 
     office: Mapped[Office] = relationship("Office", back_populates="floors")
     desks: Mapped[list[Desk]] = relationship(
@@ -79,6 +97,14 @@ class Floor(Base):
     )
 
     __table_args__ = (Index("idx_floors_office_id", "office_id"),)
+
+    @property
+    def has_published_map(self) -> bool:
+        return self.published_map_revision_id is not None
+
+    @property
+    def has_draft_map(self) -> bool:
+        return self.draft_map_revision_id is not None
 
 
 class Desk(Base):
@@ -189,3 +215,24 @@ class FavoriteDesk(Base):
     user_id = Column(String(120), nullable=False, index=True)
     desk_id = Column(Integer, ForeignKey("desks.id", ondelete="CASCADE"), nullable=False)
     __table_args__ = (UniqueConstraint("user_id", "desk_id", name="uq_favorite_desk"),)
+
+
+class FloorMapRevision(Base):
+    __tablename__ = "floor_map_revisions"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    floor_id     = Column(Integer, ForeignKey("floors.id", ondelete="CASCADE"), nullable=False)
+    status       = Column(String(20), nullable=False, server_default="draft")
+    plan_svg     = Column(Text, nullable=True)
+    desks_json   = Column(Text, nullable=False, server_default="[]")
+    zones_json   = Column(Text, nullable=False, server_default="[]")
+    version      = Column(Integer, nullable=False, server_default="1")
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at   = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    created_by   = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('draft','published','archived')", name="ck_fmr_status"),
+        Index("idx_fmr_floor_id", "floor_id"),
+    )

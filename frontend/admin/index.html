@@ -152,54 +152,64 @@
           </div>
           <button id="create-floor-btn" class="btn btn-primary" style="margin-top:16px">Добавить этаж</button>
         </div>
-        <div class="form-panel" style="margin-top:12px">
-          <h3>Загрузить план этажа (PNG)</h3>
-          <div class="grid-2" style="gap:12px">
-            <div class="field">
-              <label for="plan-floor-select">Этаж</label>
-              <select id="plan-floor-select"><option value="">Выберите этаж</option></select>
-            </div>
-            <div class="field">
-              <label for="plan-file">Файл PNG</label>
-              <input id="plan-file" type="file" accept="image/png">
-            </div>
-          </div>
-          <button id="upload-plan-btn" class="btn btn-primary" style="margin-top:16px">Загрузить план</button>
-        </div>
-
-        <!-- Placement editor -->
+        <!-- SVG Map Editor panel -->
         <div class="form-panel" style="margin-top:12px" id="placement-panel">
-          <h3>Редактор размещения столов</h3>
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-            <div class="field" style="max-width:280px;margin:0">
+          <!-- Header row -->
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <div class="field" style="max-width:260px;margin:0">
               <select id="placement-floor-select"><option value="">Выберите этаж</option></select>
             </div>
-            <div id="placement-toolbar" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <button id="mode-select-btn" class="btn btn-secondary btn-sm placement-mode-btn active" data-mode="select">↖ Выбор</button>
-              <button id="mode-desk-btn"   class="btn btn-secondary btn-sm placement-mode-btn" data-mode="desk">+ Стол</button>
-              <button id="mode-room-btn"   class="btn btn-secondary btn-sm placement-mode-btn" data-mode="room">+ Переговорная</button>
-            </div>
-            <p style="font-size:12px;color:var(--text-2);margin:0">
-              Выберите режим, нажмите на план — добавить. Перетащите плитку — переместить. Del — удалить.
-            </p>
+            <span id="map-status-badge" style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:12px;background:var(--border);color:var(--text-2)"></span>
+            <button id="mode-select-btn" class="btn btn-secondary btn-sm placement-mode-btn active" data-mode="select">↖ Выбор</button>
+            <button id="mode-desk-btn"   class="btn btn-secondary btn-sm placement-mode-btn" data-mode="desk">+ Стол</button>
+            <button id="mode-zone-btn"   class="btn btn-secondary btn-sm placement-mode-btn" data-mode="draw-zone">⬠ Зона</button>
+            <label style="margin:0">
+              <input id="plan-file" type="file" accept=".svg,image/svg+xml" style="display:none">
+              <span class="btn btn-secondary btn-sm" style="cursor:pointer" onclick="document.getElementById('plan-file').click()">⬆ SVG</span>
+            </label>
           </div>
+          <!-- Action buttons -->
+          <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+            <button id="save-draft-btn"    class="btn btn-primary btn-sm">Сохранить черновик</button>
+            <button id="publish-btn"       class="btn btn-secondary btn-sm">Опубликовать</button>
+            <button id="discard-draft-btn" class="btn btn-danger btn-sm">Отменить черновик</button>
+          </div>
+          <p id="placement-hint" style="font-size:12px;color:var(--text-2);margin:0 0 8px"></p>
+
+          <!-- Main editor area -->
           <div id="placement-area" style="display:none">
             <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-              <div style="position:relative;display:inline-block;flex-shrink:0;max-width:680px;width:100%">
-                <img id="placement-plan-img" style="max-width:100%;display:block;border-radius:8px;border:1px solid var(--border)" alt="план">
-                <div id="placement-overlay" style="position:absolute;inset:0">
-                  <svg id="placement-svg" style="width:100%;height:100%;overflow:visible" viewBox="0 0 1000 1000" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"></svg>
-                </div>
-              </div>
-              <div style="min-width:240px;flex:1;display:flex;flex-direction:column;gap:10px">
 
-                <!-- Properties panel for selected tile -->
+              <!-- SVG canvas -->
+              <div id="placement-canvas-wrap"
+                   style="position:relative;width:680px;max-width:100%;height:480px;
+                          overflow:hidden;border:1px solid var(--border);border-radius:8px;
+                          background:#f8fafc;cursor:default;flex-shrink:0;user-select:none">
+                <svg id="placement-svg" xmlns="http://www.w3.org/2000/svg"
+                     style="width:100%;height:100%;display:block;touch-action:none">
+                  <g id="floorplan-layer"></g>
+                  <g id="zones-layer"></g>
+                  <g id="drawing-layer"></g>
+                  <g id="markers-layer"></g>
+                </svg>
+              </div>
+
+              <!-- Sidebar -->
+              <div style="min-width:240px;flex:1;display:flex;flex-direction:column;gap:12px">
+                <!-- Properties -->
                 <div id="tile-properties" class="tile-props-panel">
-                  <p class="tile-props-empty" id="tile-properties-empty">Выберите плитку на плане</p>
-                  <div id="tile-properties-form" style="display:none">
+                  <p id="tile-props-empty" style="margin:0;font-size:13px;color:var(--text-2)">Выберите объект на плане</p>
+                  <div id="props-desk-section" style="display:none">
                     <div class="field" style="margin:0 0 8px">
                       <label>Метка</label>
-                      <input id="prop-label" type="text" placeholder="A-1">
+                      <input id="prop-label" type="text" placeholder="A-1" maxlength="40">
+                    </div>
+                    <div class="field" style="margin:0 0 8px">
+                      <label>Тип бронирования</label>
+                      <select id="prop-desk-type">
+                        <option value="flex">Гибкое (flex)</option>
+                        <option value="fixed">Закреплённое (fixed)</option>
+                      </select>
                     </div>
                     <div class="field" style="margin:0 0 8px">
                       <label>Тип пространства</label>
@@ -212,38 +222,51 @@
                       </select>
                     </div>
                     <div class="field" style="margin:0 0 8px">
-                      <label>Тип бронирования</label>
-                      <select id="prop-desk-type">
-                        <option value="flex">Гибкое (flex)</option>
-                        <option value="fixed">Закреплённое (fixed)</option>
-                      </select>
+                      <label>Назначен (fixed)</label>
+                      <input id="prop-assigned" type="text" placeholder="Имя сотрудника" maxlength="120">
                     </div>
                     <div style="display:flex;gap:8px;margin-bottom:8px">
                       <div class="field" style="margin:0;flex:1">
-                        <label>Ширина (W)</label>
-                        <input id="prop-w" type="number" step="0.005" min="0.01" max="0.30">
+                        <label>W</label>
+                        <input id="prop-w" type="number" step="1" min="1">
                       </div>
                       <div class="field" style="margin:0;flex:1">
-                        <label>Высота (H)</label>
-                        <input id="prop-h" type="number" step="0.005" min="0.01" max="0.30">
+                        <label>H</label>
+                        <input id="prop-h" type="number" step="1" min="1">
                       </div>
                     </div>
-                    <button id="prop-delete-btn" class="btn btn-danger btn-sm" style="width:100%">Удалить плитку</button>
+                    <button id="prop-delete-btn" class="btn btn-danger btn-sm" style="width:100%">Удалить</button>
+                  </div>
+                  <div id="props-zone-section" style="display:none">
+                    <div class="field" style="margin:0 0 8px">
+                      <label>Название зоны</label>
+                      <input id="prop-zone-name" type="text" maxlength="120">
+                    </div>
+                    <div class="field" style="margin:0 0 8px">
+                      <label>Тип пространства</label>
+                      <select id="prop-zone-space">
+                        <option value="desk">Стол</option>
+                        <option value="meeting_room">Переговорная</option>
+                        <option value="call_room">Call-room</option>
+                        <option value="open_space">Open Space</option>
+                        <option value="lounge">Лаунж</option>
+                      </select>
+                    </div>
+                    <div class="field" style="margin:0 0 8px">
+                      <label>Цвет зоны</label>
+                      <input id="prop-zone-color" type="color" value="#16a34a">
+                    </div>
+                    <button id="prop-zone-delete-btn" class="btn btn-danger btn-sm" style="width:100%">Удалить зону</button>
                   </div>
                 </div>
-
-                <p style="font-size:13px;font-weight:600;margin:0;color:var(--text)">
-                  Столов на этаже: <span id="desk-count">0</span>
-                </p>
-                <div id="desk-list-editor" style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto"></div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap">
-                  <button id="save-map-btn" class="btn btn-primary btn-sm">Сохранить планировку</button>
-                  <button id="clear-map-btn" class="btn btn-secondary btn-sm">Очистить всё</button>
-                </div>
+                <!-- Desk list -->
+                <div id="desk-list-editor" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto"></div>
+                <!-- Zone list -->
+                <div id="zone-list-editor" style="display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto"></div>
+                <p id="placement-no-svg" class="empty hidden">Нет SVG плана. Загрузите .svg файл.</p>
               </div>
             </div>
           </div>
-          <div id="placement-no-plan" class="empty hidden">У выбранного этажа нет плана. Сначала загрузите PNG.</div>
         </div>
       </div>
 

@@ -107,6 +107,11 @@ function showToast(text, type) {
 // Backwards compat alias
 function addMessage(text, type) { showToast(text, type); }
 
+function authHeader() {
+  var token = getToken();
+  return token ? { Authorization: "Bearer " + token } : {};
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function apiRequest(path, options) {
   options = options || {};
@@ -492,611 +497,748 @@ function populateFloorSelects() {
   });
 }
 
-// ── Placement editor ──────────────────────────────────────────────────────────
-var pendingDesks     = [];
-var placementFloorId = null;
-var _selectedIdx     = null;
-var _placementMode   = "select"; // "select" | "desk" | "room"
-
-var TILE_W  = { desk: 0.03, room: 0.08 };
-var TILE_H  = { desk: 0.02, room: 0.05 };
-var MIN_W   = 0.01, MAX_W = 0.30;
-var MIN_H   = 0.01, MAX_H = 0.30;
-var ANCHOR_R = 6; // SVG units for desk anchor radius
-
-function isBlockType(spaceType) {
-  return spaceType === "meeting_room" || spaceType === "call_room" ||
-         spaceType === "open_space"   || spaceType === "lounge";
-}
+// ── SVG Map Editor ────────────────────────────────────────────────────────────
 
 function escHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-// ── Desk anchor (small dot, center = position_x + w/2, position_y + h/2) ────
-function createAnchor(d, idx, img) {
-  var ns    = "http://www.w3.org/2000/svg";
-  var dw    = d.w || TILE_W.desk;
-  var dh    = d.h || TILE_H.desk;
-  var acx   = (d.position_x + dw / 2) * 1000;
-  var acy   = (d.position_y + dh / 2) * 1000;
-  var isSel = idx === _selectedIdx;
+var mapState = {
+  floorId:  null,
+  status:   null,      // "draft" | "published" | null
+  version:  0,
+  planSvg:  null,
+  desks:    [],        // [{id, label, type, space_type, assigned_to, x, y, w, h}]
+  zones:    [],        // [{id, name, space_type, color, points:[{x,y}...]}]
+  viewBox:  { x:0, y:0, w:1000, h:1000 }
+};
 
-  var g = document.createElementNS(ns, "g");
-  g.classList.add("placement-anchor");
-  if (isSel) g.classList.add("selected");
+var editorState = {
+  selectedType:  null,   // "desk" | "zone"
+  selectedIdx:   null,
+  placementMode: "select", // "select" | "desk" | "draw-zone"
+  drawingZone:   null,   // null | {points:[{x,y}...]}
+  isPanning:     false,
+  panStart:      null    // {svgX, svgY, vxStart, vyStart}
+};
 
-  var ring = null, previewRect = null;
-  if (isSel) {
-    // Dashed ring around dot
-    ring = document.createElementNS(ns, "circle");
-    ring.setAttribute("cx", String(acx));
-    ring.setAttribute("cy", String(acy));
-    ring.setAttribute("r",  String(ANCHOR_R + 7));
-    ring.setAttribute("fill",             "none");
-    ring.setAttribute("stroke",           "#3b82f6");
-    ring.setAttribute("stroke-width",     "3");
-    ring.setAttribute("stroke-dasharray", "5 3");
-    ring.setAttribute("pointer-events",   "none");
-    g.appendChild(ring);
+// SVG default desk dimensions (in viewBox units)
+var DESK_DEFAULT_W = 30;
+var DESK_DEFAULT_H = 20;
 
-    // Dashed preview of client tile size
-    previewRect = document.createElementNS(ns, "rect");
-    previewRect.setAttribute("x",               String(d.position_x * 1000));
-    previewRect.setAttribute("y",               String(d.position_y * 1000));
-    previewRect.setAttribute("width",           String(dw * 1000));
-    previewRect.setAttribute("height",          String(dh * 1000));
-    previewRect.setAttribute("rx",              "5");
-    previewRect.setAttribute("fill",            "none");
-    previewRect.setAttribute("stroke",          "#3b82f6");
-    previewRect.setAttribute("stroke-width",    "2");
-    previewRect.setAttribute("stroke-dasharray","6 4");
-    previewRect.setAttribute("opacity",         "0.45");
-    previewRect.setAttribute("pointer-events",  "none");
-    g.appendChild(previewRect);
+function parseViewBox(svgStr) {
+  if (!svgStr) return { x:0, y:0, w:1000, h:1000 };
+  try {
+    var match = svgStr.match(/viewBox\s*=\s*["']([^"']+)["']/);
+    if (!match) return { x:0, y:0, w:1000, h:1000 };
+    var parts = match[1].trim().split(/[\s,]+/).map(Number);
+    if (parts.length < 4) return { x:0, y:0, w:1000, h:1000 };
+    return { x:parts[0], y:parts[1], w:parts[2], h:parts[3] };
+  } catch { return { x:0, y:0, w:1000, h:1000 }; }
+}
+
+function setViewBox(x, y, w, h) {
+  mapState.viewBox = { x:x, y:y, w:w, h:h };
+  var svg = document.getElementById("placement-svg");
+  if (svg) svg.setAttribute("viewBox", x + " " + y + " " + w + " " + h);
+}
+
+function svgCoordsFromClient(e) {
+  var wrap = document.getElementById("placement-canvas-wrap");
+  if (!wrap) return { x:0, y:0 };
+  var rect = wrap.getBoundingClientRect();
+  var px = (e.clientX - rect.left) / rect.width;
+  var py = (e.clientY - rect.top) / rect.height;
+  var vb = mapState.viewBox;
+  return { x: vb.x + px * vb.w, y: vb.y + py * vb.h };
+}
+
+function updateStatusBadge() {
+  var badge = document.getElementById("map-status-badge");
+  var hint  = document.getElementById("placement-hint");
+  if (!badge) return;
+  var s = mapState.status;
+  if (s === "draft") {
+    badge.textContent = "ЧЕРНОВИК";
+    badge.style.background = "#fef9c3";
+    badge.style.color       = "#854d0e";
+    if (hint) hint.textContent = "Черновик не виден клиентам. Нажмите «Опубликовать» чтобы применить.";
+  } else if (s === "published") {
+    badge.textContent = "ОПУБЛИКОВАНО";
+    badge.style.background = "#dcfce7";
+    badge.style.color       = "#166534";
+    if (hint) hint.textContent = "Карта опубликована. Создайте черновик для редактирования.";
+  } else {
+    badge.textContent = "НЕТ КАРТЫ";
+    badge.style.background = "var(--border)";
+    badge.style.color       = "var(--text-2)";
+    if (hint) hint.textContent = "Загрузите SVG план этажа чтобы начать.";
   }
-
-  // Anchor dot
-  var dot = document.createElementNS(ns, "circle");
-  dot.setAttribute("cx",           String(acx));
-  dot.setAttribute("cy",           String(acy));
-  dot.setAttribute("r",            String(ANCHOR_R));
-  dot.setAttribute("fill",         SPACE_COLORS["desk"] || "#2563eb");
-  dot.setAttribute("stroke",       "white");
-  dot.setAttribute("stroke-width", "4");
-  g.appendChild(dot);
-
-  // Drag: separate click-select from drag so renderMarkers() doesn't kill pointer capture
-  var _anchorMoved = false;
-  g.addEventListener("pointerdown", function (e) {
-    e.stopPropagation();
-    e.preventDefault();
-    _anchorMoved = false;
-    g.setPointerCapture(e.pointerId);
-    // Do NOT call selectDesk here — it triggers renderMarkers() which destroys this element
-  });
-
-  g.addEventListener("pointermove", function (e) {
-    if (!g.hasPointerCapture(e.pointerId)) return;
-    _anchorMoved = true;
-    var ir  = img.getBoundingClientRect();
-    var mx  = Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width));
-    var my  = Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height));
-    var cdw = pendingDesks[idx].w || TILE_W.desk;
-    var cdh = pendingDesks[idx].h || TILE_H.desk;
-    var nx  = Math.round(Math.max(0, Math.min(1 - cdw, mx - cdw / 2)) * 1000) / 1000;
-    var ny  = Math.round(Math.max(0, Math.min(1 - cdh, my - cdh / 2)) * 1000) / 1000;
-    pendingDesks[idx].position_x = nx;
-    pendingDesks[idx].position_y = ny;
-    var nacx = (nx + cdw / 2) * 1000;
-    var nacy = (ny + cdh / 2) * 1000;
-    dot.setAttribute("cx", String(nacx));
-    dot.setAttribute("cy", String(nacy));
-    if (ring)        { ring.setAttribute("cx", String(nacx)); ring.setAttribute("cy", String(nacy)); }
-    if (previewRect) { previewRect.setAttribute("x", String(nx * 1000)); previewRect.setAttribute("y", String(ny * 1000)); }
-  });
-
-  g.addEventListener("pointerup", function (e) {
-    if (!g.hasPointerCapture(e.pointerId)) return;
-    if (_anchorMoved) {
-      // Drag ended: commit selection and re-render to sync selection visuals
-      _selectedIdx = idx;
-      renderMarkers();
-      updatePropertiesPanel();
-    } else {
-      // Simple click: toggle selection
-      selectDesk(idx);
-    }
-  });
-
-  return g;
 }
 
-// ── Room / large-space block (rect with resize handle) ────────────────────
-function createBlock(d, idx, img) {
-  var ns    = "http://www.w3.org/2000/svg";
-  var tileW = (d.w || TILE_W.room) * 1000;
-  var tileH = (d.h || TILE_H.room) * 1000;
-  var tx    = d.position_x * 1000;
-  var ty    = d.position_y * 1000;
-  var isSel = idx === _selectedIdx;
-
-  var g = document.createElementNS(ns, "g");
-  g.classList.add("placement-block");
-  if (isSel) g.classList.add("selected");
-
-  var rect = document.createElementNS(ns, "rect");
-  rect.setAttribute("x",            String(tx));
-  rect.setAttribute("y",            String(ty));
-  rect.setAttribute("width",        String(tileW));
-  rect.setAttribute("height",       String(tileH));
-  rect.setAttribute("rx",           "8");
-  rect.setAttribute("fill",         SPACE_COLORS[d.space_type] || "#7c3aed");
-  rect.setAttribute("fill-opacity", "0.7");
-  rect.setAttribute("stroke",       "white");
-  rect.setAttribute("stroke-width", "4");
-  g.appendChild(rect);
-
-  var outline = null;
-  if (isSel) {
-    outline = document.createElementNS(ns, "rect");
-    outline.setAttribute("x",               String(tx - 4));
-    outline.setAttribute("y",               String(ty - 4));
-    outline.setAttribute("width",           String(tileW + 8));
-    outline.setAttribute("height",          String(tileH + 8));
-    outline.setAttribute("rx",              "10");
-    outline.setAttribute("fill",            "none");
-    outline.setAttribute("stroke",          "#3b82f6");
-    outline.setAttribute("stroke-width",    "3");
-    outline.setAttribute("stroke-dasharray","8 4");
-    outline.setAttribute("pointer-events",  "none");
-    g.appendChild(outline);
-  }
-
-  // Drag (move block) — same click-vs-drag split as anchor
-  var _blockMoved = false;
-  g.addEventListener("pointerdown", function (e) {
-    e.stopPropagation();
-    e.preventDefault();
-    _blockMoved = false;
-    g.setPointerCapture(e.pointerId);
-  });
-
-  g.addEventListener("pointermove", function (e) {
-    if (!g.hasPointerCapture(e.pointerId)) return;
-    _blockMoved = true;
-    var ir = img.getBoundingClientRect();
-    var x  = Math.round(Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width))  * 1000) / 1000;
-    var y  = Math.round(Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height)) * 1000) / 1000;
-    pendingDesks[idx].position_x = x;
-    pendingDesks[idx].position_y = y;
-    rect.setAttribute("x", String(x * 1000));
-    rect.setAttribute("y", String(y * 1000));
-    if (outline) {
-      outline.setAttribute("x", String(x * 1000 - 4));
-      outline.setAttribute("y", String(y * 1000 - 4));
-    }
-    _repositionHandle(handle, x * 1000, y * 1000,
-      (pendingDesks[idx].w || TILE_W.room) * 1000,
-      (pendingDesks[idx].h || TILE_H.room) * 1000);
-  });
-
-  g.addEventListener("pointerup", function (e) {
-    if (!g.hasPointerCapture(e.pointerId)) return;
-    if (_blockMoved) {
-      _selectedIdx = idx;
-      renderMarkers();
-      updatePropertiesPanel();
-    } else {
-      selectDesk(idx);
-    }
-  });
-
-  // Resize handle (only for selected blocks)
-  var handle = null;
-  if (isSel) {
-    handle = document.createElementNS(ns, "rect");
-    handle.classList.add("resize-handle");
-    _repositionHandle(handle, tx, ty, tileW, tileH);
-    handle.setAttribute("rx",           "3");
-    handle.setAttribute("fill",         "#3b82f6");
-    handle.setAttribute("stroke",       "white");
-    handle.setAttribute("stroke-width", "3");
-
-    handle.addEventListener("pointerdown", function (e) {
-      e.stopPropagation();
-      e.preventDefault();
-      handle.setPointerCapture(e.pointerId);
-    });
-
-    handle.addEventListener("pointermove", function (e) {
-      if (!handle.hasPointerCapture(e.pointerId)) return;
-      var ir     = img.getBoundingClientRect();
-      var mouseX = Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width));
-      var mouseY = Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height));
-      var newW   = Math.round(Math.max(MIN_W, Math.min(MAX_W, mouseX - pendingDesks[idx].position_x)) * 1000) / 1000;
-      var newH   = Math.round(Math.max(MIN_H, Math.min(MAX_H, mouseY - pendingDesks[idx].position_y)) * 1000) / 1000;
-      pendingDesks[idx].w = newW;
-      pendingDesks[idx].h = newH;
-      var newTW = newW * 1000, newTH = newH * 1000;
-      rect.setAttribute("width",  String(newTW));
-      rect.setAttribute("height", String(newTH));
-      if (outline) { outline.setAttribute("width", String(newTW + 8)); outline.setAttribute("height", String(newTH + 8)); }
-      _repositionHandle(handle, pendingDesks[idx].position_x * 1000, pendingDesks[idx].position_y * 1000, newTW, newTH);
-      var wIn = document.getElementById("prop-w");
-      var hIn = document.getElementById("prop-h");
-      if (wIn) wIn.value = newW;
-      if (hIn) hIn.value = newH;
-    });
-
-    g.appendChild(handle);
-  }
-
-  return g;
-}
-
-// Helper: reposition resize handle to bottom-right corner of a block
-function _repositionHandle(handle, tx, ty, tileW, tileH) {
-  if (!handle) return;
-  var HS = 16;
-  handle.setAttribute("x",      String(tx + tileW - HS / 2));
-  handle.setAttribute("y",      String(ty + tileH - HS / 2));
-  handle.setAttribute("width",  String(HS));
-  handle.setAttribute("height", String(HS));
-}
-
-// Highlight selected tile and scroll list row into view
-function selectDesk(idx) {
-  _selectedIdx = idx;
-  renderMarkers();
-  updatePropertiesPanel();
-
-  var listEl = document.getElementById("desk-list-editor");
-  listEl.querySelectorAll(".desk-row").forEach(function (r, j) {
-    r.classList.toggle("selected", j === idx);
-  });
-  var row = listEl.querySelectorAll(".desk-row")[idx];
-  if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
-}
-
-function updatePropertiesPanel() {
-  var emptyEl = document.getElementById("tile-properties-empty");
-  var formEl  = document.getElementById("tile-properties-form");
-  if (!emptyEl || !formEl) return;
-
-  if (_selectedIdx === null || !pendingDesks[_selectedIdx]) {
-    emptyEl.style.display = "";
-    formEl.style.display  = "none";
-    return;
-  }
-
-  var d = pendingDesks[_selectedIdx];
-  emptyEl.style.display = "none";
-  formEl.style.display  = "";
-
-  document.getElementById("prop-label").value     = d.label || "";
-  document.getElementById("prop-space").value     = d.space_type || "desk";
-  document.getElementById("prop-desk-type").value = d.type || "flex";
-  document.getElementById("prop-w").value         = d.w || TILE_W.desk;
-  document.getElementById("prop-h").value         = d.h || TILE_H.desk;
-}
-
-function setPlacementMode(mode) {
-  _placementMode = mode;
-  var overlay = document.getElementById("placement-overlay");
-  var isAdd   = mode === "desk" || mode === "room";
-  if (overlay) overlay.style.cursor = isAdd ? "crosshair" : "default";
-  document.querySelectorAll(".placement-mode-btn").forEach(function (btn) {
-    btn.classList.toggle("active", btn.dataset.mode === mode);
-  });
-  renderMarkers();
-}
-
-function initPlacementEditor() {
-  var floorSel = document.getElementById("placement-floor-select");
-  var overlay  = document.getElementById("placement-overlay");
-  var img      = document.getElementById("placement-plan-img");
-
-  // Mode toolbar
-  document.querySelectorAll(".placement-mode-btn").forEach(function (btn) {
-    btn.addEventListener("click", function () { setPlacementMode(btn.dataset.mode); });
-  });
-
-  floorSel.addEventListener("change", function () {
-    placementFloorId = floorSel.value || null;
-    loadPlacementFloor(placementFloorId);
-  });
-
-  document.getElementById("save-map-btn").addEventListener("click", saveMapDesks);
-  document.getElementById("clear-map-btn").addEventListener("click", function () {
-    if (!confirm("Очистить все плитки с плана этажа?")) return;
-    pendingDesks = [];
-    _selectedIdx = null;
-    renderPlacementEditor();
-    updatePropertiesPanel();
-  });
-
-  // Properties panel event listeners
-  document.getElementById("prop-label").addEventListener("input", function () {
-    if (_selectedIdx === null) return;
-    pendingDesks[_selectedIdx].label = this.value;
-    renderMarkers();
-    // Also update the matching list row label
-    var rows = document.getElementById("desk-list-editor").querySelectorAll(".desk-input-label");
-    if (rows[_selectedIdx]) rows[_selectedIdx].value = this.value;
-  });
-
-  document.getElementById("prop-space").addEventListener("change", function () {
-    if (_selectedIdx === null) return;
-    pendingDesks[_selectedIdx].space_type = this.value;
-    renderMarkers();
-    var rows = document.getElementById("desk-list-editor").querySelectorAll(".desk-select-space");
-    if (rows[_selectedIdx]) rows[_selectedIdx].value = this.value;
-  });
-
-  document.getElementById("prop-desk-type").addEventListener("change", function () {
-    if (_selectedIdx === null) return;
-    pendingDesks[_selectedIdx].type = this.value;
-    var rows = document.getElementById("desk-list-editor").querySelectorAll(".desk-select");
-    if (rows[_selectedIdx]) rows[_selectedIdx].value = this.value;
-  });
-
-  document.getElementById("prop-w").addEventListener("input", function () {
-    if (_selectedIdx === null) return;
-    var v = Math.max(MIN_W, Math.min(MAX_W, parseFloat(this.value) || MIN_W));
-    pendingDesks[_selectedIdx].w = v;
-    renderMarkers();
-  });
-
-  document.getElementById("prop-h").addEventListener("input", function () {
-    if (_selectedIdx === null) return;
-    var v = Math.max(MIN_H, Math.min(MAX_H, parseFloat(this.value) || MIN_H));
-    pendingDesks[_selectedIdx].h = v;
-    renderMarkers();
-  });
-
-  document.getElementById("prop-delete-btn").addEventListener("click", function () {
-    if (_selectedIdx === null) return;
-    pendingDesks.splice(_selectedIdx, 1);
-    _selectedIdx = null;
-    renderPlacementEditor();
-    updatePropertiesPanel();
-  });
-
-  // Click on overlay/SVG background → add object (only in desk/room mode)
-  var addStart = null;
-  overlay.addEventListener("pointerdown", function (e) {
-    var isObj = e.target.closest && (e.target.closest(".placement-anchor") || e.target.closest(".placement-block"));
-    if (isObj) return;
-    if (_placementMode !== "desk" && _placementMode !== "room") return;
-    addStart = { x: e.clientX, y: e.clientY };
-  });
-  overlay.addEventListener("pointerup", function (e) {
-    if (!addStart) return;
-    var isObj = e.target.closest && (e.target.closest(".placement-anchor") || e.target.closest(".placement-block"));
-    if (isObj) { addStart = null; return; }
-    var dx = e.clientX - addStart.x, dy = e.clientY - addStart.y;
-    addStart = null;
-    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) return;
-    var ir      = img.getBoundingClientRect();
-    var mx      = Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width));
-    var my      = Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height));
-    var autoIdx = pendingDesks.length + 1;
-    var isRoom  = _placementMode === "room";
-    var newW    = isRoom ? TILE_W.room : TILE_W.desk;
-    var newH    = isRoom ? TILE_H.room : TILE_H.desk;
-    // For desks: center anchor on cursor. For rooms: top-left at cursor.
-    var posX    = isRoom ? mx : Math.max(0, mx - newW / 2);
-    var posY    = isRoom ? my : Math.max(0, my - newH / 2);
-    pendingDesks.push({
-      label:       isRoom ? "R-" + autoIdx : "D-" + autoIdx,
-      type:        "flex",
-      space_type:  isRoom ? "meeting_room" : "desk",
-      assigned_to: "",
-      position_x:  Math.round(posX * 1000) / 1000,
-      position_y:  Math.round(posY * 1000) / 1000,
-      w:           newW,
-      h:           newH,
-    });
-    _selectedIdx = pendingDesks.length - 1;
-    renderPlacementEditor();
-    updatePropertiesPanel();
-  });
-
-  // Del / Backspace to delete selected desk
-  document.addEventListener("keydown", function (e) {
-    if (_selectedIdx === null) return;
-    if (e.key !== "Delete" && e.key !== "Backspace") return;
-    var active = document.activeElement;
-    if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT")) return;
-    pendingDesks.splice(_selectedIdx, 1);
-    _selectedIdx = null;
-    renderPlacementEditor();
-    updatePropertiesPanel();
-  });
-
-  // Deselect on Escape
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && _selectedIdx !== null) {
-      _selectedIdx = null;
-      selectDesk(null);
-    }
-  });
-}
-
-async function loadPlacementFloor(floorId) {
+async function loadFloorMap(floorId) {
   var area   = document.getElementById("placement-area");
-  var noplan = document.getElementById("placement-no-plan");
-  area.style.display = "none";
-  noplan.classList.add("hidden");
-  pendingDesks = [];
-  _selectedIdx = null;
-  if (!floorId) return;
+  var noSvg  = document.getElementById("placement-no-svg");
 
-  var floor = state.floors.find(function (f) { return String(f.id) === String(floorId); });
-  if (!floor || !floor.plan_url) { noplan.classList.remove("hidden"); return; }
+  mapState = { floorId:floorId, status:null, version:0, planSvg:null, desks:[], zones:[], viewBox:{x:0,y:0,w:1000,h:1000} };
+  editorState.selectedType = null;
+  editorState.selectedIdx  = null;
+  editorState.drawingZone  = null;
 
-  var img = document.getElementById("placement-plan-img");
-  img.src = floor.plan_url;
-  area.style.display = "";
+  updateStatusBadge();
+  if (!floorId) { if (area) area.style.display = "none"; return; }
 
   try {
-    var existing = await apiRequest("/desks?floor_id=" + floorId);
-    pendingDesks = existing.map(function (d) {
-      return {
-        label:      d.label,
-        type:       d.type || "flex",
-        space_type: d.space_type || "desk",
-        assigned_to: d.assigned_to || "",
-        position_x: typeof d.position_x === "number" ? d.position_x : null,
-        position_y: typeof d.position_y === "number" ? d.position_y : null,
-        w: typeof d.w === "number" ? d.w : TILE_W.desk,
-        h: typeof d.h === "number" ? d.h : TILE_H.desk,
-      };
-    });
-  } catch {
-    pendingDesks = [];
-  }
-
-  renderPlacementEditor();
-  updatePropertiesPanel();
-}
-
-function renderPlacementEditor() {
-  var img     = document.getElementById("placement-plan-img");
-  var svgEl   = document.getElementById("placement-svg");
-  var listEl  = document.getElementById("desk-list-editor");
-  var countEl = document.getElementById("desk-count");
-
-  if (svgEl) svgEl.innerHTML = "";
-  countEl.textContent = pendingDesks.length;
-  listEl.innerHTML = "";
-
-  pendingDesks.forEach(function (d, i) {
-    // SVG marker on plan (edit mode dispatch)
-    if (d.position_x !== null && d.position_y !== null && svgEl) {
-      if (isBlockType(d.space_type)) {
-        svgEl.appendChild(createBlock(d, i, img));
-      } else {
-        svgEl.appendChild(createAnchor(d, i, img));
-      }
+    var resp = await fetch(API_BASE + "/floors/" + floorId + "/map", { headers: authHeader() });
+    if (resp.status === 404) {
+      if (area) area.style.display = "";
+      if (noSvg) noSvg.classList.remove("hidden");
+      updateStatusBadge();
+      renderZones(); renderMarkers(); renderLists();
+      return;
     }
+    var data = await resp.json();
+    if (!resp.ok) { showToast("Ошибка загрузки карты: " + (data.detail || resp.status), "error"); return; }
 
-    // List row
-    var row = document.createElement("div");
-    row.className = "desk-row" + (i === _selectedIdx ? " selected" : "");
+    mapState.status  = data.status;
+    mapState.version = data.version;
+    mapState.planSvg = data.plan_svg;
+    mapState.desks   = data.desks  || [];
+    mapState.zones   = data.zones  || [];
+    mapState.viewBox = parseViewBox(data.plan_svg);
 
-    row.innerHTML = (
-      "<input class='desk-input desk-input-label' value='" + escHtml(d.label) + "' placeholder='Метка'>" +
-      "<select class='desk-select'>" +
-        "<option value='flex'"  + (d.type === "flex"  ? " selected" : "") + ">Гибкое</option>" +
-        "<option value='fixed'" + (d.type === "fixed" ? " selected" : "") + ">Закреплённое</option>" +
-      "</select>" +
-      "<select class='desk-select desk-select-space'>" +
-        "<option value='desk'"         + (d.space_type === "desk"         ? " selected" : "") + ">Стол</option>" +
-        "<option value='meeting_room'" + (d.space_type === "meeting_room" ? " selected" : "") + ">Переговорная</option>" +
-        "<option value='call_room'"    + (d.space_type === "call_room"    ? " selected" : "") + ">Call-room</option>" +
-        "<option value='open_space'"   + (d.space_type === "open_space"   ? " selected" : "") + ">Open Space</option>" +
-        "<option value='lounge'"       + (d.space_type === "lounge"       ? " selected" : "") + ">Лаунж</option>" +
-      "</select>" +
-      "<input class='desk-input desk-input-assigned' value='" + escHtml(d.assigned_to || "") + "' placeholder='Назначен (fixed)'>" +
-      "<button class='desk-del-btn' title='Удалить место'><i data-lucide='trash-2' style='width:13px;height:13px'></i></button>"
-    );
+    updateStatusBadge();
+    if (area) area.style.display = "";
 
-    var labelInput    = row.querySelector(".desk-input-label");
-    var typeSelect    = row.querySelectorAll(".desk-select")[0];
-    var spaceSelect   = row.querySelector(".desk-select-space");
-    var assignedInput = row.querySelector(".desk-input-assigned");
-    var delBtn        = row.querySelector(".desk-del-btn");
-
-    labelInput.addEventListener("input", function () {
-      pendingDesks[i].label = this.value;
-      renderMarkers();
-    });
-    typeSelect.addEventListener("change", function () {
-      pendingDesks[i].type = this.value;
-      renderMarkers();
-    });
-    spaceSelect.addEventListener("change", function () {
-      pendingDesks[i].space_type = this.value;
-      renderMarkers();
-    });
-    assignedInput.addEventListener("input", function () {
-      pendingDesks[i].assigned_to = this.value;
-    });
-
-    delBtn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      pendingDesks.splice(i, 1);
-      if (_selectedIdx === i) _selectedIdx = null;
-      else if (_selectedIdx !== null && _selectedIdx > i) _selectedIdx--;
-      renderPlacementEditor();
-      updatePropertiesPanel();
-    });
-
-    row.addEventListener("pointerdown", function (e) {
-      if (e.target === delBtn || delBtn.contains(e.target)) return;
-      if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
-      selectDesk(i);
-    });
-
-    listEl.appendChild(row);
-  });
-
-  if (window.lucide) lucide.createIcons({ nodes: [listEl] });
-}
-
-// Re-render SVG markers (called on any data change or selectDesk)
-function renderMarkers() {
-  var img   = document.getElementById("placement-plan-img");
-  var svgEl = document.getElementById("placement-svg");
-  if (!svgEl) return;
-  svgEl.innerHTML = "";
-
-  pendingDesks.forEach(function (d, i) {
-    if (d.position_x === null || d.position_y === null) return;
-    if (isBlockType(d.space_type)) {
-      svgEl.appendChild(createBlock(d, i, img));
+    if (data.plan_svg) {
+      if (noSvg) noSvg.classList.add("hidden");
+      renderFloorPlan(data.plan_svg);
     } else {
-      svgEl.appendChild(createAnchor(d, i, img));
+      if (noSvg) noSvg.classList.remove("hidden");
+      setViewBox(0, 0, 1000, 1000);
+    }
+    renderZones(); renderMarkers(); renderLists();
+    showPropsPanel(null, null);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+function renderFloorPlan(svgContent) {
+  var parser = new DOMParser();
+  var doc = parser.parseFromString(svgContent, "image/svg+xml");
+  var importedRoot = doc.documentElement;
+  var vb = importedRoot.getAttribute("viewBox") || "0 0 1000 1000";
+  var parts = vb.trim().split(/[\s,]+/).map(Number);
+  if (parts.length >= 4) setViewBox(parts[0], parts[1], parts[2], parts[3]);
+
+  var layer = document.getElementById("floorplan-layer");
+  if (!layer) return;
+  layer.innerHTML = "";
+
+  // Copy all child nodes of the parsed SVG into the floorplan layer
+  Array.from(importedRoot.childNodes).forEach(function(node) {
+    try {
+      var imported = document.importNode(node, true);
+      layer.appendChild(imported);
+    } catch(e) {}
+  });
+  // Make floor plan non-interactive
+  layer.setAttribute("pointer-events", "none");
+}
+
+function renderZones() {
+  var ns    = "http://www.w3.org/2000/svg";
+  var layer = document.getElementById("zones-layer");
+  if (!layer) return;
+  layer.innerHTML = "";
+
+  mapState.zones.forEach(function(zone, i) {
+    if (!zone.points || zone.points.length < 3) return;
+    var isSel = editorState.selectedType === "zone" && editorState.selectedIdx === i;
+    var color = zone.color || SPACE_COLORS[zone.space_type] || "#16a34a";
+
+    var pts = zone.points.map(function(p) { return p.x + "," + p.y; }).join(" ");
+    var poly = document.createElementNS(ns, "polygon");
+    poly.setAttribute("points", pts);
+    poly.setAttribute("fill", color);
+    poly.setAttribute("fill-opacity", "0.25");
+    poly.setAttribute("stroke", color);
+    poly.setAttribute("stroke-width", isSel ? "3" : "1.5");
+    if (isSel) poly.setAttribute("stroke-dasharray", "6 3");
+    poly.setAttribute("cursor", "pointer");
+
+    poly.addEventListener("pointerdown", function(e) {
+      e.stopPropagation();
+      selectItem("zone", i);
+    });
+    layer.appendChild(poly);
+
+    // Label at centroid
+    var cx = zone.points.reduce(function(s,p){return s+p.x;},0) / zone.points.length;
+    var cy = zone.points.reduce(function(s,p){return s+p.y;},0) / zone.points.length;
+    var txt = document.createElementNS(ns, "text");
+    txt.setAttribute("x", String(cx));
+    txt.setAttribute("y", String(cy));
+    txt.setAttribute("text-anchor", "middle");
+    txt.setAttribute("dominant-baseline", "middle");
+    txt.setAttribute("fill", color);
+    txt.setAttribute("font-size", String(Math.max(8, mapState.viewBox.w * 0.012)));
+    txt.setAttribute("pointer-events", "none");
+    txt.textContent = zone.name;
+    layer.appendChild(txt);
+  });
+}
+
+function renderMarkers() {
+  var ns    = "http://www.w3.org/2000/svg";
+  var layer = document.getElementById("markers-layer");
+  if (!layer) return;
+  layer.innerHTML = "";
+
+  var r = Math.max(4, mapState.viewBox.w * 0.008);
+
+  mapState.desks.forEach(function(desk, i) {
+    if (desk.x == null) return;
+    var isSel = editorState.selectedType === "desk" && editorState.selectedIdx === i;
+    var cx = desk.x + (desk.w || DESK_DEFAULT_W) / 2;
+    var cy = desk.y + (desk.h || DESK_DEFAULT_H) / 2;
+    var color = SPACE_COLORS[desk.space_type] || "#2563eb";
+
+    var g = document.createElementNS(ns, "g");
+    g.setAttribute("cursor", "pointer");
+
+    if (isSel) {
+      var ring = document.createElementNS(ns, "circle");
+      ring.setAttribute("cx", String(cx)); ring.setAttribute("cy", String(cy));
+      ring.setAttribute("r", String(r + 6));
+      ring.setAttribute("fill", "none");
+      ring.setAttribute("stroke", "#3b82f6");
+      ring.setAttribute("stroke-width", "2.5");
+      ring.setAttribute("stroke-dasharray", "5 3");
+      ring.setAttribute("pointer-events", "none");
+      g.appendChild(ring);
+    }
+
+    var dot = document.createElementNS(ns, "circle");
+    dot.setAttribute("cx", String(cx)); dot.setAttribute("cy", String(cy));
+    dot.setAttribute("r", String(r));
+    dot.setAttribute("fill", color);
+    dot.setAttribute("stroke", "white");
+    dot.setAttribute("stroke-width", "2.5");
+    g.appendChild(dot);
+
+    // Drag support
+    var _moved = false, _startSvg = null;
+    g.addEventListener("pointerdown", function(e) {
+      e.stopPropagation();
+      _moved = false;
+      _startSvg = svgCoordsFromClient(e);
+      g.setPointerCapture(e.pointerId);
+    });
+    g.addEventListener("pointermove", function(e) {
+      if (!g.hasPointerCapture(e.pointerId)) return;
+      _moved = true;
+      var cur = svgCoordsFromClient(e);
+      var dx = cur.x - _startSvg.x, dy = cur.y - _startSvg.y;
+      _startSvg = cur;
+      mapState.desks[i].x = (mapState.desks[i].x || 0) + dx;
+      mapState.desks[i].y = (mapState.desks[i].y || 0) + dy;
+      renderMarkers();
+    });
+    g.addEventListener("pointerup", function(e) {
+      if (!g.hasPointerCapture(e.pointerId)) return;
+      if (!_moved) selectItem("desk", i);
+      else { editorState.selectedType = "desk"; editorState.selectedIdx = i; renderMarkers(); }
+    });
+
+    layer.appendChild(g);
+  });
+}
+
+function renderLists() {
+  var deskList = document.getElementById("desk-list-editor");
+  var zoneList = document.getElementById("zone-list-editor");
+  if (deskList) {
+    deskList.innerHTML = "";
+    mapState.desks.forEach(function(d, i) {
+      var row = document.createElement("div");
+      row.className = "desk-row" + (editorState.selectedType === "desk" && editorState.selectedIdx === i ? " selected" : "");
+      row.style.cssText = "display:flex;gap:6px;align-items:center;padding:4px 6px;border-radius:4px;cursor:pointer;border:1px solid var(--border)";
+      var dot = document.createElement("span");
+      dot.style.cssText = "width:8px;height:8px;border-radius:50%;flex-shrink:0;background:" + (SPACE_COLORS[d.space_type] || "#2563eb");
+      var lbl = document.createElement("span");
+      lbl.style.cssText = "flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      lbl.textContent = d.label || "—";
+      row.appendChild(dot); row.appendChild(lbl);
+      row.addEventListener("click", function() { selectItem("desk", i); });
+      deskList.appendChild(row);
+    });
+  }
+  if (zoneList) {
+    zoneList.innerHTML = "";
+    mapState.zones.forEach(function(z, i) {
+      var row = document.createElement("div");
+      row.className = "desk-row" + (editorState.selectedType === "zone" && editorState.selectedIdx === i ? " selected" : "");
+      row.style.cssText = "display:flex;gap:6px;align-items:center;padding:4px 6px;border-radius:4px;cursor:pointer;border:1px solid var(--border)";
+      var dot = document.createElement("span");
+      dot.style.cssText = "width:8px;height:8px;border-radius:50%;flex-shrink:0;background:" + (z.color || SPACE_COLORS[z.space_type] || "#16a34a");
+      var lbl = document.createElement("span");
+      lbl.style.cssText = "flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      lbl.textContent = "⬠ " + (z.name || "Зона");
+      row.appendChild(dot); row.appendChild(lbl);
+      row.addEventListener("click", function() { selectItem("zone", i); });
+      zoneList.appendChild(row);
+    });
+  }
+}
+
+function selectItem(type, idx) {
+  editorState.selectedType = type;
+  editorState.selectedIdx  = idx;
+  renderZones(); renderMarkers(); renderLists();
+  showPropsPanel(type, idx);
+}
+
+function showPropsPanel(type, idx) {
+  var emptyEl = document.getElementById("tile-props-empty");
+  var deskSec = document.getElementById("props-desk-section");
+  var zoneSec = document.getElementById("props-zone-section");
+  if (!emptyEl || !deskSec || !zoneSec) return;
+
+  emptyEl.style.display = (type === null) ? "" : "none";
+  deskSec.style.display = (type === "desk") ? "" : "none";
+  zoneSec.style.display = (type === "zone") ? "" : "none";
+
+  if (type === "desk" && idx !== null && mapState.desks[idx]) {
+    var d = mapState.desks[idx];
+    document.getElementById("prop-label").value     = d.label || "";
+    document.getElementById("prop-desk-type").value = d.type  || "flex";
+    document.getElementById("prop-space").value     = d.space_type || "desk";
+    document.getElementById("prop-assigned").value  = d.assigned_to || "";
+    document.getElementById("prop-w").value         = Math.round(d.w || DESK_DEFAULT_W);
+    document.getElementById("prop-h").value         = Math.round(d.h || DESK_DEFAULT_H);
+  }
+  if (type === "zone" && idx !== null && mapState.zones[idx]) {
+    var z = mapState.zones[idx];
+    document.getElementById("prop-zone-name").value  = z.name || "";
+    document.getElementById("prop-zone-space").value = z.space_type || "open_space";
+    document.getElementById("prop-zone-color").value = z.color || "#16a34a";
+  }
+}
+
+function clearDrawingLayer() {
+  var layer = document.getElementById("drawing-layer");
+  if (layer) layer.innerHTML = "";
+}
+
+function updateDrawingLayer() {
+  var ns    = "http://www.w3.org/2000/svg";
+  var layer = document.getElementById("drawing-layer");
+  if (!layer || !editorState.drawingZone) return;
+  layer.innerHTML = "";
+  var pts = editorState.drawingZone.points;
+  if (!pts.length) return;
+
+  var ptsStr = pts.map(function(p){ return p.x + "," + p.y; }).join(" ");
+
+  var pl = document.createElementNS(ns, "polyline");
+  pl.setAttribute("points", ptsStr);
+  pl.setAttribute("fill", "none");
+  pl.setAttribute("stroke", "#3b82f6");
+  pl.setAttribute("stroke-width", "2");
+  pl.setAttribute("stroke-dasharray", "6 3");
+  pl.setAttribute("pointer-events", "none");
+  layer.appendChild(pl);
+
+  // Dots at each vertex
+  pts.forEach(function(p, k) {
+    var c = document.createElementNS(ns, "circle");
+    c.setAttribute("cx", String(p.x)); c.setAttribute("cy", String(p.y));
+    c.setAttribute("r", "4");
+    c.setAttribute("fill", k === 0 ? "#ef4444" : "#3b82f6");
+    c.setAttribute("pointer-events", "none");
+    layer.appendChild(c);
+  });
+}
+
+// ── Zoom / Pan (viewBox-based) ────────────────────────────────────────────────
+
+var _minZoomFactor = 0.5, _maxZoomFactor = 8;
+
+function _clampViewBox(x, y, w, h) {
+  var origW = parseViewBox(mapState.planSvg).w || 1000;
+  var origH = parseViewBox(mapState.planSvg).h || 1000;
+  var minW  = origW / _maxZoomFactor, maxW = origW / _minZoomFactor;
+  w = Math.max(minW, Math.min(maxW, w));
+  h = w * origH / origW;
+  return { x:x, y:y, w:w, h:h };
+}
+
+function initSvgZoomPan() {
+  var svg  = document.getElementById("placement-svg");
+  var wrap = document.getElementById("placement-canvas-wrap");
+  if (!svg || !wrap) return;
+
+  // Wheel zoom centered on cursor
+  wrap.addEventListener("wheel", function(e) {
+    e.preventDefault();
+    var pt   = svgCoordsFromClient(e);
+    var factor = e.deltaY < 0 ? 0.85 : 1.15;
+    var vb = mapState.viewBox;
+    var nw = vb.w * factor;
+    var nh = vb.h * factor;
+    var origVb = parseViewBox(mapState.planSvg);
+    var minW   = (origVb.w || 1000) / _maxZoomFactor;
+    var maxW   = (origVb.w || 1000) / _minZoomFactor;
+    nw = Math.max(minW, Math.min(maxW, nw));
+    nh = (origVb.h || 1000) * nw / (origVb.w || 1000);
+    // Keep point under cursor fixed
+    var nx = pt.x - (pt.x - vb.x) * nw / vb.w;
+    var ny = pt.y - (pt.y - vb.y) * nh / vb.h;
+    setViewBox(nx, ny, nw, nh);
+  }, { passive: false });
+
+  // Pan in select mode (pointerdown on background)
+  svg.addEventListener("pointerdown", function(e) {
+    if (editorState.placementMode !== "select") return;
+    if (e.target !== svg && !e.target.closest("#floorplan-layer")) return;
+    editorState.isPanning = true;
+    editorState.panStart  = { svgX: svgCoordsFromClient(e).x, svgY: svgCoordsFromClient(e).y,
+                               vxStart: mapState.viewBox.x, vyStart: mapState.viewBox.y };
+    svg.setPointerCapture(e.pointerId);
+    wrap.style.cursor = "grabbing";
+  });
+
+  svg.addEventListener("pointermove", function(e) {
+    if (!editorState.isPanning) {
+      // Update rubber-band for drawing mode
+      if (editorState.placementMode === "draw-zone" && editorState.drawingZone && editorState.drawingZone.points.length > 0) {
+        var cur = svgCoordsFromClient(e);
+        // show rubber band line from last point to cursor
+        var ns = "http://www.w3.org/2000/svg";
+        var layer = document.getElementById("drawing-layer");
+        if (layer) {
+          // Remove old rubber-band line if any
+          var old = layer.querySelector(".rubber-band");
+          if (old) old.parentNode.removeChild(old);
+          var pts = editorState.drawingZone.points;
+          var last = pts[pts.length - 1];
+          var line = document.createElementNS(ns, "line");
+          line.setAttribute("class", "rubber-band");
+          line.setAttribute("x1", String(last.x)); line.setAttribute("y1", String(last.y));
+          line.setAttribute("x2", String(cur.x));  line.setAttribute("y2", String(cur.y));
+          line.setAttribute("stroke", "#3b82f6");
+          line.setAttribute("stroke-width", "1.5");
+          line.setAttribute("stroke-dasharray", "4 3");
+          line.setAttribute("pointer-events", "none");
+          layer.appendChild(line);
+        }
+      }
+      return;
+    }
+    var cur = svgCoordsFromClient(e);
+    // Note: panStart stores the SVG coord from the first click + original viewBox offset
+    // We need to move viewBox so that the original SVG point stays under cursor
+    var ps = editorState.panStart;
+    var nx = ps.vxStart - (cur.x - ps.svgX);
+    var ny = ps.vyStart - (cur.y - ps.svgY);
+    // Recalculate cur after adjusting (just update x/y, keep w/h)
+    setViewBox(nx, ny, mapState.viewBox.w, mapState.viewBox.h);
+  });
+
+  svg.addEventListener("pointerup", function(e) {
+    if (editorState.isPanning) {
+      editorState.isPanning = false;
+      wrap.style.cursor = "default";
+    }
+  });
+
+  // Click handler for adding objects
+  svg.addEventListener("click", function(e) {
+    if (e.target !== svg && !e.target.closest("#floorplan-layer") &&
+        !e.target.closest("#drawing-layer")) return;
+
+    var pt = svgCoordsFromClient(e);
+
+    if (editorState.placementMode === "desk") {
+      var autoIdx = mapState.desks.length + 1;
+      var newDesk = {
+        id:          (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : ("d-" + Date.now()),
+        label:       "D-" + autoIdx,
+        type:        "flex",
+        space_type:  "desk",
+        assigned_to: null,
+        x: pt.x - DESK_DEFAULT_W / 2,
+        y: pt.y - DESK_DEFAULT_H / 2,
+        w: DESK_DEFAULT_W,
+        h: DESK_DEFAULT_H,
+      };
+      mapState.desks.push(newDesk);
+      selectItem("desk", mapState.desks.length - 1);
+      return;
+    }
+
+    if (editorState.placementMode === "draw-zone") {
+      if (!editorState.drawingZone) {
+        editorState.drawingZone = { points: [] };
+      }
+      var pts = editorState.drawingZone.points;
+
+      // Check close distance to first point
+      if (pts.length >= 3) {
+        var first = pts[0];
+        var r = mapState.viewBox.w * 0.015;
+        var dist = Math.sqrt((pt.x - first.x) * (pt.x - first.x) + (pt.y - first.y) * (pt.y - first.y));
+        if (dist < r) {
+          // Close polygon
+          var newId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : ("z-" + Date.now());
+          mapState.zones.push({
+            id:         newId,
+            name:       "Новая зона",
+            space_type: "open_space",
+            color:      null,
+            points:     pts.slice(),
+          });
+          editorState.drawingZone = null;
+          clearDrawingLayer();
+          selectItem("zone", mapState.zones.length - 1);
+          return;
+        }
+      }
+      pts.push({ x: pt.x, y: pt.y });
+      updateDrawingLayer();
+      return;
     }
   });
 }
 
-async function saveMapDesks() {
-  if (!placementFloorId) { showToast("Выберите этаж.", "error"); return; }
-  var withPos = pendingDesks.filter(function (d) { return d.position_x !== null; });
-  if (!withPos.length) { showToast("Нет размещённых столов.", "error"); return; }
-  var invalid = withPos.filter(function (d) { return d.type === "fixed" && !(d.assigned_to || "").trim(); });
-  if (invalid.length) {
-    showToast("Закреплённые (fixed) места должны иметь назначенного сотрудника: " + invalid.map(function (d) { return d.label || "?"; }).join(", "), "error");
-    return;
-  }
-  if (!confirm("Сохранение пересоздаст все столы этажа (старые будут удалены). Продолжить?")) return;
+// ── Properties panel listeners ────────────────────────────────────────────────
 
+function initPropsListeners() {
+  document.getElementById("prop-label")?.addEventListener("input", function() {
+    if (editorState.selectedType !== "desk" || editorState.selectedIdx === null) return;
+    mapState.desks[editorState.selectedIdx].label = this.value;
+    renderMarkers(); renderLists();
+  });
+  document.getElementById("prop-desk-type")?.addEventListener("change", function() {
+    if (editorState.selectedType !== "desk" || editorState.selectedIdx === null) return;
+    mapState.desks[editorState.selectedIdx].type = this.value;
+  });
+  document.getElementById("prop-space")?.addEventListener("change", function() {
+    if (editorState.selectedType !== "desk" || editorState.selectedIdx === null) return;
+    mapState.desks[editorState.selectedIdx].space_type = this.value;
+    renderMarkers(); renderLists();
+  });
+  document.getElementById("prop-assigned")?.addEventListener("input", function() {
+    if (editorState.selectedType !== "desk" || editorState.selectedIdx === null) return;
+    mapState.desks[editorState.selectedIdx].assigned_to = this.value || null;
+  });
+  document.getElementById("prop-w")?.addEventListener("input", function() {
+    if (editorState.selectedType !== "desk" || editorState.selectedIdx === null) return;
+    mapState.desks[editorState.selectedIdx].w = parseFloat(this.value) || DESK_DEFAULT_W;
+    renderMarkers();
+  });
+  document.getElementById("prop-h")?.addEventListener("input", function() {
+    if (editorState.selectedType !== "desk" || editorState.selectedIdx === null) return;
+    mapState.desks[editorState.selectedIdx].h = parseFloat(this.value) || DESK_DEFAULT_H;
+    renderMarkers();
+  });
+  document.getElementById("prop-delete-btn")?.addEventListener("click", function() {
+    if (editorState.selectedType !== "desk" || editorState.selectedIdx === null) return;
+    mapState.desks.splice(editorState.selectedIdx, 1);
+    editorState.selectedType = null; editorState.selectedIdx = null;
+    renderMarkers(); renderLists(); showPropsPanel(null, null);
+  });
+
+  document.getElementById("prop-zone-name")?.addEventListener("input", function() {
+    if (editorState.selectedType !== "zone" || editorState.selectedIdx === null) return;
+    mapState.zones[editorState.selectedIdx].name = this.value;
+    renderZones(); renderLists();
+  });
+  document.getElementById("prop-zone-space")?.addEventListener("change", function() {
+    if (editorState.selectedType !== "zone" || editorState.selectedIdx === null) return;
+    mapState.zones[editorState.selectedIdx].space_type = this.value;
+    renderZones(); renderLists();
+  });
+  document.getElementById("prop-zone-color")?.addEventListener("input", function() {
+    if (editorState.selectedType !== "zone" || editorState.selectedIdx === null) return;
+    mapState.zones[editorState.selectedIdx].color = this.value;
+    renderZones(); renderLists();
+  });
+  document.getElementById("prop-zone-delete-btn")?.addEventListener("click", function() {
+    if (editorState.selectedType !== "zone" || editorState.selectedIdx === null) return;
+    mapState.zones.splice(editorState.selectedIdx, 1);
+    editorState.selectedType = null; editorState.selectedIdx = null;
+    renderZones(); renderLists(); showPropsPanel(null, null);
+  });
+}
+
+// ── SVG upload ────────────────────────────────────────────────────────────────
+
+async function uploadFloorSVG(file) {
+  if (!mapState.floorId) { showToast("Выберите этаж.", "error"); return; }
   try {
-    var body = withPos.map(function (d) {
-      return {
-        label:       (d.label || "").trim() || ("D-" + (withPos.indexOf(d) + 1)),
-        type:        d.type || "flex",
-        space_type:  d.space_type || "desk",
-        assigned_to: (d.assigned_to || "").trim() || null,
-        position_x:  d.position_x,
-        position_y:  d.position_y,
-        w:           d.w || TILE_W.desk,
-        h:           d.h || TILE_H.desk,
-      };
+    var text = await file.text();
+    var resp = await fetch(API_BASE + "/floors/" + mapState.floorId + "/map/draft/plan-svg", {
+      method:  "POST",
+      headers: Object.assign({ "Content-Type": "image/svg+xml" }, authHeader()),
+      body:    text,
     });
-    await apiRequest("/floors/" + placementFloorId + "/desks-from-map", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    showToast("Сохранено: " + body.length + " " + (body.length === 1 ? "стол" : "столов") + ".", "success");
-    await loadDesks();
+    if (!resp.ok) {
+      var body = await resp.json().catch(function() { return {}; });
+      showToast("Ошибка SVG: " + (body.detail || resp.status), "error");
+      return;
+    }
+    await loadFloorMap(mapState.floorId);
+    showToast("SVG загружен в черновик.", "success");
   } catch (e) {
-    showToast("Ошибка сохранения: " + e.message, "error");
+    showToast("Ошибка: " + e.message, "error");
   }
 }
+
+// ── Save / Publish / Discard ──────────────────────────────────────────────────
+
+async function saveDraft() {
+  if (!mapState.floorId) { showToast("Выберите этаж.", "error"); return; }
+  try {
+    var resp = await fetch(API_BASE + "/floors/" + mapState.floorId + "/map/draft", {
+      method:  "PUT",
+      headers: Object.assign({ "Content-Type": "application/json" }, authHeader()),
+      body:    JSON.stringify({
+        plan_svg: mapState.planSvg,
+        desks:    mapState.desks,
+        zones:    mapState.zones,
+        version:  mapState.version,
+      }),
+    });
+    if (resp.status === 409) { showToast("Конфликт версий. Перезагрузите.", "error"); return; }
+    if (!resp.ok) {
+      var body = await resp.json().catch(function() { return {}; });
+      showToast("Ошибка: " + (body.detail || resp.status), "error");
+      return;
+    }
+    var data = await resp.json();
+    mapState.version = data.version;
+    mapState.status  = data.status;
+    updateStatusBadge();
+    showToast("Черновик сохранён.", "success");
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function publishMap() {
+  if (!mapState.floorId) { showToast("Выберите этаж.", "error"); return; }
+  if (!confirm("Опубликовать карту? Клиенты увидят изменения.")) return;
+  try {
+    var resp = await fetch(API_BASE + "/floors/" + mapState.floorId + "/map/publish", {
+      method: "POST", headers: authHeader(),
+    });
+    if (!resp.ok) {
+      var body = await resp.json().catch(function() { return {}; });
+      showToast("Ошибка публикации: " + (body.detail || resp.status), "error");
+      return;
+    }
+    showToast("Карта опубликована.", "success");
+    await loadFloorMap(mapState.floorId);
+    await loadFloors();
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function discardDraft() {
+  if (!mapState.floorId) { showToast("Выберите этаж.", "error"); return; }
+  if (!confirm("Отменить черновик? Все несохранённые изменения будут потеряны.")) return;
+  try {
+    await fetch(API_BASE + "/floors/" + mapState.floorId + "/map/draft", {
+      method: "DELETE", headers: authHeader(),
+    });
+    showToast("Черновик отменён.", "info");
+    await loadFloorMap(mapState.floorId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────────
+
+function initEditorKeyboard() {
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") {
+      if (editorState.drawingZone) {
+        editorState.drawingZone = null;
+        clearDrawingLayer();
+        return;
+      }
+      if (editorState.selectedType !== null) {
+        editorState.selectedType = null; editorState.selectedIdx = null;
+        renderZones(); renderMarkers(); renderLists(); showPropsPanel(null, null);
+      }
+      return;
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && editorState.selectedType !== null) {
+      var active = document.activeElement;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT")) return;
+      if (editorState.selectedType === "desk") {
+        mapState.desks.splice(editorState.selectedIdx, 1);
+      } else if (editorState.selectedType === "zone") {
+        mapState.zones.splice(editorState.selectedIdx, 1);
+      }
+      editorState.selectedType = null; editorState.selectedIdx = null;
+      renderZones(); renderMarkers(); renderLists(); showPropsPanel(null, null);
+    }
+  });
+}
+
+// ── Editor init ───────────────────────────────────────────────────────────────
+
+function initEditorListeners() {
+  var floorSel = document.getElementById("placement-floor-select");
+  if (floorSel) {
+    floorSel.addEventListener("change", function() {
+      var fid = floorSel.value || null;
+      mapState.floorId = fid;
+      loadFloorMap(fid);
+    });
+  }
+
+  // Mode buttons
+  document.querySelectorAll(".placement-mode-btn").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      editorState.placementMode = btn.dataset.mode;
+      editorState.drawingZone   = null;
+      clearDrawingLayer();
+      document.querySelectorAll(".placement-mode-btn").forEach(function(b) {
+        b.classList.toggle("active", b.dataset.mode === btn.dataset.mode);
+      });
+      var wrap = document.getElementById("placement-canvas-wrap");
+      if (wrap) {
+        wrap.style.cursor = (btn.dataset.mode === "select") ? "default" : "crosshair";
+      }
+    });
+  });
+
+  // Action buttons
+  document.getElementById("save-draft-btn")?.addEventListener("click", saveDraft);
+  document.getElementById("publish-btn")?.addEventListener("click", publishMap);
+  document.getElementById("discard-draft-btn")?.addEventListener("click", discardDraft);
+
+  // SVG file upload
+  var planFile = document.getElementById("plan-file");
+  if (planFile) {
+    planFile.addEventListener("change", function() {
+      if (planFile.files[0]) { uploadFloorSVG(planFile.files[0]); planFile.value = ""; }
+    });
+  }
+
+  initSvgZoomPan();
+  initPropsListeners();
+  initEditorKeyboard();
+}
+
+// ── (all legacy PNG-overlay editor code removed — replaced by SVG editor above) ──
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
 document.querySelectorAll(".nav-item[data-tab]").forEach(function (btn) {
@@ -1206,10 +1348,10 @@ document.getElementById("create-floor-btn").addEventListener("click", async func
   }
 });
 
-// ── Upload floor plan ─────────────────────────────────────────────────────────
-document.getElementById("upload-plan-btn").addEventListener("click", async function () {
-  var floorId = planFloorSelect.value;
-  var file = planFile.files[0];
+// ── Upload floor plan (PNG legacy — kept for backward compat via /floors/{id}/plan) ──
+document.getElementById("upload-plan-btn")?.addEventListener("click", async function () {
+  var floorId = planFloorSelect?.value;
+  var file = planFile?.files?.[0];
   if (!floorId || !file) { showToast("Выберите этаж и файл PNG.", "error"); return; }
   try {
     var token = getToken();
@@ -1225,7 +1367,7 @@ document.getElementById("upload-plan-btn").addEventListener("click", async funct
       throw new Error(body.detail || ("Ошибка " + resp.status));
     }
     showToast("План этажа загружен.", "success");
-    planFile.value = "";
+    if (planFile) planFile.value = "";
     await loadFloors();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
@@ -1323,14 +1465,14 @@ async function init() {
     try {
       await apiRequest("/offices");
       showAdminUI(username);
-      initPlacementEditor();
+      initEditorListeners();
       await loadAll();
     } catch {
       clearToken();
     }
   } else {
     showLoginOverlay();
-    initPlacementEditor();
+    initEditorListeners();
     if (window.lucide) lucide.createIcons();
   }
 }

@@ -614,12 +614,34 @@ function fitFloorPlan() {
 
 // ── Floor plan ───────────────────────────────────────────────────────────────
 
-function renderFloorPlan(floor) {
+// State for the currently shown map revision (SVG-based)
+let _currentRevision = null;
+
+async function renderFloorPlan(floor) {
   document.getElementById("floor-plan-placeholder")?.remove();
   closeSidePanel();
+  _currentRevision = null;
 
   const imageFrame = document.getElementById("map-image-frame");
 
+  // Try to load published SVG revision
+  if (floor?.id) {
+    try {
+      const resp = await fetch(`${API_BASE}/floors/${floor.id}/map/published`, {
+        headers: { Authorization: "Bearer " + getToken() },
+      });
+      if (resp.ok) {
+        const rev = await resp.json();
+        if (rev.plan_svg) {
+          _currentRevision = rev;
+          _renderInlineSVGFloor(rev, imageFrame);
+          return;
+        }
+      }
+    } catch { /* fall through to PNG */ }
+  }
+
+  // PNG fallback
   if (!floor?.plan_url) {
     if (imageFrame) imageFrame.style.display = "none";
     if (deskSvgOverlay) deskSvgOverlay.innerHTML = "";
@@ -642,6 +664,144 @@ function renderFloorPlan(floor) {
   if (mapControls) mapControls.style.display = "";
   initZoomPan();
   renderPlanMarkersFiltered();
+}
+
+function _renderInlineSVGFloor(rev, imageFrame) {
+  // Hide the PNG image frame
+  if (imageFrame) imageFrame.style.display = "none";
+  if (deskSvgOverlay) deskSvgOverlay.innerHTML = "";
+  if (mapControls) mapControls.style.display = "";
+
+  // Remove or reuse inline SVG container
+  let svgWrap = document.getElementById("inline-svg-wrap");
+  if (!svgWrap) {
+    svgWrap = document.createElement("div");
+    svgWrap.id = "inline-svg-wrap";
+    svgWrap.style.cssText = "width:100%;height:100%;position:relative;overflow:hidden";
+    mapZoomWrapper.appendChild(svgWrap);
+  }
+
+  // Parse viewBox
+  const vbMatch = rev.plan_svg.match(/viewBox\s*=\s*["']([^"']+)["']/);
+  const vbParts = vbMatch ? vbMatch[1].trim().split(/[\s,]+/).map(Number) : [0, 0, 1000, 1000];
+  const [vx, vy, vw, vh] = vbParts.length >= 4 ? vbParts : [0, 0, 1000, 1000];
+
+  // Build a combined SVG: floor plan + zones + desk markers
+  const SPACE_COLORS_CLIENT = {
+    desk: "#2563eb", meeting_room: "#7c3aed", call_room: "#0891b2",
+    open_space: "#16a34a", lounge: "#d97706",
+  };
+  const markerR = Math.max(4, vw * 0.008);
+
+  // Zones markup
+  let zonesHtml = "";
+  if (rev.zones && rev.zones.length) {
+    for (const zone of rev.zones) {
+      if (!zone.points || zone.points.length < 3) continue;
+      const color = zone.color || SPACE_COLORS_CLIENT[zone.space_type] || "#16a34a";
+      const pts = zone.points.map(p => `${p.x},${p.y}`).join(" ");
+      const cx = zone.points.reduce((s, p) => s + p.x, 0) / zone.points.length;
+      const cy = zone.points.reduce((s, p) => s + p.y, 0) / zone.points.length;
+      zonesHtml += `<polygon points="${pts}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5" pointer-events="none"/>`;
+      zonesHtml += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" fill="${color}" font-size="${Math.max(8, vw * 0.012)}" pointer-events="none">${_escSvgText(zone.name)}</text>`;
+    }
+  }
+
+  // Desk markers from revision
+  let markersHtml = "";
+  if (rev.desks && rev.desks.length) {
+    for (const desk of rev.desks) {
+      if (desk.x == null) continue;
+      const cx = desk.x + (desk.w || 30) / 2;
+      const cy = desk.y + (desk.h || 20) / 2;
+      const color = SPACE_COLORS_CLIENT[desk.space_type] || "#2563eb";
+      const deskId = desk.id || desk.label;
+      markersHtml += `<g class="desk-tile client-marker" data-desk-id="${_escAttr(deskId)}" data-desk-label="${_escAttr(desk.label)}" cursor="pointer">` +
+        `<circle cx="${cx}" cy="${cy}" r="${markerR}" fill="${color}" stroke="white" stroke-width="2.5"/>` +
+        `</g>`;
+    }
+  }
+
+  // Inject combined SVG
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(rev.plan_svg, "image/svg+xml");
+  const srcSvg = doc.documentElement;
+  const innerContent = srcSvg.innerHTML;
+
+  svgWrap.innerHTML = `
+    <svg id="inline-floor-svg" viewBox="${vx} ${vy} ${vw} ${vh}"
+         style="width:100%;height:100%;display:block;user-select:none"
+         xmlns="http://www.w3.org/2000/svg">
+      <g id="if-floorplan" pointer-events="none">${innerContent}</g>
+      <g id="if-zones">${zonesHtml}</g>
+      <g id="if-markers">${markersHtml}</g>
+    </svg>`;
+
+  // Attach click handlers to markers
+  const inlineSvg = document.getElementById("inline-floor-svg");
+  inlineSvg?.querySelectorAll(".client-marker").forEach(marker => {
+    const deskLabel = marker.dataset.deskLabel;
+    marker.addEventListener("click", () => {
+      // Find matching legacy desk by label or id
+      const desk = state.desks.find(d => d.label === deskLabel) ||
+                   state.desks.find(d => String(d.id) === String(marker.dataset.deskId));
+      if (desk) {
+        showSidePanel(marker, desk);
+      }
+    });
+  });
+
+  // Basic zoom/pan on the inline SVG via viewBox manipulation
+  _initInlineSvgZoomPan(inlineSvg, vx, vy, vw, vh);
+}
+
+function _escSvgText(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function _escAttr(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function _initInlineSvgZoomPan(svg, origX, origY, origW, origH) {
+  if (!svg) return;
+  let vx = origX, vy = origY, vw = origW, vh = origH;
+  let isPanning = false, panStart = null;
+
+  function applyVB() {
+    svg.setAttribute("viewBox", `${vx} ${vy} ${vw} ${vh}`);
+  }
+
+  svg.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / rect.width;
+    const py = (e.clientY - rect.top) / rect.height;
+    const ptX = vx + px * vw, ptY = vy + py * vh;
+    const factor = e.deltaY < 0 ? 0.85 : 1.15;
+    const nw = Math.max(origW / 8, Math.min(origW / 0.5, vw * factor));
+    const nh = origH * nw / origW;
+    vx = ptX - px * nw;
+    vy = ptY - py * nh;
+    vw = nw; vh = nh;
+    applyVB();
+  }, { passive: false });
+
+  svg.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".client-marker")) return;
+    isPanning = true;
+    panStart = { clientX: e.clientX, clientY: e.clientY, vx, vy };
+    svg.setPointerCapture(e.pointerId);
+  });
+  svg.addEventListener("pointermove", (e) => {
+    if (!isPanning || !panStart) return;
+    const rect = svg.getBoundingClientRect();
+    const dx = -(e.clientX - panStart.clientX) / rect.width  * vw;
+    const dy = -(e.clientY - panStart.clientY) / rect.height * vh;
+    vx = panStart.vx + dx;
+    vy = panStart.vy + dy;
+    applyVB();
+  });
+  svg.addEventListener("pointerup", () => { isPanning = false; panStart = null; });
 }
 
 // ── Side panel ───────────────────────────────────────────────────────────────
