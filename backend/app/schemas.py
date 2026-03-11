@@ -185,6 +185,7 @@ class PolicyBase(BaseModel):
     min_duration_minutes: int = Field(30, ge=15, le=1440)
     max_duration_minutes: int = Field(480, ge=15, le=1440)
     no_show_timeout_minutes: int = Field(15, ge=0, le=120)
+    max_bookings_per_day: int = Field(1, ge=1, le=10)
 
     def model_post_init(self, __context: object) -> None:
         self.name = _strip(self.name) or ""
@@ -207,6 +208,7 @@ class PolicyUpdate(BaseModel):
     min_duration_minutes: Optional[int] = Field(None, ge=15, le=1440)
     max_duration_minutes: Optional[int] = Field(None, ge=15, le=1440)
     no_show_timeout_minutes: Optional[int] = Field(None, ge=0, le=120)
+    max_bookings_per_day: Optional[int] = Field(None, ge=1, le=10)
 
     def model_post_init(self, __context: object) -> None:
         if self.name is not None:
@@ -398,3 +400,126 @@ class FloorMapRevisionResponse(BaseModel):
     version: int
     published_at: Optional[datetime]
     updated_at: Optional[datetime]
+
+
+# ── Layout v2 canonical schemas ────────────────────────────────────────────────
+
+class StructureElement(BaseModel):
+    """A wall, boundary, or partition in the layout."""
+    id: str
+    pts: list[list[float]]      # [[x, y], ...]  — at least 2 points
+    thick: float = 4.0
+    closed: bool = False
+    label: Optional[str] = None
+    color: Optional[str] = Field(None, pattern="^#[0-9a-fA-F]{3,6}$")
+    conf: float = Field(1.0, ge=0.0, le=1.0)  # import confidence 0–1
+
+
+class LayoutDesk(BaseModel):
+    id: str
+    label: str = Field(..., min_length=1, max_length=40)
+    name: Optional[str] = Field(None, max_length=120)
+    team: Optional[str] = Field(None, max_length=120)
+    dept: Optional[str] = Field(None, max_length=120)
+    bookable: bool = True
+    fixed: bool = False
+    assigned_to: Optional[str] = Field(None, max_length=120)
+    status: str = Field("available", pattern="^(available|occupied|disabled)$")
+    x: float
+    y: float
+    w: float
+    h: float
+    r: float = 0.0   # rotation degrees
+
+
+class LayoutBackgroundTransform(BaseModel):
+    x: float
+    y: float
+    w: float = Field(..., gt=0)
+    h: float = Field(..., gt=0)
+
+
+class LayoutDocument(BaseModel):
+    """Canonical floor layout — stored as layout_json in FloorMapRevision."""
+    v: int = 2
+    vb: list[float] = Field(default_factory=lambda: [0.0, 0.0, 1000.0, 1000.0])  # [x,y,w,h]
+    bg_url: Optional[str] = None
+    bg_transform: Optional[LayoutBackgroundTransform] = None
+    walls: list[StructureElement] = Field(default_factory=list, max_length=5000)
+    boundaries: list[StructureElement] = Field(default_factory=list, max_length=1000)
+    partitions: list[StructureElement] = Field(default_factory=list, max_length=5000)
+    desks: list[LayoutDesk] = Field(default_factory=list, max_length=2000)
+
+
+class LayoutDocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    revision_id: int
+    floor_id: int
+    status: str
+    version: int
+    updated_at: Optional[datetime]
+    published_at: Optional[datetime]
+    layout: LayoutDocument
+
+
+class LayoutRevisionSummary(BaseModel):
+    revision_id: int
+    floor_id: int
+    status: str
+    version: int
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+    published_at: Optional[datetime]
+    created_by_id: Optional[int]
+    created_by_username: Optional[str]
+    is_current_published: bool = False
+    is_current_draft: bool = False
+
+
+class LayoutDeskSyncResult(BaseModel):
+    floor_id: int
+    revision_id: int
+    source_status: str
+    created: int
+    updated: int
+    renamed: int
+    total_layout_desks: int
+    unmatched_existing: int
+    deleted: int = 0
+    protected_with_active_reservations: int = 0
+
+
+class FloorLockOut(BaseModel):
+    floor_id: int
+    locked_by_id: int
+    locked_by_username: str
+    locked_at: datetime
+    expires_at: datetime
+
+
+class ImportStats(BaseModel):
+    total_elements: int
+    walls: int
+    boundaries: int
+    partitions: int
+    uncertain: int
+    skipped: int
+
+
+class ImportResult(BaseModel):
+    walls: list[StructureElement] = []
+    boundaries: list[StructureElement] = []
+    partitions: list[StructureElement] = []
+    uncertain: list[StructureElement] = []
+    stats: ImportStats
+    vb: list[float]   # detected viewBox [x,y,w,h]
+
+
+class AuditLogEntry(BaseModel):
+    id: int
+    floor_id: int
+    user_id: Optional[int]
+    action: str
+    revision_id: Optional[int]
+    created_at: datetime
+    note: Optional[str]

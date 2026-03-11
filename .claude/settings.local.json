@@ -1,8 +1,31 @@
 {
   "permissions": {
     "allow": [
+      "Bash(python3:*)",
+      "Bash(node:*)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
       "Bash(docker compose:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(wc:*)",
+      "Bash(docker ps:*)",
+      "WebSearch",
+      "WebFetch(domain:www.skedda.com)",
+      "WebFetch(domain:robinpowered.com)",
+      "WebFetch(domain:www.officespace.com)",
+      "WebFetch(domain:support.robinpowered.com)",
+      "WebFetch(domain:www.condecosoftware.com)",
+      "WebFetch(domain:floorplanmapper.com)",
+      "WebFetch(domain:www.flexopus.com)",
+      "WebFetch(domain:www.deskflex.com)",
+      "WebFetch(domain:support.skedda.com)",
+      "WebFetch(domain:updates.skedda.com)",
+      "WebFetch(domain:staffmap.com)",
+      "WebFetch(domain:peoplemanagingpeople.com)",
+      "WebFetch(domain:help.flexopus.com)",
+      "WebFetch(domain:www.officespacesoftware.com)"
     ]
   }
 }

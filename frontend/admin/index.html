@@ -8,6 +8,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./editor.css">
 </head>
 <body>
   <!-- Auth overlay -->
@@ -36,7 +37,7 @@
   <!-- Admin layout -->
   <div id="admin-app" class="admin-layout hidden">
     <!-- Sidebar -->
-    <aside class="sidebar">
+    <aside id="admin-sidebar" class="sidebar">
       <div class="sidebar-logo">
         <div class="sidebar-logo-brand">
           <div class="sidebar-logo-icon">
@@ -54,6 +55,10 @@
         <button class="nav-item" data-tab="floors">
           <i data-lucide="layers" style="width:15px;height:15px"></i>
           Этажи
+        </button>
+        <button class="nav-item" data-tab="editor">
+          <i data-lucide="pencil-ruler" style="width:15px;height:15px"></i>
+          Редактор
         </button>
         <button class="nav-item" data-tab="policies">
           <i data-lucide="file-text" style="width:15px;height:15px"></i>
@@ -80,6 +85,9 @@
 
     <!-- Main content area -->
     <main class="main-content">
+      <div class="main-toolbar">
+        <button id="admin-sidebar-toggle" class="main-sidebar-toggle" type="button" title="Скрыть меню" aria-expanded="true">☰</button>
+      </div>
 
       <!-- Offices tab -->
       <div id="tab-offices" class="tab-content">
@@ -152,123 +160,336 @@
           </div>
           <button id="create-floor-btn" class="btn btn-primary" style="margin-top:16px">Добавить этаж</button>
         </div>
-        <!-- SVG Map Editor panel -->
-        <div class="form-panel" style="margin-top:12px" id="placement-panel">
-          <!-- Header row -->
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-            <div class="field" style="max-width:260px;margin:0">
-              <select id="placement-floor-select"><option value="">Выберите этаж</option></select>
+        <div class="form-panel" style="margin-top:12px;padding:14px">
+          <p style="margin:0;font-size:13px;color:var(--text-2)">
+            Для редактирования планов используйте вкладку
+            <strong style="color:var(--accent);cursor:pointer" onclick="document.querySelector('[data-tab=editor]').click()">Редактор</strong>.
+          </p>
+        </div>
+      </div>
+
+      <!-- Floor Editor tab -->
+      <div id="tab-editor" class="tab-content hidden">
+
+        <!-- Toolbar -->
+        <div id="ed-toolbar">
+          <div class="ed-toolbar-row">
+            <div id="ed-toolbar-left">
+              <div class="ed-floor-picker">
+                <label for="ed-floor-select">Этаж</label>
+                <select id="ed-floor-select"><option value="">Выберите этаж…</option></select>
+              </div>
+              <span id="ed-status-badge">НЕТ КАРТЫ</span>
+              <span id="ed-lock-status">Свободно для редактирования</span>
+              <button class="ed-btn ed-btn-ghost" id="ed-lock-btn" title="Захватить редактирование">Захватить</button>
             </div>
-            <span id="map-status-badge" style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:12px;background:var(--border);color:var(--text-2)"></span>
-            <button id="mode-select-btn" class="btn btn-secondary btn-sm placement-mode-btn active" data-mode="select">↖ Выбор</button>
-            <button id="mode-desk-btn"   class="btn btn-secondary btn-sm placement-mode-btn" data-mode="desk">+ Стол</button>
-            <button id="mode-zone-btn"   class="btn btn-secondary btn-sm placement-mode-btn" data-mode="draw-zone">⬠ Зона</button>
-            <label style="margin:0">
-              <input id="plan-file" type="file" accept=".svg,image/svg+xml" style="display:none">
-              <span class="btn btn-secondary btn-sm" style="cursor:pointer" onclick="document.getElementById('plan-file').click()">⬆ SVG</span>
-            </label>
+            <div id="ed-actions">
+              <button class="ed-btn ed-btn-ghost ed-btn-icon" id="ed-grid-btn" title="Сетка (G)">⊞</button>
+              <button class="ed-btn ed-btn-ghost" id="ed-fit-btn" title="По размеру (F)">По размеру</button>
+              <button class="ed-btn ed-btn-ghost" id="ed-sync-bg-btn" title="Подогнать SVG под фон">Фон = SVG</button>
+              <button class="ed-btn ed-btn-ghost" id="ed-bg-adjust-btn" title="Подвинуть / масштабировать фон">Правка фона</button>
+              <button class="ed-btn ed-btn-ghost" id="ed-clear-bg-btn" title="Убрать фоновое изображение">Убрать фон</button>
+              <button class="ed-btn ed-btn-ghost" id="ed-sync-desks-btn" title="Синхронизировать места для бронирования">Синх. мест</button>
+              <button class="ed-btn ed-btn-ghost" id="ed-import-btn">Импорт</button>
+              <button class="ed-btn ed-btn-ghost" id="ed-history-btn">История</button>
+              <div class="ed-toolbar-sep"></div>
+              <button class="ed-btn ed-btn-primary" id="ed-save-btn" disabled>Сохранить</button>
+              <button class="ed-btn ed-btn-green" id="ed-publish-btn" disabled>Опубликовать</button>
+              <button class="ed-btn ed-btn-danger" id="ed-discard-btn" disabled>Отменить</button>
+            </div>
           </div>
-          <!-- Action buttons -->
-          <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-            <button id="save-draft-btn"    class="btn btn-primary btn-sm">Сохранить черновик</button>
-            <button id="publish-btn"       class="btn btn-secondary btn-sm">Опубликовать</button>
-            <button id="discard-draft-btn" class="btn btn-danger btn-sm">Отменить черновик</button>
+
+          <div class="ed-toolbar-row ed-toolbar-row-secondary">
+            <div id="ed-modes">
+              <div class="ed-mode-group">
+                <button class="ed-mode-btn active" data-mode="select" title="Выбор (V)">Выбор <span class="kbd">V</span></button>
+                <button class="ed-mode-btn" data-mode="pan" title="Рука (H)">Панорама <span class="kbd">H</span></button>
+              </div>
+              <div class="ed-toolbar-sep"></div>
+              <div class="ed-mode-group">
+                <button class="ed-mode-btn" data-mode="wall" title="Стена (W)">Стена <span class="kbd">W</span></button>
+                <button class="ed-mode-btn" data-mode="boundary" title="Граница (B)">Зона <span class="kbd">B</span></button>
+                <button class="ed-mode-btn" data-mode="partition" title="Перегородка (P)">Перегородка <span class="kbd">P</span></button>
+              </div>
+              <div class="ed-toolbar-sep"></div>
+              <button class="ed-mode-btn" data-mode="desk" title="Стол (D)">Место <span class="kbd">D</span></button>
+            </div>
+
+            <div class="ed-kpis">
+              <div class="ed-kpi">
+                <span class="ed-kpi-label">Всего мест</span>
+                <strong class="ed-kpi-value" id="ed-kpi-total">0</strong>
+              </div>
+              <div class="ed-kpi">
+                <span class="ed-kpi-label">Свободно</span>
+                <strong class="ed-kpi-value" id="ed-kpi-available">0</strong>
+              </div>
+              <div class="ed-kpi">
+                <span class="ed-kpi-label">Fixed</span>
+                <strong class="ed-kpi-value" id="ed-kpi-fixed">0</strong>
+              </div>
+              <div class="ed-kpi">
+                <span class="ed-kpi-label">Недоступно</span>
+                <strong class="ed-kpi-value" id="ed-kpi-disabled">0</strong>
+              </div>
+            </div>
           </div>
-          <p id="placement-hint" style="font-size:12px;color:var(--text-2);margin:0 0 8px"></p>
 
-          <!-- Main editor area -->
-          <div id="placement-area" style="display:none">
-            <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+          <div class="ed-toolbar-row ed-toolbar-row-tertiary ed-hidden" id="ed-desk-bulk-panel">
+            <div class="ed-bulk-field">
+              <label for="ed-desk-place-mode">Вставка</label>
+              <select id="ed-desk-place-mode">
+                <option value="single">Одиночно</option>
+                <option value="block">Блок</option>
+              </select>
+            </div>
+            <div class="ed-bulk-field">
+              <label for="ed-desk-block-pattern">Шаблон</label>
+              <select id="ed-desk-block-pattern">
+                <option value="rows">Ряды</option>
+                <option value="double">Двойной ряд</option>
+              </select>
+            </div>
+            <div class="ed-bulk-field">
+              <label for="ed-desk-block-axis">Ориентация</label>
+              <select id="ed-desk-block-axis">
+                <option value="horizontal">Горизонтально</option>
+                <option value="vertical">Вертикально</option>
+              </select>
+            </div>
+            <div class="ed-bulk-field">
+              <label for="ed-desk-seats-per-row">Мест в ряду</label>
+              <input id="ed-desk-seats-per-row" type="number" min="1" max="100" value="6">
+            </div>
+            <div class="ed-bulk-field" id="ed-desk-rows-field">
+              <label for="ed-desk-row-count">Рядов</label>
+              <input id="ed-desk-row-count" type="number" min="1" max="50" value="2">
+            </div>
+            <div class="ed-bulk-field ed-hidden" id="ed-desk-pairs-field">
+              <label for="ed-desk-pair-count">Пар</label>
+              <input id="ed-desk-pair-count" type="number" min="1" max="25" value="1">
+            </div>
+            <div class="ed-bulk-note" id="ed-desk-bulk-note">Режим блока: клик + drag для превью, затем клик для подтверждения, Esc — отмена</div>
+            <div class="ed-bulk-conflicts" id="ed-desk-bulk-conflicts" aria-live="polite"></div>
+          </div>
+        </div>
 
-              <!-- SVG canvas -->
-              <div id="placement-canvas-wrap"
-                   style="position:relative;width:680px;max-width:100%;height:480px;
-                          overflow:hidden;border:1px solid var(--border);border-radius:8px;
-                          background:#f8fafc;cursor:default;flex-shrink:0;user-select:none">
-                <svg id="placement-svg" xmlns="http://www.w3.org/2000/svg"
-                     style="width:100%;height:100%;display:block;touch-action:none">
-                  <g id="floorplan-layer"></g>
-                  <g id="zones-layer"></g>
-                  <g id="drawing-layer"></g>
-                  <g id="markers-layer"></g>
-                </svg>
+        <!-- Body -->
+        <div id="ed-body">
+
+          <!-- Left: object list -->
+          <div id="ed-left">
+            <div id="ed-left-header">
+              <div>
+                <span>Инвентарь</span>
+                <p class="ed-panel-subtitle">Объекты и зоны этажа</p>
+              </div>
+              <button class="ed-toggle-btn" id="ed-left-collapse">◀</button>
+            </div>
+            <input id="ed-obj-search" placeholder="Поиск по метке или типу" autocomplete="off">
+            <div id="ed-obj-list">
+              <p style="color:#64748b;font-size:12px;padding:8px 10px">Загрузите этаж, чтобы увидеть объекты.</p>
+            </div>
+          </div>
+
+          <!-- Canvas -->
+          <div id="ed-canvas-wrap" class="mode-select">
+            <div id="ed-canvas-top">
+              <div class="ed-canvas-legend">
+                <span class="ed-legend-item"><i class="ed-legend-dot available"></i>Свободно</span>
+                <span class="ed-legend-item"><i class="ed-legend-dot fixed"></i>Закреплено</span>
+                <span class="ed-legend-item"><i class="ed-legend-dot occupied"></i>Занято</span>
+                <span class="ed-legend-item"><i class="ed-legend-dot disabled"></i>Отключено</span>
+              </div>
+              <span class="ed-canvas-note">Пробел + drag для быстрой панорамы</span>
+            </div>
+
+            <svg id="ed-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000">
+              <defs>
+                <pattern id="ed-grid-pat" width="20" height="20" patternUnits="userSpaceOnUse">
+                  <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#d7dfeb" stroke-width=".8"/>
+                </pattern>
+              </defs>
+              <g id="ed-layer-bg"></g>
+              <rect id="ed-grid-rect" width="100%" height="100%" fill="url(#ed-grid-pat)" style="display:none;pointer-events:none"/>
+              <g id="ed-layer-boundary"></g>
+              <g id="ed-layer-wall"></g>
+              <g id="ed-layer-partition"></g>
+              <g id="ed-layer-desk"></g>
+              <g id="ed-layer-draw"></g>
+              <g id="ed-layer-sel"></g>
+            </svg>
+
+            <!-- Minimap -->
+            <div id="ed-minimap">
+              <svg id="ed-minimap-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+              <div id="ed-minimap-vp"></div>
+            </div>
+
+            <!-- Status bar -->
+            <div id="ed-statusbar">
+              <span id="ed-status-mode">Режим: Выбор</span>
+              <span id="ed-status-hint"></span>
+              <span id="ed-status-coords">—</span>
+              <span id="ed-status-precision"></span>
+              <span id="ed-status-zoom">100%</span>
+              <button class="ed-zoom-btn" id="ed-zoom-out">−</button>
+              <button class="ed-zoom-btn" id="ed-zoom-in">+</button>
+              <button class="ed-zoom-btn ed-btn-ghost" id="ed-zoom-reset" title="Сброс вида">FIT</button>
+            </div>
+
+            <button class="ed-edge-toggle ed-edge-toggle-left ed-hidden" id="ed-left-expand" type="button" title="Показать инвентарь" aria-expanded="false">▶</button>
+            <button class="ed-edge-toggle ed-edge-toggle-right ed-hidden" id="ed-right-expand" type="button" title="Показать свойства" aria-expanded="false">◀</button>
+          </div>
+
+          <!-- Right: properties -->
+          <div id="ed-right">
+            <div id="ed-right-header">
+              <div>
+                <span>Свойства</span>
+                <p class="ed-panel-subtitle">Параметры выбранного объекта</p>
+              </div>
+              <button class="ed-toggle-btn" id="ed-right-collapse">▶</button>
+            </div>
+            <div id="ed-props-body">
+              <p id="ed-props-empty">Выберите объект на плане или в списке слева.</p>
+
+              <!-- Desk props -->
+              <div id="ed-props-desk" class="ed-hidden">
+                <div class="ed-field">
+                  <label>Метка</label>
+                  <input type="text" id="ep-label" maxlength="40">
+                </div>
+                <div class="ed-field">
+                  <label>Имя / описание</label>
+                  <input type="text" id="ep-name" maxlength="120" placeholder="Необязательно">
+                </div>
+                <div class="ed-field">
+                  <label>Команда</label>
+                  <input type="text" id="ep-team" maxlength="120">
+                </div>
+                <div class="ed-field">
+                  <label>Отдел</label>
+                  <input type="text" id="ep-dept" maxlength="120">
+                </div>
+                <div class="ed-prop-section">Тип</div>
+                <div class="ed-checkbox-row">
+                  <input type="checkbox" id="ep-bookable" checked>
+                  <label for="ep-bookable">Доступен для бронирования</label>
+                </div>
+                <div class="ed-checkbox-row">
+                  <input type="checkbox" id="ep-fixed">
+                  <label for="ep-fixed">Постоянно закреплён</label>
+                </div>
+                <div class="ed-field">
+                  <label>Закреплён за (имя / логин)</label>
+                  <input type="text" id="ep-assigned" maxlength="120" placeholder="Только для fixed">
+                </div>
+                <div class="ed-field">
+                  <label>Статус</label>
+                  <select id="ep-status">
+                    <option value="available">Свободен</option>
+                    <option value="occupied">Занят</option>
+                    <option value="disabled">Отключён</option>
+                  </select>
+                </div>
+                <div class="ed-prop-section">Геометрия</div>
+                <div class="ed-row2">
+                  <div class="ed-field"><label>X</label><input type="number" id="ep-x" step="1"></div>
+                  <div class="ed-field"><label>Y</label><input type="number" id="ep-y" step="1"></div>
+                </div>
+                <div class="ed-row3">
+                  <div class="ed-field"><label>W</label><input type="number" id="ep-w" step="1" min="1"></div>
+                  <div class="ed-field"><label>H</label><input type="number" id="ep-h" step="1" min="1"></div>
+                  <div class="ed-field"><label>°</label><input type="number" id="ep-r" step="5" min="-180" max="180"></div>
+                </div>
+                <button class="ed-btn ed-btn-danger" id="ep-desk-del" style="width:100%;margin-top:6px">Удалить стол</button>
               </div>
 
-              <!-- Sidebar -->
-              <div style="min-width:240px;flex:1;display:flex;flex-direction:column;gap:12px">
-                <!-- Properties -->
-                <div id="tile-properties" class="tile-props-panel">
-                  <p id="tile-props-empty" style="margin:0;font-size:13px;color:var(--text-2)">Выберите объект на плане</p>
-                  <div id="props-desk-section" style="display:none">
-                    <div class="field" style="margin:0 0 8px">
-                      <label>Метка</label>
-                      <input id="prop-label" type="text" placeholder="A-1" maxlength="40">
-                    </div>
-                    <div class="field" style="margin:0 0 8px">
-                      <label>Тип бронирования</label>
-                      <select id="prop-desk-type">
-                        <option value="flex">Гибкое (flex)</option>
-                        <option value="fixed">Закреплённое (fixed)</option>
-                      </select>
-                    </div>
-                    <div class="field" style="margin:0 0 8px">
-                      <label>Тип пространства</label>
-                      <select id="prop-space">
-                        <option value="desk">Стол</option>
-                        <option value="meeting_room">Переговорная</option>
-                        <option value="call_room">Call-room</option>
-                        <option value="open_space">Open Space</option>
-                        <option value="lounge">Лаунж</option>
-                      </select>
-                    </div>
-                    <div class="field" style="margin:0 0 8px">
-                      <label>Назначен (fixed)</label>
-                      <input id="prop-assigned" type="text" placeholder="Имя сотрудника" maxlength="120">
-                    </div>
-                    <div style="display:flex;gap:8px;margin-bottom:8px">
-                      <div class="field" style="margin:0;flex:1">
-                        <label>W</label>
-                        <input id="prop-w" type="number" step="1" min="1">
-                      </div>
-                      <div class="field" style="margin:0;flex:1">
-                        <label>H</label>
-                        <input id="prop-h" type="number" step="1" min="1">
-                      </div>
-                    </div>
-                    <button id="prop-delete-btn" class="btn btn-danger btn-sm" style="width:100%">Удалить</button>
+              <!-- Structure (wall/boundary/partition) props -->
+              <div id="ed-props-struct" class="ed-hidden">
+                <div class="ed-field">
+                  <label>Тип</label>
+                  <select id="ep-struct-type">
+                    <option value="wall">Стена</option>
+                    <option value="boundary">Граница</option>
+                    <option value="partition">Перегородка</option>
+                  </select>
+                </div>
+                <div class="ed-field">
+                  <label>Толщина</label>
+                  <input type="number" id="ep-struct-thick" step="0.5" min="0.5" max="40">
+                </div>
+                <div id="ep-zone-fields" class="ed-zone-only">
+                  <div class="ed-field">
+                    <label>Название зоны</label>
+                    <input type="text" id="ep-struct-label" maxlength="120" placeholder="Например: Open Space A">
                   </div>
-                  <div id="props-zone-section" style="display:none">
-                    <div class="field" style="margin:0 0 8px">
-                      <label>Название зоны</label>
-                      <input id="prop-zone-name" type="text" maxlength="120">
-                    </div>
-                    <div class="field" style="margin:0 0 8px">
-                      <label>Тип пространства</label>
-                      <select id="prop-zone-space">
-                        <option value="desk">Стол</option>
-                        <option value="meeting_room">Переговорная</option>
-                        <option value="call_room">Call-room</option>
-                        <option value="open_space">Open Space</option>
-                        <option value="lounge">Лаунж</option>
-                      </select>
-                    </div>
-                    <div class="field" style="margin:0 0 8px">
-                      <label>Цвет зоны</label>
-                      <input id="prop-zone-color" type="color" value="#16a34a">
-                    </div>
-                    <button id="prop-zone-delete-btn" class="btn btn-danger btn-sm" style="width:100%">Удалить зону</button>
+                  <div class="ed-field">
+                    <label>Цвет зоны</label>
+                    <input type="color" id="ep-struct-color" value="#1d4ed8">
                   </div>
                 </div>
-                <!-- Desk list -->
-                <div id="desk-list-editor" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto"></div>
-                <!-- Zone list -->
-                <div id="zone-list-editor" style="display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto"></div>
-                <p id="placement-no-svg" class="empty hidden">Нет SVG плана. Загрузите .svg файл.</p>
+                <div class="ed-checkbox-row">
+                  <input type="checkbox" id="ep-struct-closed">
+                  <label for="ep-struct-closed">Замкнутый контур</label>
+                </div>
+                <div class="ed-field">
+                  <label>Точки (<span id="ep-struct-pt-count">0</span>)</label>
+                </div>
+                <button class="ed-btn ed-btn-danger" id="ep-struct-del" style="width:100%;margin-top:6px">Удалить элемент</button>
               </div>
+            </div>
+          </div>
+
+        </div><!-- /ed-body -->
+
+        <!-- Import overlay (hidden by default) -->
+        <div id="ed-import-overlay" class="ed-hidden">
+          <div id="ed-import-modal">
+            <div id="ed-import-header">
+              <h3>Импорт плана</h3>
+              <button class="ed-btn ed-btn-ghost ed-btn-icon" id="ed-import-close">✕</button>
+            </div>
+            <div id="ed-import-body">
+              <div id="ed-import-drop" class="ed-drop-zone">
+                <div>Перетащите SVG сюда или <u style="cursor:pointer" id="ed-import-browse">выберите файл</u></div>
+                <div style="font-size:11px;margin-top:6px;color:#334155">Также принимается PNG — используется как фон для трассировки</div>
+                <input id="ed-import-file" type="file" accept=".svg,.png,image/svg+xml,image/png" style="display:none">
+              </div>
+              <div id="ed-import-result" class="ed-hidden">
+                <div class="ed-import-stats" id="ed-import-stats"></div>
+                <div style="margin:8px 0;font-size:12px;color:#94a3b8">
+                  Неопределённые элементы (конфиденс &lt;60%) показаны серым. Вы можете изменить их тип.
+                </div>
+                <div id="ed-import-items" style="max-height:200px;overflow-y:auto;font-size:11px;color:#64748b"></div>
+              </div>
+            </div>
+            <div id="ed-import-footer">
+              <button class="ed-btn ed-btn-ghost" id="ed-import-cancel">Отмена</button>
+              <button class="ed-btn ed-btn-primary ed-hidden" id="ed-import-apply">Применить к черновику</button>
             </div>
           </div>
         </div>
-      </div>
+
+        <!-- History overlay -->
+        <div id="ed-history-overlay" class="ed-hidden">
+          <div id="ed-history-modal">
+            <div id="ed-history-header">
+              <h3>История версий</h3>
+              <button class="ed-btn ed-btn-ghost ed-btn-icon" id="ed-history-close">✕</button>
+            </div>
+            <div id="ed-history-body">
+              <p class="ed-history-note">Выберите ревизию, чтобы восстановить ее в текущий черновик.</p>
+              <div id="ed-history-list"></div>
+            </div>
+            <div id="ed-history-footer">
+              <button class="ed-btn ed-btn-ghost" id="ed-history-cancel">Закрыть</button>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /tab-editor -->
 
       <!-- Policies tab -->
       <div id="tab-policies" class="tab-content hidden">
@@ -286,6 +507,7 @@
                 <th>Дни вперёд</th>
                 <th>Длительность (мин)</th>
                 <th>No-show (мин)</th>
+                <th>Лимит/день</th>
                 <th>Действия</th>
               </tr>
             </thead>
@@ -324,6 +546,10 @@
             <div class="field">
               <label for="policy-noshow">No-show таймаут (мин)</label>
               <input id="policy-noshow" type="number" value="15" min="0">
+            </div>
+            <div class="field">
+              <label for="policy-max-per-day">Макс. броней в день</label>
+              <input id="policy-max-per-day" type="number" value="1" min="1" max="10">
             </div>
           </div>
           <button id="create-policy-btn" class="btn btn-primary" style="margin-top:16px">Добавить политику</button>
@@ -457,6 +683,7 @@
   <!-- Fixed toast container -->
   <div id="admin-toast" class="admin-toast-container"></div>
 
+  <script src="./editor.js"></script>
   <script src="./admin.js"></script>
   <script>if (window.lucide) lucide.createIcons();</script>
 </body>

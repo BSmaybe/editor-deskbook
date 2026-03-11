@@ -267,7 +267,7 @@ async function loadFloors(officeId) {
     for (const f of state.floors) {
       const opt = document.createElement("option");
       opt.value = f.id;
-      opt.textContent = f.plan_url ? `${f.name} ✦` : f.name;
+      opt.textContent = (f.plan_url || f.has_published_map || f.has_draft_map) ? `${f.name} ✦` : f.name;
       floorSelect.append(opt);
     }
     floorSelect.disabled = false;
@@ -297,6 +297,13 @@ async function loadDesks(floorId) {
   try {
     state.desks = await apiRequest(`/desks?floor_id=${floorId}`);
     await refreshAvailability();
+    if (_currentLayout) {
+      const imageFrame = document.getElementById("map-image-frame");
+      _renderInlineLayoutFloor(_currentLayout, imageFrame);
+    } else if (_currentRevision) {
+      const imageFrame = document.getElementById("map-image-frame");
+      _renderInlineSVGFloor(_currentRevision, imageFrame);
+    }
   } catch (e) {
     addMessage(`Места: ${e.message}`, "error");
   }
@@ -340,7 +347,15 @@ async function refreshAvailability() {
   }).catch(() => { state.floorReservations = []; });
 
   await Promise.all([availFetch, resvFetch]);
-  renderPlanMarkersFiltered();
+  if (_currentLayout) {
+    const imageFrame = document.getElementById("map-image-frame");
+    _renderInlineLayoutFloor(_currentLayout, imageFrame);
+  } else if (_currentRevision) {
+    const imageFrame = document.getElementById("map-image-frame");
+    _renderInlineSVGFloor(_currentRevision, imageFrame);
+  } else {
+    renderPlanMarkersFiltered();
+  }
   renderColleagues();
 }
 
@@ -443,6 +458,8 @@ let _imgX = 0, _imgY = 0, _imgW = 0, _imgH = 0;
 let _fitMode = 'contain';
 // Pending desk to focus after floor plan loads (used by navigateToDesk)
 let _pendingFocusDeskId = null;
+// Active controller for inline SVG zoom (layout/published SVG modes)
+let _inlineZoomController = null;
 
 function _applyTransform() {
   if (mapZoomContent) {
@@ -466,22 +483,27 @@ function initZoomPan() {
   if (_zoomInitialized) return; // attach listeners only once
   _zoomInitialized = true;
 
-  mapZoomWrapper.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const rect = mapZoomWrapper.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
+  const zoomAround = (cx, cy, nextZoom) => {
     const prevZoom = _zoom;
-    _zoom = Math.min(4, Math.max(_minZoom, _zoom * (e.deltaY < 0 ? 1.15 : 0.87)));
-    // keep point under cursor fixed: translate(Tx,Ty) scale(Z) → cursor = (cx,cy) in wrapper
-    // content point = (cx - Tx) / prevZ, new Tx = cx - contentX * newZ
+    _zoom = Math.min(4, Math.max(_minZoom, nextZoom));
+    if (!Number.isFinite(prevZoom) || prevZoom <= 0) return;
     _tx = cx - (cx - _tx) / prevZoom * _zoom;
     _ty = cy - (cy - _ty) / prevZoom * _zoom;
     _applyTransform();
     mapZoomContent.style.cursor = _zoom > _minZoom ? "grab" : "default";
+  };
+
+  mapZoomWrapper.addEventListener("wheel", (e) => {
+    if (_inlineZoomController) return;
+    e.preventDefault();
+    const rect = mapZoomWrapper.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    zoomAround(cx, cy, _zoom * (e.deltaY < 0 ? 1.15 : 0.87));
   }, { passive: false });
 
   mapZoomWrapper.addEventListener("mousedown", (e) => {
+    if (_inlineZoomController) return;
     if (_zoom <= _minZoom) return;
     _isPanning = true;
     _panStart  = { x: e.clientX, y: e.clientY };
@@ -491,6 +513,7 @@ function initZoomPan() {
   });
 
   window.addEventListener("mousemove", (e) => {
+    if (_inlineZoomController) return;
     if (!_isPanning) return;
     _tx = _panOffset.x + (e.clientX - _panStart.x);
     _ty = _panOffset.y + (e.clientY - _panStart.y);
@@ -498,28 +521,109 @@ function initZoomPan() {
   });
 
   window.addEventListener("mouseup", () => {
+    if (_inlineZoomController) return;
     if (!_isPanning) return;
     _isPanning = false;
     mapZoomContent.style.cursor = _zoom > _minZoom ? "grab" : "default";
   });
 
+  let touchMode = null; // null | pan | pinch
+  let touchPanStart = null;
+  let touchPanOffset = null;
+  let touchPinchStart = null;
+
+  const touchDist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  const initPanFromTouch = (touch) => {
+    touchMode = "pan";
+    touchPanStart = { x: touch.clientX, y: touch.clientY };
+    touchPanOffset = { x: _tx, y: _ty };
+  };
+  const initPinchFromTouches = (t1, t2) => {
+    const rect = mapZoomWrapper.getBoundingClientRect();
+    const dist = Math.max(1, touchDist(t1, t2));
+    const midX = (t1.clientX + t2.clientX) / 2 - rect.left;
+    const midY = (t1.clientY + t2.clientY) / 2 - rect.top;
+    touchMode = "pinch";
+    touchPinchStart = {
+      dist,
+      zoom: _zoom,
+      worldX: (midX - _tx) / Math.max(_zoom, 1e-6),
+      worldY: (midY - _ty) / Math.max(_zoom, 1e-6),
+    };
+  };
+
+  mapZoomWrapper.addEventListener("touchstart", (e) => {
+    if (_inlineZoomController) return;
+    if (e.touches.length >= 2) {
+      initPinchFromTouches(e.touches[0], e.touches[1]);
+      e.preventDefault();
+      return;
+    }
+    if (e.touches.length === 1 && _zoom > _minZoom) {
+      initPanFromTouch(e.touches[0]);
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  mapZoomWrapper.addEventListener("touchmove", (e) => {
+    if (_inlineZoomController) return;
+    if (touchMode === "pinch" && e.touches.length >= 2 && touchPinchStart) {
+      const rect = mapZoomWrapper.getBoundingClientRect();
+      const dist = Math.max(1, touchDist(e.touches[0], e.touches[1]));
+      const ratio = dist / touchPinchStart.dist;
+      const nextZoom = Math.min(4, Math.max(_minZoom, touchPinchStart.zoom * ratio));
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+      _zoom = nextZoom;
+      _tx = midX - touchPinchStart.worldX * _zoom;
+      _ty = midY - touchPinchStart.worldY * _zoom;
+      _applyTransform();
+      mapZoomContent.style.cursor = _zoom > _minZoom ? "grab" : "default";
+      e.preventDefault();
+      return;
+    }
+    if (touchMode === "pan" && e.touches.length === 1 && touchPanStart && touchPanOffset) {
+      _tx = touchPanOffset.x + (e.touches[0].clientX - touchPanStart.x);
+      _ty = touchPanOffset.y + (e.touches[0].clientY - touchPanStart.y);
+      _applyTransform();
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  const handleTouchEnd = (e) => {
+    if (_inlineZoomController) return;
+    if (e.touches.length >= 2) {
+      initPinchFromTouches(e.touches[0], e.touches[1]);
+      return;
+    }
+    if (e.touches.length === 1 && _zoom > _minZoom) {
+      initPanFromTouch(e.touches[0]);
+      return;
+    }
+    touchMode = null;
+    touchPanStart = null;
+    touchPanOffset = null;
+    touchPinchStart = null;
+  };
+
+  mapZoomWrapper.addEventListener("touchend", handleTouchEnd, { passive: true });
+  mapZoomWrapper.addEventListener("touchcancel", handleTouchEnd, { passive: true });
+
   document.getElementById("zoom-in-btn")?.addEventListener("click", () => {
+    if (_inlineZoomController) {
+      _inlineZoomController.zoomBy(1.3);
+      return;
+    }
     const cx = mapZoomWrapper.clientWidth / 2, cy = mapZoomWrapper.clientHeight / 2;
-    const prev = _zoom;
-    _zoom = Math.min(4, _zoom * 1.3);
-    _tx = cx - (cx - _tx) / prev * _zoom;
-    _ty = cy - (cy - _ty) / prev * _zoom;
-    _applyTransform();
-    mapZoomContent.style.cursor = "grab";
+    zoomAround(cx, cy, _zoom * 1.3);
   });
   document.getElementById("zoom-out-btn")?.addEventListener("click", () => {
+    if (_inlineZoomController) {
+      _inlineZoomController.zoomBy(1 / 1.3);
+      return;
+    }
     const cx = mapZoomWrapper.clientWidth / 2, cy = mapZoomWrapper.clientHeight / 2;
-    const prev = _zoom;
-    _zoom = Math.max(_minZoom, _zoom / 1.3);
-    _tx = cx - (cx - _tx) / prev * _zoom;
-    _ty = cy - (cy - _ty) / prev * _zoom;
-    _applyTransform();
-    if (_zoom <= _minZoom) mapZoomContent.style.cursor = "default";
+    zoomAround(cx, cy, _zoom / 1.3);
   });
   document.getElementById("focus-my-desk-btn")?.addEventListener("click", () => {
     const myResv = state.floorReservations.find(r => r.user_id === _username && r.status === "active");
@@ -532,6 +636,10 @@ function initZoomPan() {
   });
 
   document.getElementById("fit-mode-btn")?.addEventListener("click", () => {
+    if (_inlineZoomController) {
+      _inlineZoomController.reset();
+      return;
+    }
     _fitMode = _fitMode === 'height' ? 'contain' : 'height';
     fitFloorPlan();
   });
@@ -616,11 +724,92 @@ function fitFloorPlan() {
 
 // State for the currently shown map revision (SVG-based)
 let _currentRevision = null;
+let _currentLayout = null;
+
+function _clearInlineSvgWrap() {
+  document.getElementById("inline-svg-wrap")?.remove();
+  _inlineZoomController = null;
+}
+
+function _normDeskLabel(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^0-9A-ZА-ЯЁ]/g, "");
+}
+
+function _normHexColor(value, fallback = "#1d4ed8") {
+  const raw = String(value || "").trim();
+  if (/^#[0-9a-f]{3}$/i.test(raw)) {
+    return `#${raw[1]}${raw[1]}${raw[2]}${raw[2]}${raw[3]}${raw[3]}`.toLowerCase();
+  }
+  return /^#[0-9a-f]{6}$/i.test(raw) ? raw.toLowerCase() : fallback;
+}
+
+function _centerOfPts(pts) {
+  if (!Array.isArray(pts) || !pts.length) return { x: 0, y: 0 };
+  let sx = 0;
+  let sy = 0;
+  for (const p of pts) {
+    sx += Number(p?.[0] || 0);
+    sy += Number(p?.[1] || 0);
+  }
+  return { x: sx / pts.length, y: sy / pts.length };
+}
+
+function _findDeskByMarkerData(deskId, deskLabel) {
+  const byId = state.desks.find(d => String(d.id) === String(deskId));
+  if (byId) return byId;
+
+  const byLabel = state.desks.find(d => String(d.label) === String(deskLabel));
+  if (byLabel) return byLabel;
+
+  const normLabel = _normDeskLabel(deskLabel);
+  if (!normLabel) return null;
+  return state.desks.find(d => _normDeskLabel(d.label) === normLabel) || null;
+}
+
+function _deskVisualState(deskId, deskLabel) {
+  const desk = _findDeskByMarkerData(deskId, deskLabel);
+  if (!desk) return { desk: null, isMine: false, isBusy: false };
+
+  const isMine = state.floorReservations.some(
+    (r) => r.desk_id === desk.id && r.user_id === _username && r.status === "active"
+  );
+  const hasActiveReservation = state.floorReservations.some(
+    (r) => r.desk_id === desk.id && r.status === "active"
+  );
+  const avail = state.availability.get(desk.id);
+  const isBusy = !isMine && (hasActiveReservation || (avail && avail.available === false));
+
+  return { desk, isMine, isBusy };
+}
+
+async function _resolveDeskForMarker(marker) {
+  const deskId = marker?.dataset?.deskId || "";
+  const deskLabel = marker?.dataset?.deskLabel || "";
+
+  let desk = _findDeskByMarkerData(deskId, deskLabel);
+  if (desk) return desk;
+
+  const floorId = floorSelect?.value;
+  if (!floorId) return null;
+
+  try {
+    state.desks = await apiRequest(`/desks?floor_id=${floorId}`);
+  } catch {
+    return null;
+  }
+
+  return _findDeskByMarkerData(deskId, deskLabel);
+}
 
 async function renderFloorPlan(floor) {
   document.getElementById("floor-plan-placeholder")?.remove();
   closeSidePanel();
   _currentRevision = null;
+  _currentLayout = null;
+  _inlineZoomController = null;
+  _clearInlineSvgWrap();
 
   const imageFrame = document.getElementById("map-image-frame");
 
@@ -639,6 +828,22 @@ async function renderFloorPlan(floor) {
         }
       }
     } catch { /* fall through to PNG */ }
+
+    // Fallback for new editor: canonical layout/published
+    try {
+      const layoutResp = await fetch(`${API_BASE}/floors/${floor.id}/layout/published`, {
+        headers: { Authorization: "Bearer " + getToken() },
+      });
+      if (layoutResp.ok) {
+        const published = await layoutResp.json();
+        if (published?.layout) {
+          _renderInlineLayoutFloor(published.layout, imageFrame);
+          return;
+        }
+      }
+    } catch { /* continue to PNG fallback */ }
+
+    // Do not render admin draft in client app: booking must rely on published data only.
   }
 
   // PNG fallback
@@ -666,7 +871,123 @@ async function renderFloorPlan(floor) {
   renderPlanMarkersFiltered();
 }
 
+function _renderInlineLayoutFloor(layout, imageFrame) {
+  _currentLayout = layout;
+  if (imageFrame) imageFrame.style.display = "none";
+  if (deskSvgOverlay) deskSvgOverlay.innerHTML = "";
+  if (mapControls) mapControls.style.display = "";
+
+  let svgWrap = document.getElementById("inline-svg-wrap");
+  if (!svgWrap) {
+    svgWrap = document.createElement("div");
+    svgWrap.id = "inline-svg-wrap";
+    svgWrap.style.cssText = "width:100%;height:100%;position:relative;overflow:hidden";
+    mapZoomWrapper.appendChild(svgWrap);
+  }
+
+  const vb = Array.isArray(layout.vb) && layout.vb.length >= 4 ? layout.vb : [0, 0, 1000, 1000];
+  const [vx, vy, vw, vh] = vb.map(Number);
+
+  const bgImage = layout.bg_url
+    ? `<image href="${_escAttr(layout.bg_url)}" x="${vx}" y="${vy}" width="${vw}" height="${vh}" preserveAspectRatio="xMidYMid meet" pointer-events="none"/>`
+    : "";
+
+  let boundaries = "";
+  for (const el of (layout.boundaries || [])) {
+    const ptsArr = Array.isArray(el.pts) ? el.pts : [];
+    if (ptsArr.length < 2) continue;
+    const pts = ptsArr.map(p => `${p[0]},${p[1]}`).join(" ");
+    const color = _normHexColor(el.color, "#1d4ed8");
+    const tag = el.closed === false ? "polyline" : "polygon";
+    const fill = el.closed === false ? "none" : color;
+    boundaries += `<${tag} points="${pts}" fill="${fill}" fill-opacity="0.12" stroke="${color}" stroke-width="1"/>`;
+    if (el.label) {
+      const c = _centerOfPts(ptsArr);
+      boundaries += `<text x="${c.x}" y="${c.y}" text-anchor="middle" dominant-baseline="middle" fill="${color}" stroke="#ffffff" stroke-width="0.8" paint-order="stroke" font-size="${Math.max(9, vw * 0.011)}" font-weight="700" pointer-events="none">${_escSvgText(el.label)}</text>`;
+    }
+  }
+
+  const walls = (layout.walls || []).map(el => {
+    const pts = (el.pts || []).map(p => `${p[0]},${p[1]}`).join(" ");
+    if (!pts) return "";
+    return `<polyline points="${pts}" fill="none" stroke="#64748b" stroke-width="${Math.max(1, Number(el.thick || 4) * 0.6)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }).join("");
+
+  const partitions = (layout.partitions || []).map(el => {
+    const pts = (el.pts || []).map(p => `${p[0]},${p[1]}`).join(" ");
+    if (!pts) return "";
+    return `<polyline points="${pts}" fill="none" stroke="#475569" stroke-width="${Math.max(1, Number(el.thick || 3) * 0.5)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }).join("");
+
+  const layoutDesks = Array.isArray(layout.desks) ? layout.desks : [];
+  const deskSource = layoutDesks.length
+    ? layoutDesks
+    : (state.desks || []).map(d => ({
+        id: d.id,
+        label: d.label,
+        x: vx + Number(d.position_x || 0) * vw,
+        y: vy + Number(d.position_y || 0) * vh,
+        w: Math.max(1, Number(d.w || 0.07) * vw),
+        h: Math.max(1, Number(d.h || 0.05) * vh),
+      }));
+
+  const deskRects = deskSource.map(d => {
+    const x = Number(d.x || 0), y = Number(d.y || 0);
+    const w = Math.max(1, Number(d.w || 30)), h = Math.max(1, Number(d.h || 20));
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const label = _escSvgText(d.label || "");
+    const id = _escAttr(d.id || d.label || "");
+    const visual = _deskVisualState(String(d.id || ""), d.label || "");
+    let fill = "#dbeafe";
+    let stroke = "#2563eb";
+    let textColor = "#1d4ed8";
+    let stateClass = "tile-available";
+    if (visual.isMine) {
+      stateClass = "tile-mine";
+    } else if (visual.isBusy) {
+      fill = "#fee2e2";
+      stroke = "#dc2626";
+      textColor = "#991b1b";
+      stateClass = "tile-busy";
+    }
+    return `<g class="desk-tile client-marker ${stateClass}" data-desk-id="${id}" data-desk-label="${_escAttr(d.label || "")}" cursor="pointer">` +
+      `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${Math.max(1, h * 0.1)}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>` +
+      `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" fill="${textColor}" font-size="${Math.max(7, Math.min(h * 0.45, w * 0.22))}" pointer-events="none">${label}</text>` +
+      `</g>`;
+  }).join("");
+
+  svgWrap.innerHTML = `
+    <svg id="inline-floor-svg" viewBox="${vx} ${vy} ${vw} ${vh}"
+         style="width:100%;height:100%;display:block;user-select:none"
+         xmlns="http://www.w3.org/2000/svg">
+      <g id="if-bg" pointer-events="none">
+        <rect x="${vx}" y="${vy}" width="${vw}" height="${vh}" fill="#f8fbff"/>
+        ${bgImage}
+      </g>
+      <g id="if-boundaries" pointer-events="none">${boundaries}</g>
+      <g id="if-walls" pointer-events="none">${walls}</g>
+      <g id="if-partitions" pointer-events="none">${partitions}</g>
+      <g id="if-markers">${deskRects}</g>
+    </svg>`;
+
+  const inlineSvg = document.getElementById("inline-floor-svg");
+  inlineSvg?.querySelectorAll(".client-marker").forEach(marker => {
+    marker.addEventListener("click", async () => {
+      const desk = await _resolveDeskForMarker(marker);
+      if (desk) {
+        showSidePanel(marker, desk);
+      } else {
+        addMessage("Место не готово к бронированию. Опубликуйте карту и выполните 'Синх. мест' в админке.", "error");
+      }
+    });
+  });
+
+  _inlineZoomController = _initInlineSvgZoomPan(inlineSvg, vx, vy, vw, vh);
+}
+
 function _renderInlineSVGFloor(rev, imageFrame) {
+  _currentLayout = null;
   // Hide the PNG image frame
   if (imageFrame) imageFrame.style.display = "none";
   if (deskSvgOverlay) deskSvgOverlay.innerHTML = "";
@@ -714,10 +1035,21 @@ function _renderInlineSVGFloor(rev, imageFrame) {
       if (desk.x == null) continue;
       const cx = desk.x + (desk.w || 30) / 2;
       const cy = desk.y + (desk.h || 20) / 2;
-      const color = SPACE_COLORS_CLIENT[desk.space_type] || "#2563eb";
       const deskId = desk.id || desk.label;
-      markersHtml += `<g class="desk-tile client-marker" data-desk-id="${_escAttr(deskId)}" data-desk-label="${_escAttr(desk.label)}" cursor="pointer">` +
-        `<circle cx="${cx}" cy="${cy}" r="${markerR}" fill="${color}" stroke="white" stroke-width="2.5"/>` +
+      const visual = _deskVisualState(String(deskId || ""), desk.label || "");
+      let fill = SPACE_COLORS_CLIENT[desk.space_type] || "#2563eb";
+      let stroke = "white";
+      let stateClass = "tile-available";
+      if (visual.isMine) {
+        fill = "#2563eb";
+        stateClass = "tile-mine";
+      } else if (visual.isBusy) {
+        fill = "#dc2626";
+        stroke = "#ffffff";
+        stateClass = "tile-busy";
+      }
+      markersHtml += `<g class="desk-tile client-marker ${stateClass}" data-desk-id="${_escAttr(deskId)}" data-desk-label="${_escAttr(desk.label)}" cursor="pointer">` +
+        `<circle cx="${cx}" cy="${cy}" r="${markerR}" fill="${fill}" stroke="${stroke}" stroke-width="2.5"/>` +
         `</g>`;
     }
   }
@@ -740,19 +1072,18 @@ function _renderInlineSVGFloor(rev, imageFrame) {
   // Attach click handlers to markers
   const inlineSvg = document.getElementById("inline-floor-svg");
   inlineSvg?.querySelectorAll(".client-marker").forEach(marker => {
-    const deskLabel = marker.dataset.deskLabel;
-    marker.addEventListener("click", () => {
-      // Find matching legacy desk by label or id
-      const desk = state.desks.find(d => d.label === deskLabel) ||
-                   state.desks.find(d => String(d.id) === String(marker.dataset.deskId));
+    marker.addEventListener("click", async () => {
+      const desk = await _resolveDeskForMarker(marker);
       if (desk) {
         showSidePanel(marker, desk);
+      } else {
+        addMessage("Место не готово к бронированию. Опубликуйте карту и выполните 'Синх. мест' в админке.", "error");
       }
     });
   });
 
   // Basic zoom/pan on the inline SVG via viewBox manipulation
-  _initInlineSvgZoomPan(inlineSvg, vx, vy, vw, vh);
+  _inlineZoomController = _initInlineSvgZoomPan(inlineSvg, vx, vy, vw, vh);
 }
 
 function _escSvgText(s) {
@@ -763,45 +1094,144 @@ function _escAttr(s) {
 }
 
 function _initInlineSvgZoomPan(svg, origX, origY, origW, origH) {
-  if (!svg) return;
+  if (!svg) return null;
   let vx = origX, vy = origY, vw = origW, vh = origH;
-  let isPanning = false, panStart = null;
+  let isPanning = false;
+  let panStart = null;
+  let pinchStart = null;
+  const pointers = new Map();
+
+  svg.style.touchAction = "none";
+
+  const clampViewWidth = (value) => Math.max(origW / 8, Math.min(origW / 0.5, value));
 
   function applyVB() {
     svg.setAttribute("viewBox", `${vx} ${vy} ${vw} ${vh}`);
+    const ind = document.getElementById("zoom-indicator");
+    if (ind) ind.textContent = `${Math.round((origW / Math.max(vw, 1e-6)) * 100)}%`;
+  }
+
+  function zoomBy(scale, clientX, clientY) {
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const px = (clientX - rect.left) / rect.width;
+    const py = (clientY - rect.top) / rect.height;
+    const ptX = vx + px * vw;
+    const ptY = vy + py * vh;
+    const nextVW = clampViewWidth(vw / Math.max(scale, 1e-6));
+    const nextVH = origH * nextVW / origW;
+    vx = ptX - px * nextVW;
+    vy = ptY - py * nextVH;
+    vw = nextVW;
+    vh = nextVH;
+    applyVB();
+  }
+
+  function beginPinch() {
+    if (pointers.size < 2) return;
+    const [p1, p2] = Array.from(pointers.values()).slice(0, 2);
+    const rect = svg.getBoundingClientRect();
+    const dist = Math.max(1, Math.hypot(p1.x - p2.x, p1.y - p2.y));
+    const midX = (p1.x + p2.x) / 2;
+    const midY = (p1.y + p2.y) / 2;
+    const px = (midX - rect.left) / Math.max(rect.width, 1);
+    const py = (midY - rect.top) / Math.max(rect.height, 1);
+    pinchStart = {
+      dist,
+      startVW: vw,
+      worldX: vx + px * vw,
+      worldY: vy + py * vh,
+    };
+    isPanning = false;
+    panStart = null;
   }
 
   svg.addEventListener("wheel", (e) => {
     e.preventDefault();
-    const rect = svg.getBoundingClientRect();
-    const px = (e.clientX - rect.left) / rect.width;
-    const py = (e.clientY - rect.top) / rect.height;
-    const ptX = vx + px * vw, ptY = vy + py * vh;
-    const factor = e.deltaY < 0 ? 0.85 : 1.15;
-    const nw = Math.max(origW / 8, Math.min(origW / 0.5, vw * factor));
-    const nh = origH * nw / origW;
-    vx = ptX - px * nw;
-    vy = ptY - py * nh;
-    vw = nw; vh = nh;
-    applyVB();
+    e.stopPropagation();
+    zoomBy(e.deltaY < 0 ? 1.18 : (1 / 1.18), e.clientX, e.clientY);
   }, { passive: false });
 
   svg.addEventListener("pointerdown", (e) => {
     if (e.target.closest(".client-marker")) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    if (e.pointerType === "touch") {
+      svg.setPointerCapture(e.pointerId);
+      if (pointers.size >= 2) {
+        beginPinch();
+        return;
+      }
+    }
     isPanning = true;
     panStart = { clientX: e.clientX, clientY: e.clientY, vx, vy };
     svg.setPointerCapture(e.pointerId);
   });
+
   svg.addEventListener("pointermove", (e) => {
+    if (pointers.has(e.pointerId)) {
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    }
+
+    if (pinchStart && pointers.size >= 2) {
+      const [p1, p2] = Array.from(pointers.values()).slice(0, 2);
+      const rect = svg.getBoundingClientRect();
+      const dist = Math.max(1, Math.hypot(p1.x - p2.x, p1.y - p2.y));
+      const ratio = pinchStart.dist / dist;
+      const nextVW = clampViewWidth(pinchStart.startVW * ratio);
+      const nextVH = origH * nextVW / origW;
+      const midX = (p1.x + p2.x) / 2;
+      const midY = (p1.y + p2.y) / 2;
+      const px = (midX - rect.left) / Math.max(rect.width, 1);
+      const py = (midY - rect.top) / Math.max(rect.height, 1);
+      vx = pinchStart.worldX - px * nextVW;
+      vy = pinchStart.worldY - py * nextVH;
+      vw = nextVW;
+      vh = nextVH;
+      applyVB();
+      return;
+    }
+
     if (!isPanning || !panStart) return;
     const rect = svg.getBoundingClientRect();
-    const dx = -(e.clientX - panStart.clientX) / rect.width  * vw;
-    const dy = -(e.clientY - panStart.clientY) / rect.height * vh;
+    const dx = -(e.clientX - panStart.clientX) / Math.max(rect.width, 1) * vw;
+    const dy = -(e.clientY - panStart.clientY) / Math.max(rect.height, 1) * vh;
     vx = panStart.vx + dx;
     vy = panStart.vy + dy;
     applyVB();
   });
-  svg.addEventListener("pointerup", () => { isPanning = false; panStart = null; });
+
+  const endPointer = (e) => {
+    pointers.delete(e.pointerId);
+    if (pinchStart && pointers.size < 2) {
+      pinchStart = null;
+    }
+    if (pointers.size === 1) {
+      const remaining = Array.from(pointers.values())[0];
+      isPanning = true;
+      panStart = { clientX: remaining.x, clientY: remaining.y, vx, vy };
+    } else if (pointers.size === 0) {
+      isPanning = false;
+      panStart = null;
+    }
+  };
+
+  svg.addEventListener("pointerup", endPointer);
+  svg.addEventListener("pointercancel", endPointer);
+
+  applyVB();
+  return {
+    zoomBy(scale) {
+      const rect = svg.getBoundingClientRect();
+      zoomBy(scale, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    },
+    reset() {
+      vx = origX;
+      vy = origY;
+      vw = origW;
+      vh = origH;
+      applyVB();
+    },
+  };
 }
 
 // ── Side panel ───────────────────────────────────────────────────────────────
@@ -2049,15 +2479,26 @@ async function init() {
 
   const savedOffice = localStorage.getItem("dk_office");
   const savedFloor  = localStorage.getItem("dk_floor");
-  if (savedOffice) {
-    officeSelect.value = savedOffice;
-    await loadFloors(savedOffice);
-    await loadPolicies(savedOffice);
-    if (savedFloor && state.floors.some(f => String(f.id) === String(savedFloor))) {
-      floorSelect.value = savedFloor;
-      const floor = state.floors.find(f => String(f.id) === String(savedFloor));
+  const officeCandidate = savedOffice && state.offices.some(o => String(o.id) === String(savedOffice))
+    ? String(savedOffice)
+    : (state.offices[0] ? String(state.offices[0].id) : "");
+
+  if (officeCandidate) {
+    officeSelect.value = officeCandidate;
+    localStorage.setItem("dk_office", officeCandidate);
+    await loadFloors(officeCandidate);
+    await loadPolicies(officeCandidate);
+
+    const floorCandidate = savedFloor && state.floors.some(f => String(f.id) === String(savedFloor))
+      ? String(savedFloor)
+      : (state.floors[0] ? String(state.floors[0].id) : "");
+
+    if (floorCandidate) {
+      floorSelect.value = floorCandidate;
+      localStorage.setItem("dk_floor", floorCandidate);
+      const floor = state.floors.find(f => String(f.id) === String(floorCandidate));
       renderFloorPlan(floor);
-      await loadDesks(savedFloor);
+      await loadDesks(floorCandidate);
     }
   }
 

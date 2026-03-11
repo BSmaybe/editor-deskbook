@@ -98,7 +98,31 @@ def list_desks(db: Session, floor_id: Optional[int] = None) -> list[models.Desk]
     q = db.query(models.Desk)
     if floor_id is not None:
         q = q.filter(models.Desk.floor_id == floor_id)
-    return q.all()
+    desks = q.all()
+    changed = False
+
+    for d in desks:
+        px = 0.0 if d.position_x is None else float(d.position_x)
+        py = 0.0 if d.position_y is None else float(d.position_y)
+        w = 0.07 if d.w is None else float(d.w)
+        h = 0.05 if d.h is None else float(d.h)
+
+        npx = max(0.0, min(1.0, px))
+        npy = max(0.0, min(1.0, py))
+        nw = max(0.01, min(1.0, w))
+        nh = max(0.01, min(1.0, h))
+
+        if (npx != px) or (npy != py) or (nw != w) or (nh != h):
+            d.position_x = npx
+            d.position_y = npy
+            d.w = nw
+            d.h = nh
+            changed = True
+
+    if changed:
+        db.commit()
+
+    return desks
 
 
 def create_desk(db: Session, payload: schemas.DeskCreate) -> models.Desk:
@@ -278,6 +302,23 @@ def check_availability(
     desk = db.query(models.Desk).filter(models.Desk.id == desk_id).first()
     if desk is None:
         raise KeyError("desk")
+    max_bookings_per_day = 1
+    floor = db.query(models.Floor).filter(models.Floor.id == desk.floor_id).first()
+    if floor is not None:
+        policy = (
+            db.query(models.Policy)
+            .filter(
+                or_(
+                    models.Policy.office_id == floor.office_id,
+                    models.Policy.office_id.is_(None),
+                )
+            )
+            .order_by(models.Policy.office_id.desc().nullslast())
+            .first()
+        )
+        if policy is not None and policy.max_bookings_per_day:
+            max_bookings_per_day = max(1, int(policy.max_bookings_per_day))
+
     if desk.type == "fixed" and not desk.assigned_to:
         return schemas.AvailabilityResponse(
             available=False, reason="Desk is fixed but has no assigned employee."
@@ -303,6 +344,23 @@ def check_availability(
                     available=False,
                     reason="Desk already reserved for the requested time.",
                 )
+
+    if user_id:
+        user_day_count = (
+            db.query(models.Reservation)
+            .filter(
+                models.Reservation.user_id == user_id,
+                models.Reservation.reservation_date == reservation_date,
+                models.Reservation.status == "active",
+            )
+            .count()
+        )
+        if user_day_count >= max_bookings_per_day:
+            return schemas.AvailabilityResponse(
+                available=False,
+                reason=f"Достигнут дневной лимит бронирований ({max_bookings_per_day}).",
+            )
+
     return schemas.AvailabilityResponse(available=True)
 
 
@@ -364,6 +422,7 @@ def create_reservation(db: Session, payload: schemas.ReservationCreate) -> model
     # Enforce booking policy for the office this desk belongs to
     # Office-specific policy takes precedence over global (office_id=NULL) fallback
     floor = db.query(models.Floor).filter(models.Floor.id == desk.floor_id).first()
+    max_bookings_per_day = 1
     if floor is not None:
         policy = (
             db.query(models.Policy)
@@ -377,6 +436,8 @@ def create_reservation(db: Session, payload: schemas.ReservationCreate) -> model
             .first()
         )
         if policy is not None:
+            if policy.max_bookings_per_day:
+                max_bookings_per_day = max(1, int(policy.max_bookings_per_day))
             today = date.today()
             reservation_date = payload.reservation_date
 
@@ -408,6 +469,20 @@ def create_reservation(db: Session, payload: schemas.ReservationCreate) -> model
                         f"Максимальная длительность брони — {policy.max_duration_minutes} минут"
                     )
 
+    # Enforce one active reservation per user per day.
+    user_day_reservations = (
+        db.query(models.Reservation)
+        .filter(
+            models.Reservation.user_id == payload.user_id,
+            models.Reservation.reservation_date == payload.reservation_date,
+            models.Reservation.status == "active",
+        )
+        .with_for_update()
+        .all()
+    )
+    if len(user_day_reservations) >= max_bookings_per_day:
+        raise ValueError(f"Достигнут дневной лимит бронирований ({max_bookings_per_day}).")
+
     # Lock active reservations for this desk/date to check overlaps atomically
     active = (
         db.query(models.Reservation)
@@ -426,25 +501,6 @@ def create_reservation(db: Session, payload: schemas.ReservationCreate) -> model
                 payload.start_time, payload.end_time, res.start_time, res.end_time
             ):
                 raise ValueError("Desk already reserved for the requested time.")
-
-    # Check user-level overlap: prevent booking multiple desks at the same time
-    user_conflicts = (
-        db.query(models.Reservation)
-        .filter(
-            models.Reservation.user_id == payload.user_id,
-            models.Reservation.reservation_date == payload.reservation_date,
-            models.Reservation.status == "active",
-            models.Reservation.desk_id != payload.desk_id,
-        )
-        .with_for_update()
-        .all()
-    )
-    for res in user_conflicts:
-        if res.start_time and res.end_time and payload.start_time and payload.end_time:
-            if _time_overlaps(
-                payload.start_time, payload.end_time, res.start_time, res.end_time
-            ):
-                raise ValueError("Вы уже забронировали другое место на это время.")
 
     reservation = models.Reservation(
         desk_id=payload.desk_id,
@@ -542,6 +598,8 @@ def create_policy(db: Session, payload: schemas.PolicyCreate) -> models.Policy:
         raise ValueError("Min days ahead must not exceed max days ahead.")
     if payload.min_duration_minutes > payload.max_duration_minutes:
         raise ValueError("Min duration must not exceed max duration.")
+    if payload.max_bookings_per_day < 1:
+        raise ValueError("Max bookings per day must be at least 1.")
     policy = models.Policy(**payload.model_dump())
     db.add(policy)
     db.commit()
@@ -566,10 +624,13 @@ def update_policy(db: Session, policy_id: int, payload: schemas.PolicyUpdate) ->
     max_days = update_data.get("max_days_ahead", policy.max_days_ahead)
     min_dur = update_data.get("min_duration_minutes", policy.min_duration_minutes)
     max_dur = update_data.get("max_duration_minutes", policy.max_duration_minutes)
+    max_per_day = update_data.get("max_bookings_per_day", policy.max_bookings_per_day)
     if min_days > max_days:
         raise ValueError("Min days ahead must not exceed max days ahead.")
     if min_dur is not None and max_dur is not None and min_dur > max_dur:
         raise ValueError("Min duration must not exceed max duration.")
+    if max_per_day is not None and max_per_day < 1:
+        raise ValueError("Max bookings per day must be at least 1.")
     db.commit()
     db.refresh(policy)
     return policy

@@ -186,6 +186,9 @@ class Policy(Base):
     no_show_timeout_minutes: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="15"
     )
+    max_bookings_per_day: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
 
     office: Mapped[Optional[Office]] = relationship("Office", back_populates="policies")
 
@@ -197,6 +200,10 @@ class Policy(Base):
         CheckConstraint(
             "min_days_ahead <= max_days_ahead",
             name="ck_policies_days_order",
+        ),
+        CheckConstraint(
+            "max_bookings_per_day >= 1",
+            name="ck_policies_max_bookings_per_day",
         ),
         Index("idx_policies_office_id", "office_id"),
     )
@@ -232,7 +239,35 @@ class FloorMapRevision(Base):
     published_at = Column(DateTime(timezone=True), nullable=True)
     created_by   = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
+    layout_json  = Column(Text, nullable=True)   # canonical LayoutDocument JSON (v2 editor)
+
     __table_args__ = (
         CheckConstraint("status IN ('draft','published','archived')", name="ck_fmr_status"),
         Index("idx_fmr_floor_id", "floor_id"),
     )
+
+
+class FloorLock(Base):
+    """Floor-level edit lock so only one admin edits at a time."""
+    __tablename__ = "floor_locks"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    floor_id   = Column(Integer, ForeignKey("floors.id", ondelete="CASCADE"), nullable=False, unique=True)
+    locked_by  = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    locked_at  = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class MapAuditLog(Base):
+    """Audit trail for map publish/discard/rollback events."""
+    __tablename__ = "map_audit_log"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    floor_id    = Column(Integer, ForeignKey("floors.id", ondelete="CASCADE"), nullable=False)
+    user_id     = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action      = Column(String(50), nullable=False)  # saved|published|discarded|rolled_back
+    revision_id = Column(Integer, nullable=True)
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
+    note        = Column(Text, nullable=True)
+
+    __table_args__ = (Index("idx_mal_floor_id", "floor_id"),)
