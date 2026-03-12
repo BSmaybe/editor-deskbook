@@ -7,14 +7,19 @@ import xml.etree.ElementTree as ET
 ALLOWED_TAGS = {
     "svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
     "text", "tspan", "defs", "clipPath", "mask", "symbol", "use", "title", "desc",
-    "linearGradient", "radialGradient", "stop", "pattern",
+    "linearGradient", "radialGradient", "stop", "pattern", "image",
 }
 
 MAX_BYTES = 5 * 1024 * 1024
 MAX_NODES = 50_000
 
 SVG_NS = "http://www.w3.org/2000/svg"
-_DANGER_STYLE = re.compile(r"url\(|expression\(|@import|javascript", re.IGNORECASE)
+_DANGER_STYLE = re.compile(r"expression\(|@import|javascript", re.IGNORECASE)
+_UNSAFE_STYLE_URL = re.compile(r"url\(\s*(['\"])?(?!#)", re.IGNORECASE)
+_SAFE_DATA_IMAGE_RE = re.compile(
+    r"^data:image/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+$",
+    re.IGNORECASE,
+)
 
 
 def _local(tag: str) -> str:
@@ -36,6 +41,7 @@ def _clean_element(el: ET.Element) -> None:
         el.remove(child)
 
     bad = []
+    local_tag = _local(el.tag).lower()
     for attr, val in list(el.attrib.items()):
         local_attr = _local(attr).lower()
         # Remove all event handlers
@@ -43,18 +49,28 @@ def _clean_element(el: ET.Element) -> None:
             bad.append(attr)
             continue
         val_lower = val.lower().strip()
-        # Forbid javascript: and data: in any attribute value
+        # href / xlink:href — only fragment references (#id) are allowed
+        if "href" in local_attr:
+            # Also allow embedded raster images on <image>.
+            if val.startswith("#"):
+                continue
+            if local_tag == "image" and _SAFE_DATA_IMAGE_RE.match(val.strip()):
+                continue
+            bad.append(attr)
+            continue
+        # Forbid javascript: and data: in any other attribute value
         if "javascript:" in val_lower or "data:" in val_lower:
             bad.append(attr)
             continue
-        # href / xlink:href — only fragment references (#id) are allowed
-        if "href" in local_attr:
-            if not val.startswith("#"):
+        # For image tags, keep only safe href + geometry/presentation attributes.
+        if local_tag == "image":
+            if local_attr not in {"x", "y", "width", "height", "preserveaspectratio", "href"}:
                 bad.append(attr)
             continue
         # style — strip if it contains unsafe CSS
-        if local_attr == "style" and _DANGER_STYLE.search(val):
-            bad.append(attr)
+        if local_attr == "style":
+            if _DANGER_STYLE.search(val) or _UNSAFE_STYLE_URL.search(val):
+                bad.append(attr)
     for attr in bad:
         del el.attrib[attr]
 

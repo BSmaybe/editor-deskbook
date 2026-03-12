@@ -210,6 +210,7 @@
                 <button class="ed-mode-btn" data-mode="wall" title="Стена (W)">Стена <span class="kbd">W</span></button>
                 <button class="ed-mode-btn" data-mode="boundary" title="Граница (B)">Зона <span class="kbd">B</span></button>
                 <button class="ed-mode-btn" data-mode="partition" title="Перегородка (P)">Перегородка <span class="kbd">P</span></button>
+                <button class="ed-mode-btn" data-mode="door" title="Дверь (O)">Дверь <span class="kbd">O</span></button>
               </div>
               <div class="ed-toolbar-sep"></div>
               <button class="ed-mode-btn" data-mode="desk" title="Стол (D)">Место <span class="kbd">D</span></button>
@@ -256,6 +257,14 @@
                 <option value="horizontal">Горизонтально</option>
                 <option value="vertical">Вертикально</option>
               </select>
+            </div>
+            <div class="ed-bulk-field">
+              <label for="ed-desk-width">Ширина места</label>
+              <input id="ed-desk-width" type="number" min="4" step="1" value="28">
+            </div>
+            <div class="ed-bulk-field">
+              <label for="ed-desk-height">Высота места</label>
+              <input id="ed-desk-height" type="number" min="4" step="1" value="16">
             </div>
             <div class="ed-bulk-field">
               <label for="ed-desk-seats-per-row">Мест в ряду</label>
@@ -312,9 +321,11 @@
               </defs>
               <g id="ed-layer-bg"></g>
               <rect id="ed-grid-rect" width="100%" height="100%" fill="url(#ed-grid-pat)" style="display:none;pointer-events:none"/>
+              <g id="ed-layer-import-preview"></g>
               <g id="ed-layer-boundary"></g>
               <g id="ed-layer-wall"></g>
               <g id="ed-layer-partition"></g>
+              <g id="ed-layer-door"></g>
               <g id="ed-layer-desk"></g>
               <g id="ed-layer-draw"></g>
               <g id="ed-layer-sel"></g>
@@ -414,6 +425,7 @@
                     <option value="wall">Стена</option>
                     <option value="boundary">Граница</option>
                     <option value="partition">Перегородка</option>
+                    <option value="door">Дверь</option>
                   </select>
                 </div>
                 <div class="ed-field">
@@ -424,6 +436,10 @@
                   <div class="ed-field">
                     <label>Название зоны</label>
                     <input type="text" id="ep-struct-label" maxlength="120" placeholder="Например: Open Space A">
+                  </div>
+                  <div class="ed-field">
+                    <label>Размер шрифта зоны</label>
+                    <input type="number" id="ep-struct-label-size" min="8" max="120" step="1" placeholder="18">
                   </div>
                   <div class="ed-field">
                     <label>Цвет зоны</label>
@@ -459,15 +475,59 @@
               </div>
               <div id="ed-import-result" class="ed-hidden">
                 <div class="ed-import-stats" id="ed-import-stats"></div>
-                <div style="margin:8px 0;font-size:12px;color:#94a3b8">
-                  Неопределённые элементы (конфиденс &lt;60%) показаны серым. Вы можете изменить их тип.
+                <div id="ed-import-summary" class="ed-import-summary"></div>
+                <div class="ed-import-note">
+                  <strong>Confidence</strong> — это уверенность авто-классификатора, а не процент отрисовки.
+                  Предпросмотр на карте обновляется сразу при смене типа.
                 </div>
-                <div id="ed-import-items" style="max-height:200px;overflow-y:auto;font-size:11px;color:#64748b"></div>
+                <div class="ed-import-note ed-import-note-warning">
+                  Режим по умолчанию: <strong>Авто + review</strong>. Нажмите <strong>«Применить авто»</strong> для confidence ≥ 70%, затем проверьте только спорные элементы.
+                </div>
+                <div class="ed-import-legend">
+                  <span class="ed-import-legend-item"><i class="ed-import-legend-dot ok"></i> ≥70%: надёжно</span>
+                  <span class="ed-import-legend-item"><i class="ed-import-legend-dot warn"></i> 40–69%: проверить</span>
+                  <span class="ed-import-legend-item"><i class="ed-import-legend-dot bad"></i> &lt;40%: сомнительно</span>
+                </div>
+                <div id="ed-import-review-controls" class="ed-import-review-controls ed-hidden">
+                  <div class="ed-import-filters">
+                    <select id="ed-import-filter-conf">
+                      <option value="all" selected>Confidence: все</option>
+                      <option value="lt40">Confidence: &lt;40%</option>
+                      <option value="40to69">Confidence: 40–69%</option>
+                      <option value="gte70">Confidence: ≥70%</option>
+                    </select>
+                    <select id="ed-import-filter-type">
+                      <option value="all">Тип: все</option>
+                      <option value="wall">Стена</option>
+                      <option value="boundary">Граница</option>
+                      <option value="partition">Перегородка</option>
+                      <option value="door">Дверь</option>
+                      <option value="skip">Пропуск</option>
+                    </select>
+                    <select id="ed-import-filter-geom">
+                      <option value="all">Геометрия: все</option>
+                      <option value="open">Открытые</option>
+                      <option value="closed">Замкнутые</option>
+                    </select>
+                  </div>
+                  <div class="ed-import-bulk">
+                    <button class="ed-btn ed-btn-ghost ed-btn-sm" id="ed-import-select-visible">Выделить видимые</button>
+                    <button class="ed-btn ed-btn-ghost ed-btn-sm" id="ed-import-clear-selection">Сбросить</button>
+                    <button class="ed-btn ed-btn-ghost ed-btn-sm" id="ed-import-bulk-wall">В стены</button>
+                    <button class="ed-btn ed-btn-ghost ed-btn-sm" id="ed-import-bulk-boundary">В границы</button>
+                    <button class="ed-btn ed-btn-ghost ed-btn-sm" id="ed-import-bulk-partition">В перегородки</button>
+                    <button class="ed-btn ed-btn-ghost ed-btn-sm" id="ed-import-bulk-door">В двери</button>
+                    <button class="ed-btn ed-btn-ghost ed-btn-sm" id="ed-import-bulk-skip">Пропустить</button>
+                  </div>
+                </div>
+                <div id="ed-import-items" class="ed-import-items"></div>
               </div>
             </div>
             <div id="ed-import-footer">
               <button class="ed-btn ed-btn-ghost" id="ed-import-cancel">Отмена</button>
-              <button class="ed-btn ed-btn-primary ed-hidden" id="ed-import-apply">Применить к черновику</button>
+              <button class="ed-btn ed-btn-ghost ed-hidden" id="ed-import-review">Проверить спорные</button>
+              <button class="ed-btn ed-btn-primary ed-hidden" id="ed-import-apply-auto">Применить авто</button>
+              <button class="ed-btn ed-btn-primary ed-hidden" id="ed-import-apply-review">Применить спорные к черновику</button>
             </div>
           </div>
         </div>

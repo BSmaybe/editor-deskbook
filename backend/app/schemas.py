@@ -405,12 +405,13 @@ class FloorMapRevisionResponse(BaseModel):
 # ── Layout v2 canonical schemas ────────────────────────────────────────────────
 
 class StructureElement(BaseModel):
-    """A wall, boundary, or partition in the layout."""
+    """A wall, boundary, partition, or door in the layout."""
     id: str
     pts: list[list[float]]      # [[x, y], ...]  — at least 2 points
     thick: float = 4.0
     closed: bool = False
     label: Optional[str] = None
+    label_size: Optional[float] = Field(None, gt=0, le=120)
     color: Optional[str] = Field(None, pattern="^#[0-9a-fA-F]{3,6}$")
     conf: float = Field(1.0, ge=0.0, le=1.0)  # import confidence 0–1
 
@@ -448,6 +449,7 @@ class LayoutDocument(BaseModel):
     walls: list[StructureElement] = Field(default_factory=list, max_length=5000)
     boundaries: list[StructureElement] = Field(default_factory=list, max_length=1000)
     partitions: list[StructureElement] = Field(default_factory=list, max_length=5000)
+    doors: list[StructureElement] = Field(default_factory=list, max_length=5000)
     desks: list[LayoutDesk] = Field(default_factory=list, max_length=2000)
 
 
@@ -502,15 +504,17 @@ class ImportStats(BaseModel):
     walls: int
     boundaries: int
     partitions: int
+    doors: int
     uncertain: int
     skipped: int
 
 
 class ImportResult(BaseModel):
-    walls: list[StructureElement] = []
-    boundaries: list[StructureElement] = []
-    partitions: list[StructureElement] = []
-    uncertain: list[StructureElement] = []
+    walls: list[StructureElement] = Field(default_factory=list)
+    boundaries: list[StructureElement] = Field(default_factory=list)
+    partitions: list[StructureElement] = Field(default_factory=list)
+    doors: list[StructureElement] = Field(default_factory=list)
+    uncertain: list[StructureElement] = Field(default_factory=list)
     stats: ImportStats
     vb: list[float]   # detected viewBox [x,y,w,h]
 

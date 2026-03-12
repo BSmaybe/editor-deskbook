@@ -1,6 +1,6 @@
 /**
  * Floor Editor v2 — SVG-first canonical layout editor
- * Modes: select | pan | wall | boundary | partition | desk
+ * Modes: select | pan | wall | boundary | partition | door | desk
  * No external dependencies.
  */
 
@@ -11,16 +11,18 @@ const API = '/api';
 const NS  = 'http://www.w3.org/2000/svg';
 
 const STRUCT_COLORS = {
-  wall:      '#64748b',
+  wall:      '#2f343b',
   boundary:  '#1d4ed8',
-  partition: '#475569',
+  partition: '#4b5563',
+  door:      '#1f2937',
 };
 const DEFAULT_ZONE_COLOR = STRUCT_COLORS.boundary;
-const STRUCT_OPACITY = { wall: 1, boundary: 0.15, partition: 0.7 };
+const STRUCT_OPACITY = { wall: 1, boundary: 0.15, partition: 0.7, door: 1 };
 const MAX_LAYOUT_DESKS = 2000;
 const PX_CLOSE_THRESHOLD = 14;
 const MARQUEE_MIN_PX = 4;
 const OBJECT_HIT_PX = 14;
+const DEFAULT_ZONE_LABEL_SIZE = 18;
 const PANEL_LEFT_KEY = 'editor_left_collapsed';
 const PANEL_RIGHT_KEY = 'editor_right_collapsed';
 
@@ -32,11 +34,12 @@ const DESK_COLORS = {
 };
 
 const MODE_HINTS = {
-  select:    'Клик — выбор; тащи — перемещение; Пробел+тащи — рука',
+  select:    'Клик — выбор; Shift+клик/рамка — мультивыбор (места/стены); тащи — перемещение; Пробел+тащи — рука',
   pan:       'Тащи для панорамирования; колесо — зум',
   wall:      'Клик — добавить точку; Enter/двойной клик — завершить; Esc — отменить',
   boundary:  'Клик — точка; клик рядом с первой — замкнуть; Enter — замкнуть; Esc — отменить',
   partition: 'Клик — точка; Enter — завершить; Esc — отменить',
+  door:      'Клик — точка; Enter/двойной клик — завершить; Esc — отменить',
   desk:      'Клик — поставить стол; для блока выберите "Блок" в панели ниже',
 };
 
@@ -74,6 +77,8 @@ function resetEd() {
       placeMode: 'single', // single | block
       pattern: 'rows',     // rows | double
       axis: 'horizontal',  // horizontal | vertical
+      deskW: null,
+      deskH: null,
       seatsPerRow: 6,
       rowCount: 2,
       pairCount: 1,
@@ -84,11 +89,13 @@ function resetEd() {
     drawing: null,   // { type, pts: [[x,y],...], rubberPt: [x,y] }
 
     // Selection
-    selType: null,   // 'desk' | 'wall' | 'boundary' | 'partition'
+    selType: null,   // 'desk' | 'wall' | 'boundary' | 'partition' | 'door'
     selId:   null,
     multiDeskIds: [],
+    multiWallIds: [],
     marquee: null,   // { pointerId, start:{x,y}, current:{x,y}, append:boolean }
     dragGroup: null, // { pointerId, startPt:{x,y}, items:[{desk,x,y}] }
+    dragWallGroup: null, // { pointerId, startPt:{x,y}, items:[{wall,pts}] }
 
     // Pan
     panning:  false,
@@ -174,6 +181,12 @@ function clampInt(v, min, max, fallback) {
   return Math.max(min, Math.min(max, n));
 }
 
+function clampNum(v, min, max, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
 function collectDeskNumberSet() {
   const used = new Set();
   for (const d of (ld?.desks || [])) {
@@ -190,9 +203,21 @@ function takeNextDeskLabel(used) {
   return 'D-' + n;
 }
 
+function baseDeskSize() {
+  if (!ld) return { w: 28, h: 16 };
+  const w = Math.max(8, ld.vb[2] * 0.028);
+  const h = Math.max(6, ld.vb[3] * 0.016);
+  return { w, h };
+}
+
 function defaultDeskSize() {
-  if (!ld) return { w: 40, h: 22 };
-  return { w: ld.vb[2] * 0.04, h: ld.vb[3] * 0.022 };
+  const base = baseDeskSize();
+  const maxW = Math.max(120, base.w * 8);
+  const maxH = Math.max(90, base.h * 8);
+  return {
+    w: clampNum(ed?.deskTool?.deskW, 4, maxW, base.w),
+    h: clampNum(ed?.deskTool?.deskH, 4, maxH, base.h),
+  };
 }
 
 function makeDeskRecord(rect, label) {
@@ -218,6 +243,11 @@ function syncDeskBulkControls() {
   panel?.classList.toggle('ed-hidden', !show);
   if (!show) return;
 
+  const baseSize = baseDeskSize();
+  const maxW = Math.max(120, baseSize.w * 8);
+  const maxH = Math.max(90, baseSize.h * 8);
+  ed.deskTool.deskW = clampNum(ed.deskTool.deskW, 4, maxW, baseSize.w);
+  ed.deskTool.deskH = clampNum(ed.deskTool.deskH, 4, maxH, baseSize.h);
   ed.deskTool.seatsPerRow = clampInt(ed.deskTool.seatsPerRow, 1, 100, 6);
   ed.deskTool.rowCount = clampInt(ed.deskTool.rowCount, 1, 50, 2);
   ed.deskTool.pairCount = clampInt(ed.deskTool.pairCount, 1, 25, 1);
@@ -228,6 +258,8 @@ function syncDeskBulkControls() {
   _v('ed-desk-place-mode', ed.deskTool.placeMode);
   _v('ed-desk-block-pattern', ed.deskTool.pattern);
   _v('ed-desk-block-axis', ed.deskTool.axis);
+  _v('ed-desk-width', Math.round(ed.deskTool.deskW * 10) / 10);
+  _v('ed-desk-height', Math.round(ed.deskTool.deskH * 10) / 10);
   _v('ed-desk-seats-per-row', ed.deskTool.seatsPerRow);
   _v('ed-desk-row-count', ed.deskTool.rowCount);
   _v('ed-desk-pair-count', ed.deskTool.pairCount);
@@ -237,12 +269,13 @@ function syncDeskBulkControls() {
 
   const note = $el('ed-desk-bulk-note');
   if (note) {
+    const sizeNote = `(${Math.round(ed.deskTool.deskW)}×${Math.round(ed.deskTool.deskH)})`;
     if (ed.deskTool.placeMode === 'single') {
-      note.textContent = 'Одиночный режим: клик по холсту ставит одно место';
+      note.textContent = `Одиночный режим: клик по холсту ставит одно место ${sizeNote}`;
     } else if (ed.deskTool.preview?.awaitConfirm) {
-      note.textContent = 'Превью готово: клик по холсту подтвердит вставку, Esc — отменит';
+      note.textContent = `Превью готово: клик по холсту подтвердит вставку, Esc — отменит ${sizeNote}`;
     } else {
-      note.textContent = 'Режим блока: выберите ориентацию, drag задает направление, затем клик для подтверждения';
+      note.textContent = `Режим блока: выберите ориентацию, drag задает направление, затем клик для подтверждения ${sizeNote}`;
     }
   }
 
@@ -267,14 +300,29 @@ function fitToScreen() {
   if (!ld) return;
   const wrap = document.getElementById('ed-canvas-wrap');
   if (!wrap) return;
-  const [vbx, vby, vbw, vbh] = ld.vb;
-  const ww = wrap.clientWidth, wh = wrap.clientHeight - 26; // minus statusbar
-  const scaleX = ww / vbw, scaleY = wh / vbh;
-  const scale = Math.min(scaleX, scaleY) * 0.92;
-  const nw = vbw / scale, nh = vbh / scale;
-  const nx = vbx - (nw - vbw) / 2;
-  const ny = vby - (nh - vbh) / 2;
-  setVb(nx, ny, nw, nh);
+  const target = getFitTargetRect();
+  const ww = Math.max(1, wrap.clientWidth);
+  const wh = Math.max(1, wrap.clientHeight - 26); // minus statusbar
+
+  const pad = Math.max(8, Math.min(220, Math.max(target.w, target.h) * 0.08));
+  const tx = target.x - pad;
+  const ty = target.y - pad;
+  const tw = Math.max(1, target.w + pad * 2);
+  const th = Math.max(1, target.h + pad * 2);
+
+  const viewportRatio = ww / wh;
+  const targetRatio = tw / th;
+  let viewW = tw;
+  let viewH = th;
+  if (targetRatio > viewportRatio) {
+    viewH = tw / viewportRatio;
+  } else {
+    viewW = th * viewportRatio;
+  }
+
+  const cx = tx + tw / 2;
+  const cy = ty + th / 2;
+  setVb(cx - viewW / 2, cy - viewH / 2, viewW, viewH);
 }
 
 function zoomBy(factor, cx, cy) {
@@ -282,8 +330,9 @@ function zoomBy(factor, cx, cy) {
   if (cx === undefined) { cx = vb.x + vb.w / 2; cy = vb.y + vb.h / 2; }
   const nw = vb.w * factor, nh = vb.h * factor;
   // Clamp: 5× zoom in, 10× zoom out relative to content
-  const origW = ld ? ld.vb[2] : 1000;
-  const origH = ld ? ld.vb[3] : 1000;
+  const ref = getFitTargetRect();
+  const origW = Math.max(1, Number(ref?.w || 1000));
+  const origH = Math.max(1, Number(ref?.h || 1000));
   if (nw < origW / 20 || nw > origW * 20) return;
   const nx = cx - (cx - vb.x) * (nw / vb.w);
   const ny = cy - (cy - vb.y) * (nh / vb.h);
@@ -310,8 +359,19 @@ function _layoutHasGeometry(doc) {
     (doc.walls?.length || 0) +
     (doc.boundaries?.length || 0) +
     (doc.partitions?.length || 0) +
+    (doc.doors?.length || 0) +
     (doc.desks?.length || 0)
   );
+}
+
+function ensureLayoutArrays(doc) {
+  if (!doc || typeof doc !== 'object') return doc;
+  if (!Array.isArray(doc.walls)) doc.walls = [];
+  if (!Array.isArray(doc.boundaries)) doc.boundaries = [];
+  if (!Array.isArray(doc.partitions)) doc.partitions = [];
+  if (!Array.isArray(doc.doors)) doc.doors = [];
+  if (!Array.isArray(doc.desks)) doc.desks = [];
+  return doc;
 }
 
 function _readRasterDims(file) {
@@ -391,6 +451,18 @@ function centroidOfPoints(pts) {
   return { x: sx / pts.length, y: sy / pts.length };
 }
 
+function defaultZoneLabelSize() {
+  const base = Number(ld?.vb?.[2] || 0) * 0.012;
+  const fallback = Number.isFinite(base) && base > 0 ? base : DEFAULT_ZONE_LABEL_SIZE;
+  return Math.max(12, Math.min(72, fallback));
+}
+
+function zoneLabelSize(el) {
+  const n = Number(el?.label_size);
+  if (Number.isFinite(n) && n > 0) return Math.max(8, Math.min(120, n));
+  return defaultZoneLabelSize();
+}
+
 function getCanvasRect() {
   if (!ld) return { x: 0, y: 0, w: 1000, h: 1000 };
   const vb = Array.isArray(ld.vb) && ld.vb.length >= 4 ? ld.vb : [0, 0, 1000, 1000];
@@ -415,6 +487,71 @@ function getBackgroundRect() {
   return { x, y, w, h };
 }
 
+function _expandBoundsByPoint(bounds, x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  bounds.minX = Math.min(bounds.minX, x);
+  bounds.minY = Math.min(bounds.minY, y);
+  bounds.maxX = Math.max(bounds.maxX, x);
+  bounds.maxY = Math.max(bounds.maxY, y);
+}
+
+function _hasFiniteBounds(bounds) {
+  return Number.isFinite(bounds.minX) &&
+    Number.isFinite(bounds.minY) &&
+    Number.isFinite(bounds.maxX) &&
+    Number.isFinite(bounds.maxY);
+}
+
+function getGeometryBounds() {
+  if (!ld) return null;
+  const bounds = {
+    minX: Number.POSITIVE_INFINITY,
+    minY: Number.POSITIVE_INFINITY,
+    maxX: Number.NEGATIVE_INFINITY,
+    maxY: Number.NEGATIVE_INFINITY,
+  };
+
+  const scanStruct = (arr) => {
+    for (const el of (arr || [])) {
+      for (const p of (el?.pts || [])) {
+        _expandBoundsByPoint(bounds, Number(p?.[0]), Number(p?.[1]));
+      }
+    }
+  };
+
+  scanStruct(ld.walls);
+  scanStruct(ld.boundaries);
+  scanStruct(ld.partitions);
+  scanStruct(ld.doors);
+
+  for (const d of (ld.desks || [])) {
+    const x = Number(d?.x);
+    const y = Number(d?.y);
+    const w = Number(d?.w);
+    const h = Number(d?.h);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const dw = Number.isFinite(w) ? Math.max(1, w) : 1;
+    const dh = Number.isFinite(h) ? Math.max(1, h) : 1;
+    _expandBoundsByPoint(bounds, x, y);
+    _expandBoundsByPoint(bounds, x + dw, y + dh);
+  }
+
+  if (!_hasFiniteBounds(bounds)) return null;
+  return {
+    x: bounds.minX,
+    y: bounds.minY,
+    w: Math.max(1, bounds.maxX - bounds.minX),
+    h: Math.max(1, bounds.maxY - bounds.minY),
+  };
+}
+
+function getFitTargetRect() {
+  const geom = getGeometryBounds();
+  if (geom) return geom;
+  if (ld?.bg_url) return getBackgroundRect();
+  return getCanvasRect();
+}
+
 function setBackgroundRect(rect, opts = {}) {
   if (!ld || !rect) return;
   const x = Number(rect.x);
@@ -430,11 +567,16 @@ function setBackgroundRect(rect, opts = {}) {
 function clearSelectionState(opts = {}) {
   ed.selType = null;
   ed.selId = null;
-  if (!opts.keepMulti) ed.multiDeskIds = [];
+  if (!opts.keepMulti && !opts.keepDeskMulti) ed.multiDeskIds = [];
+  if (!opts.keepMulti && !opts.keepWallMulti) ed.multiWallIds = [];
 }
 
 function hasMultiDeskSelection() {
   return Array.isArray(ed.multiDeskIds) && ed.multiDeskIds.length > 0;
+}
+
+function hasMultiWallSelection() {
+  return Array.isArray(ed.multiWallIds) && ed.multiWallIds.length > 0;
 }
 
 function isDeskSelected(deskId) {
@@ -443,15 +585,37 @@ function isDeskSelected(deskId) {
   return (ed.multiDeskIds || []).includes(deskId);
 }
 
+function isWallSelected(wallId) {
+  if (!wallId) return false;
+  if (ed.selType === 'wall' && ed.selId === wallId) return true;
+  return (ed.multiWallIds || []).includes(wallId);
+}
+
 function setMultiDeskSelection(ids, append = false) {
   const current = append ? new Set(ed.multiDeskIds || []) : new Set();
   for (const id of (ids || [])) {
     if (id) current.add(id);
   }
   ed.multiDeskIds = Array.from(current);
+  ed.multiWallIds = [];
   ed.selType = null;
   ed.selId = null;
   renderDesks();
+  renderSelection();
+  renderObjectList();
+  showPropsFor(null, null);
+}
+
+function setMultiWallSelection(ids, append = false) {
+  const current = append ? new Set(ed.multiWallIds || []) : new Set();
+  for (const id of (ids || [])) {
+    if (id) current.add(id);
+  }
+  ed.multiWallIds = Array.from(current);
+  ed.selType = null;
+  ed.selId = null;
+  ed.multiDeskIds = [];
+  renderStructure();
   renderSelection();
   renderObjectList();
   showPropsFor(null, null);
@@ -471,6 +635,44 @@ function deskSelectionBounds(ids) {
     y2 = Math.max(y2, d.y + d.h);
   }
   return { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
+}
+
+function wallSelectionBounds(ids) {
+  const selected = (ld?.walls || []).filter(w => ids.includes(w.id));
+  if (!selected.length) return null;
+  let x1 = Infinity;
+  let y1 = Infinity;
+  let x2 = -Infinity;
+  let y2 = -Infinity;
+  for (const wall of selected) {
+    for (const p of (wall.pts || [])) {
+      const px = Number(p?.[0] || 0);
+      const py = Number(p?.[1] || 0);
+      x1 = Math.min(x1, px);
+      y1 = Math.min(y1, py);
+      x2 = Math.max(x2, px);
+      y2 = Math.max(y2, py);
+    }
+  }
+  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return null;
+  return { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
+}
+
+function wallIntersectsRect(wall, x1, y1, x2, y2) {
+  let wx1 = Infinity;
+  let wy1 = Infinity;
+  let wx2 = -Infinity;
+  let wy2 = -Infinity;
+  for (const p of (wall?.pts || [])) {
+    const px = Number(p?.[0] || 0);
+    const py = Number(p?.[1] || 0);
+    wx1 = Math.min(wx1, px);
+    wy1 = Math.min(wy1, py);
+    wx2 = Math.max(wx2, px);
+    wy2 = Math.max(wy2, py);
+  }
+  if (!Number.isFinite(wx1) || !Number.isFinite(wy1) || !Number.isFinite(wx2) || !Number.isFinite(wy2)) return false;
+  return !(wx1 > x2 || wx2 < x1 || wy1 > y2 || wy2 < y1);
 }
 
 function pointSegmentDistance(px, py, ax, ay, bx, by) {
@@ -561,6 +763,7 @@ function findNearestObjectAtPoint(pt, thresholdPx = OBJECT_HIT_PX) {
   scanStruct(ld.boundaries, 'boundary');
   scanStruct(ld.walls, 'wall');
   scanStruct(ld.partitions, 'partition');
+  scanStruct(ld.doors, 'door');
   return best;
 }
 
@@ -598,6 +801,7 @@ async function syncCanvasToBackground() {
   ld.walls = (ld.walls || []).map(el => ({ ...el, pts: mapPts(el.pts) }));
   ld.boundaries = (ld.boundaries || []).map(el => ({ ...el, pts: mapPts(el.pts) }));
   ld.partitions = (ld.partitions || []).map(el => ({ ...el, pts: mapPts(el.pts) }));
+  ld.doors = (ld.doors || []).map(el => ({ ...el, pts: mapPts(el.pts) }));
   ld.desks = (ld.desks || []).map(d => ({
     ...d,
     x: mapX(d.x),
@@ -678,6 +882,7 @@ async function syncDesksFromLayout(opts = {}) {
 /* ── Render ─────────────────────────────────────────────────────────────────── */
 function renderAll() {
   renderBackground();
+  renderImportPreview();
   renderStructure();
   renderDesks();
   renderSelection();
@@ -699,7 +904,7 @@ function renderBackground() {
   base.setAttribute('y', String(vb.y));
   base.setAttribute('width', String(vb.w));
   base.setAttribute('height', String(vb.h));
-  base.setAttribute('fill', '#f8fbff');
+  base.setAttribute('fill', '#eef2f6');
   base.setAttribute('pointer-events', 'none');
   layer.appendChild(base);
 
@@ -714,7 +919,7 @@ function renderBackground() {
   img.setAttribute('width', String(bg.w));
   img.setAttribute('height', String(bg.h));
   img.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-  img.setAttribute('opacity', '0.96');
+  img.setAttribute('opacity', '0.92');
   img.setAttribute('pointer-events', ed.bgAdjust.active ? 'all' : 'none');
   if (ed.bgAdjust.active) img.style.cursor = ed.bgAdjust.dragging ? 'grabbing' : 'grab';
   layer.appendChild(img);
@@ -753,7 +958,7 @@ function _makePolyEl(tagName, pts, closed) {
 }
 
 function renderStructure() {
-  const layers = { wall: _layer('wall'), boundary: _layer('boundary'), partition: _layer('partition') };
+  const layers = { wall: _layer('wall'), boundary: _layer('boundary'), partition: _layer('partition'), door: _layer('door') };
   Object.values(layers).forEach(l => { if (l) l.innerHTML = ''; });
   if (!ld) return;
 
@@ -766,7 +971,8 @@ function renderStructure() {
 
     for (const el of arr) {
       if (!el.pts || el.pts.length < 2) continue;
-      const isSel = ed.selType === type && ed.selId === el.id;
+      const isPrimarySel = ed.selType === type && ed.selId === el.id;
+      const isSel = type === 'wall' ? isWallSelected(el.id) : isPrimarySel;
       const col = type === 'boundary'
         ? normalizeHexColor(el.color, defaultColor)
         : defaultColor;
@@ -795,6 +1001,12 @@ function renderStructure() {
         shape.setAttribute('fill-opacity', '0.12');
         shape.setAttribute('stroke', col);
         shape.setAttribute('stroke-width', String(Math.max(1, thick * 0.4)));
+      } else if (type === 'door') {
+        shape.setAttribute('fill', 'none');
+        shape.setAttribute('stroke', col);
+        shape.setAttribute('stroke-width', String(Math.max(sw * 0.9, thick * 0.85)));
+        shape.setAttribute('stroke-linecap', 'round');
+        shape.setAttribute('stroke-linejoin', 'round');
       } else {
         shape.setAttribute('fill', 'none');
         shape.setAttribute('stroke', col);
@@ -813,17 +1025,18 @@ function renderStructure() {
 
       if (type === 'boundary' && el.label) {
         const c = centroidOfPoints(el.pts);
+        const fontSize = zoneLabelSize(el);
         const txt = document.createElementNS(NS, 'text');
         txt.setAttribute('x', String(c.x));
         txt.setAttribute('y', String(c.y));
         txt.setAttribute('text-anchor', 'middle');
         txt.setAttribute('dominant-baseline', 'middle');
-        txt.setAttribute('font-size', String(Math.max(9, ed.vb.w * 0.011)));
+        txt.setAttribute('font-size', String(fontSize));
         txt.setAttribute('font-family', 'system-ui, sans-serif');
         txt.setAttribute('font-weight', '700');
         txt.setAttribute('fill', isSel ? '#1e40af' : col);
         txt.setAttribute('stroke', '#ffffff');
-        txt.setAttribute('stroke-width', String(Math.max(0.6, ed.vb.w * 0.0012)));
+        txt.setAttribute('stroke-width', String(Math.max(0.9, fontSize * 0.08)));
         txt.setAttribute('paint-order', 'stroke');
         txt.setAttribute('pointer-events', 'none');
         txt.textContent = el.label;
@@ -831,7 +1044,7 @@ function renderStructure() {
       }
 
       // Vertex dots when selected
-      if (isSel) {
+      if (isPrimarySel) {
         for (const pt of el.pts) {
           const c = document.createElementNS(NS, 'circle');
           c.setAttribute('cx', pt[0]); c.setAttribute('cy', pt[1]);
@@ -849,6 +1062,7 @@ function renderStructure() {
   drawElements(ld.walls,      'wall');
   drawElements(ld.boundaries, 'boundary');
   drawElements(ld.partitions, 'partition');
+  drawElements(ld.doors || [], 'door');
 }
 
 function renderDesks() {
@@ -963,6 +1177,23 @@ function renderSelection() {
     }
   }
 
+  if (hasMultiWallSelection()) {
+    const box = wallSelectionBounds(ed.multiWallIds);
+    if (box) {
+      const rect = document.createElementNS(NS, 'rect');
+      rect.setAttribute('x', String(box.x));
+      rect.setAttribute('y', String(box.y));
+      rect.setAttribute('width', String(box.w));
+      rect.setAttribute('height', String(box.h));
+      rect.setAttribute('fill', 'none');
+      rect.setAttribute('stroke', '#475569');
+      rect.setAttribute('stroke-width', String(Math.max(1.1, ed.vb.w * 0.0013)));
+      rect.setAttribute('stroke-dasharray', '7 4');
+      rect.setAttribute('pointer-events', 'none');
+      layer.appendChild(rect);
+    }
+  }
+
   if (ed.marquee?.start && ed.marquee?.current) {
     const x1 = Math.min(ed.marquee.start.x, ed.marquee.current.x);
     const y1 = Math.min(ed.marquee.start.y, ed.marquee.current.y);
@@ -1066,7 +1297,7 @@ function updateMinimap() {
   const bg = document.createElementNS(NS, 'rect');
   bg.setAttribute('x', vbx); bg.setAttribute('y', vby);
   bg.setAttribute('width', vbw); bg.setAttribute('height', vbh);
-  bg.setAttribute('fill', '#f8fbff');
+  bg.setAttribute('fill', '#eef2f6');
   mmSvg.appendChild(bg);
 
   function drawMM(arr, stroke, fill) {
@@ -1081,8 +1312,9 @@ function updateMinimap() {
     }
   }
   drawMM(ld.boundaries, '#1d4ed8', 'rgba(29,78,216,0.15)');
-  drawMM(ld.walls,      '#64748b', null);
-  drawMM(ld.partitions, '#6b7280', null);
+  drawMM(ld.walls,      STRUCT_COLORS.wall, null);
+  drawMM(ld.partitions, STRUCT_COLORS.partition, null);
+  drawMM(ld.doors || [], STRUCT_COLORS.door, null);
 
   for (const desk of ld.desks) {
     const rect = document.createElementNS(NS, 'rect');
@@ -1137,7 +1369,7 @@ function updateStatusBar() {
 }
 
 function modeLabel(m) {
-  return { select:'Выбор', pan:'Рука', wall:'Стена', boundary:'Граница', partition:'Перегородка', desk:'Стол' }[m] || m;
+  return { select:'Выбор', pan:'Рука', wall:'Стена', boundary:'Граница', partition:'Перегородка', door:'Дверь', desk:'Стол' }[m] || m;
 }
 
 /* ── Object list ────────────────────────────────────────────────────────────── */
@@ -1156,7 +1388,10 @@ function renderObjectList() {
     if (!filtered.length) return '';
     let html = `<div class="ed-obj-section-header">${title} (${filtered.length})</div>`;
     for (const it of filtered) {
-      const active = type === 'desk' ? isDeskSelected(it.id) : (ed.selType === type && ed.selId === it.id);
+      let active = false;
+      if (type === 'desk') active = isDeskSelected(it.id);
+      else if (type === 'wall') active = isWallSelected(it.id);
+      else active = ed.selType === type && ed.selId === it.id;
       const lbl = it.label || `${title.slice(0,-1)} (${it.pts?.length || '?'} pts)`;
       const color = colorFn(it);
       html += `<div class="ed-obj-item${active?' active':''}" data-id="${it.id}" data-type="${type}">
@@ -1169,18 +1404,38 @@ function renderObjectList() {
 
   list.innerHTML =
     makeSection('Столы',       ld.desks,      'desk',      d => d.fixed ? '#d97706' : '#2563eb') +
-    makeSection('Стены',       ld.walls,      'wall',      () => '#64748b') +
+    makeSection('Стены',       ld.walls,      'wall',      () => STRUCT_COLORS.wall) +
     makeSection('Границы',     ld.boundaries, 'boundary',  b => normalizeHexColor(b.color, DEFAULT_ZONE_COLOR)) +
-    makeSection('Перегородки', ld.partitions, 'partition', () => '#475569');
+    makeSection('Перегородки', ld.partitions, 'partition', () => STRUCT_COLORS.partition) +
+    makeSection('Двери',       ld.doors || [], 'door',     () => STRUCT_COLORS.door);
 
   list.querySelectorAll('.ed-obj-item').forEach(item => {
-    item.addEventListener('click', () => selectObj(item.dataset.type, item.dataset.id));
+    item.addEventListener('click', (ev) => {
+      const type = item.dataset.type;
+      const id = item.dataset.id;
+      if (type === 'wall' && ev.shiftKey) {
+        const next = new Set(ed.multiWallIds || []);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setMultiWallSelection(Array.from(next), false);
+        return;
+      }
+      if (type === 'desk' && ev.shiftKey) {
+        const next = new Set(ed.multiDeskIds || []);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setMultiDeskSelection(Array.from(next), false);
+        return;
+      }
+      selectObj(type, id);
+    });
   });
 }
 
 /* ── Selection ──────────────────────────────────────────────────────────────── */
 function selectObj(type, id) {
   ed.multiDeskIds = [];
+  ed.multiWallIds = [];
   ed.selType = type;
   ed.selId   = id;
   renderStructure();
@@ -1208,7 +1463,7 @@ function showPropsFor(type, id) {
 
   if (empty)   empty.classList.toggle('ed-hidden', type !== null);
   if (deskP)   deskP.classList.toggle('ed-hidden', type !== 'desk');
-  if (structP) structP.classList.toggle('ed-hidden', !['wall','boundary','partition'].includes(type));
+  if (structP) structP.classList.toggle('ed-hidden', !['wall','boundary','partition','door'].includes(type));
   if (zoneFields) zoneFields.classList.toggle('ed-hidden', type !== 'boundary');
 
   if (type === 'desk' && id && ld) {
@@ -1229,14 +1484,21 @@ function showPropsFor(type, id) {
     _v('ep-r', Math.round(d.r || 0));
   }
 
-  if (['wall','boundary','partition'].includes(type) && id && ld) {
-    const arr = type === 'wall' ? ld.walls : type === 'boundary' ? ld.boundaries : ld.partitions;
+  if (['wall','boundary','partition','door'].includes(type) && id && ld) {
+    const arr = type === 'wall'
+      ? ld.walls
+      : type === 'boundary'
+        ? ld.boundaries
+        : type === 'partition'
+          ? ld.partitions
+          : (ld.doors || []);
     const el = arr.find(x => x.id === id);
     if (!el) return;
     _v('ep-struct-type',   type);
     _v('ep-struct-thick',  el.thick || 4);
     _vc('ep-struct-closed', !!el.closed);
     _v('ep-struct-label', type === 'boundary' ? (el.label || '') : '');
+    _v('ep-struct-label-size', type === 'boundary' ? Math.round(zoneLabelSize(el)) : '');
     _v('ep-struct-color', normalizeHexColor(el.color, DEFAULT_ZONE_COLOR));
     const ptCount = $el('ep-struct-pt-count');
     if (ptCount) ptCount.textContent = el.pts?.length || 0;
@@ -1265,9 +1527,10 @@ function initPropsListeners() {
   });
 
   // Struct props
-  ['ep-struct-type','ep-struct-thick','ep-struct-closed','ep-struct-color'].forEach(fid => {
+  ['ep-struct-type','ep-struct-thick','ep-struct-closed','ep-struct-color','ep-struct-label-size'].forEach(fid => {
     $el(fid)?.addEventListener('change', () => applyStructProps());
   });
+  $el('ep-struct-label-size')?.addEventListener('input', () => applyStructProps());
   $el('ep-struct-label')?.addEventListener('input', () => applyStructProps());
   $el('ep-struct-label')?.addEventListener('change', () => applyStructProps());
   $el('ep-struct-del')?.addEventListener('click', () => {
@@ -1306,9 +1569,19 @@ function applyStructProps() {
   const closed  = !!$el('ep-struct-closed')?.checked;
   const zoneLabel = ($el('ep-struct-label')?.value || '').trim();
   const zoneColor = normalizeHexColor($el('ep-struct-color')?.value, DEFAULT_ZONE_COLOR);
+  const zoneLabelSizeRaw = parseFloat($el('ep-struct-label-size')?.value);
+  const zoneLabelSizeValue = Number.isFinite(zoneLabelSizeRaw)
+    ? Math.max(8, Math.min(120, zoneLabelSizeRaw))
+    : defaultZoneLabelSize();
 
   // Find in current array
-  const srcArr = ed.selType === 'wall' ? ld.walls : ed.selType === 'boundary' ? ld.boundaries : ld.partitions;
+  const srcArr = ed.selType === 'wall'
+    ? ld.walls
+    : ed.selType === 'boundary'
+      ? ld.boundaries
+      : ed.selType === 'partition'
+        ? ld.partitions
+        : (ld.doors || []);
   const idx = srcArr.findIndex(x => x.id === ed.selId);
   if (idx < 0) return;
 
@@ -1318,19 +1591,29 @@ function applyStructProps() {
   if (ed.selType === 'boundary') {
     el.label = zoneLabel || null;
     el.color = zoneColor;
+    el.label_size = zoneLabelSizeValue;
   } else if (Object.prototype.hasOwnProperty.call(el, 'color')) {
     delete el.color;
+    if (Object.prototype.hasOwnProperty.call(el, 'label_size')) delete el.label_size;
   }
 
   // If type changed, move to different array
   if (newType && newType !== ed.selType) {
     srcArr.splice(idx, 1);
-    const dstArr = newType === 'wall' ? ld.walls : newType === 'boundary' ? ld.boundaries : ld.partitions;
+    const dstArr = newType === 'wall'
+      ? ld.walls
+      : newType === 'boundary'
+        ? ld.boundaries
+        : newType === 'partition'
+          ? ld.partitions
+          : (ld.doors || (ld.doors = []));
     if (newType === 'boundary') {
       el.color = zoneColor;
       el.label = zoneLabel || el.label || null;
+      el.label_size = zoneLabelSizeValue;
     } else if (Object.prototype.hasOwnProperty.call(el, 'color')) {
       delete el.color;
+      if (Object.prototype.hasOwnProperty.call(el, 'label_size')) delete el.label_size;
     }
     dstArr.push(el);
     ed.selType = newType;
@@ -1347,6 +1630,7 @@ function deleteStructEl(type, id) {
   if (type === 'wall')      ld.walls      = ld.walls.filter(x => x.id !== id);
   if (type === 'boundary')  ld.boundaries = ld.boundaries.filter(x => x.id !== id);
   if (type === 'partition') ld.partitions = ld.partitions.filter(x => x.id !== id);
+  if (type === 'door')      ld.doors      = (ld.doors || []).filter(x => x.id !== id);
   deselect();
   markDirty();
   renderAll();
@@ -1373,6 +1657,22 @@ function deleteSelectedDesks() {
     clearSelectionState();
     markDirty();
     renderAll();
+    return true;
+  }
+  return false;
+}
+
+function deleteSelectedWalls() {
+  if (!ld || !hasMultiWallSelection()) return false;
+  const ids = new Set(ed.multiWallIds || []);
+  const before = ld.walls.length;
+  ld.walls = ld.walls.filter(w => !ids.has(w.id));
+  const removed = before - ld.walls.length;
+  clearSelectionState();
+  if (removed > 0) {
+    markDirty();
+    renderAll();
+    edToast(`Удалено стен: ${removed}`, 'info');
     return true;
   }
   return false;
@@ -1455,6 +1755,11 @@ function finishMarqueeSelection() {
         if (next.has(hit.id)) next.delete(hit.id);
         else next.add(hit.id);
         setMultiDeskSelection(Array.from(next), false);
+      } else if (hit.type === 'wall' && m.append) {
+        const next = new Set(ed.multiWallIds || []);
+        if (next.has(hit.id)) next.delete(hit.id);
+        else next.add(hit.id);
+        setMultiWallSelection(Array.from(next), false);
       } else {
         selectObj(hit.type, hit.id);
       }
@@ -1468,10 +1773,18 @@ function finishMarqueeSelection() {
     return true;
   }
 
-  const ids = (ld.desks || [])
+  const deskIds = (ld.desks || [])
     .filter(d => !(d.x > x2 || d.x + d.w < x1 || d.y > y2 || d.y + d.h < y1))
     .map(d => d.id);
-  setMultiDeskSelection(ids, m.append);
+  const wallIds = (ld.walls || [])
+    .filter(w => wallIntersectsRect(w, x1, y1, x2, y2))
+    .map(w => w.id);
+
+  if (wallIds.length && (!deskIds.length || hasMultiWallSelection())) {
+    setMultiWallSelection(wallIds, m.append);
+  } else {
+    setMultiDeskSelection(deskIds, m.append);
+  }
   return true;
 }
 
@@ -1507,6 +1820,79 @@ function endGroupDeskDrag() {
   ed.dragGroup = null;
   if (moved) markDirty();
   return moved;
+}
+
+function startGroupWallDrag(pointerId, startPt, wallIds) {
+  if (!ld) return false;
+  const ids = new Set(wallIds || []);
+  const items = (ld.walls || [])
+    .filter(w => ids.has(w.id))
+    .map(w => ({ wall: w, pts: (w.pts || []).map(p => [Number(p?.[0] || 0), Number(p?.[1] || 0)]) }));
+  if (!items.length) return false;
+  ed.dragWallGroup = { pointerId, startPt, items, moved: false };
+  _svg()?.setPointerCapture(pointerId);
+  return true;
+}
+
+function updateGroupWallDrag(pt) {
+  const g = ed.dragWallGroup;
+  if (!g) return;
+  const dx = pt.x - g.startPt.x;
+  const dy = pt.y - g.startPt.y;
+  for (const it of g.items) {
+    it.wall.pts = it.pts.map(([x, y]) => [snapV(x + dx), snapV(y + dy)]);
+  }
+  g.moved = g.moved || Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2;
+  renderStructure();
+  renderSelection();
+}
+
+function endGroupWallDrag() {
+  if (!ed.dragWallGroup) return false;
+  const moved = !!ed.dragWallGroup.moved;
+  ed.dragWallGroup = null;
+  if (moved) markDirty();
+  return moved;
+}
+
+function structArrayByType(type) {
+  if (!ld) return null;
+  if (type === 'wall') return ld.walls;
+  if (type === 'boundary') return ld.boundaries;
+  if (type === 'partition') return ld.partitions;
+  if (type === 'door') return ld.doors || [];
+  return null;
+}
+
+function startSingleStructDrag(type, id, startPt) {
+  if (!ld || !id) return false;
+  const arr = structArrayByType(type);
+  if (!Array.isArray(arr)) return false;
+  const el = arr.find(x => x.id === id);
+  if (!el || !Array.isArray(el.pts) || el.pts.length < 2) return false;
+
+  const basePts = el.pts.map(p => [Number(p?.[0] || 0), Number(p?.[1] || 0)]);
+  let moved = false;
+
+  const onMove = (ev) => {
+    const p = svgPt(ev);
+    const dx = p.x - startPt.x;
+    const dy = p.y - startPt.y;
+    el.pts = basePts.map(([x, y]) => [snapV(x + dx), snapV(y + dy)]);
+    moved = moved || Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2;
+    renderStructure();
+    renderSelection();
+  };
+
+  const onUp = () => {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    if (moved) markDirty();
+  };
+
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+  return true;
 }
 
 /* ── Input event handlers ───────────────────────────────────────────────────── */
@@ -1549,7 +1935,7 @@ function onSvgPointerDown(e) {
     return;
   }
 
-  if (['wall','boundary','partition'].includes(ed.mode)) {
+  if (['wall','boundary','partition','door'].includes(ed.mode)) {
     e.preventDefault();
     const pt = svgPt(e);
     const snapped = [snapV(pt.x), snapV(pt.y)];
@@ -1585,6 +1971,11 @@ function onSvgPointerMove(e) {
 
   if (ed.dragGroup) {
     updateGroupDeskDrag(pt);
+    return;
+  }
+
+  if (ed.dragWallGroup) {
+    updateGroupWallDrag(pt);
     return;
   }
 
@@ -1630,6 +2021,10 @@ function onSvgPointerUp(e) {
     endGroupDeskDrag();
     return;
   }
+  if (ed.dragWallGroup) {
+    endGroupWallDrag();
+    return;
+  }
   if (ed.marquee && finishMarqueeSelection()) {
     return;
   }
@@ -1671,7 +2066,7 @@ function onSvgClick(e) {
     return;
   }
 
-  if (['wall','boundary','partition'].includes(ed.mode) && ed.drawing) {
+  if (['wall','boundary','partition','door'].includes(ed.mode) && ed.drawing) {
     const pt = svgPt(e);
     const snapped = [snapV(pt.x), snapV(pt.y)];
     const pts = ed.drawing.pts;
@@ -1692,7 +2087,7 @@ function onSvgClick(e) {
 }
 
 function onSvgDblClick(e) {
-  if (['wall','partition'].includes(ed.mode) && ed.drawing) {
+  if (['wall','partition','door'].includes(ed.mode) && ed.drawing) {
     finishDrawing(false);
   }
 }
@@ -1802,7 +2197,20 @@ function onResizeHandleDown(e, desk, handleIdx) {
 function onStructPointerDown(e, type, id) {
   if (ed.mode !== 'select') return;
   e.stopPropagation();
+  if (type === 'wall' && e.shiftKey) {
+    const next = new Set(ed.multiWallIds || []);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setMultiWallSelection(Array.from(next), false);
+    return;
+  }
+  if (type === 'wall' && hasMultiWallSelection() && (ed.multiWallIds || []).includes(id)) {
+    const startPt = svgPt(e);
+    startGroupWallDrag(e.pointerId, startPt, ed.multiWallIds);
+    return;
+  }
   selectObj(type, id);
+  startSingleStructDrag(type, id, svgPt(e));
 }
 
 /* ── Drawing finish ─────────────────────────────────────────────────────────── */
@@ -1815,16 +2223,18 @@ function finishDrawing(close) {
 
   if (pts.length < 2) return;
 
-  const el = { id: uid(), pts, thick: type === 'wall' ? 8 : type === 'partition' ? 3 : 2,
+  const el = { id: uid(), pts, thick: type === 'wall' ? 8 : type === 'partition' ? 3 : type === 'door' ? 2.2 : 2,
                 closed: close || type === 'boundary', conf: 1.0 };
   if (type === 'boundary') {
     el.label = null;
     el.color = DEFAULT_ZONE_COLOR;
+    el.label_size = defaultZoneLabelSize();
   }
 
   if (type === 'wall')      ld.walls.push(el);
   else if (type === 'boundary')  ld.boundaries.push(el);
   else if (type === 'partition') ld.partitions.push(el);
+  else if (type === 'door') ld.doors = [...(ld.doors || []), el];
 
   markDirty();
   selectObj(type, el.id);
@@ -2085,7 +2495,7 @@ async function edLoadFloor(floorId) {
     const resp = await fetch(`${API}/floors/${floorId}/layout`, { headers: ah() });
     if (resp.status === 404) {
       // No layout yet — create empty
-      ld = { v: 2, vb: [0,0,1000,1000], bg_url: null, bg_transform: null, walls:[], boundaries:[], partitions:[], desks:[] };
+      ld = { v: 2, vb: [0,0,1000,1000], bg_url: null, bg_transform: null, walls:[], boundaries:[], partitions:[], doors:[], desks:[] };
       ed.status  = null;
       ed.version = 0;
     } else if (!resp.ok) {
@@ -2094,7 +2504,7 @@ async function edLoadFloor(floorId) {
       return;
     } else {
       const data = await resp.json();
-      ld = data.layout;
+      ld = ensureLayoutArrays(data.layout);
       ed.status  = data.status;
       ed.version = data.version;
       if (ld?.bg_url && !ld.bg_transform) {
@@ -2174,6 +2584,19 @@ function isLockOwnedByMe() {
   const me = localStorage.getItem('admin_username');
   if (!ed.lockOwner || !me) return true;
   return ed.lockOwner === me;
+}
+
+function releaseLockOnExit() {
+  if (!ed.floorId || !ed.locked || !isLockOwnedByMe()) return;
+  try {
+    fetch(`${API}/floors/${ed.floorId}/lock`, {
+      method: 'DELETE',
+      headers: ah(),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    // no-op
+  }
 }
 
 function updateLockUI() {
@@ -2309,6 +2732,452 @@ async function edDiscard() {
 
 /* ── Import ─────────────────────────────────────────────────────────────────── */
 let _importResult = null;
+let _importItems = [];
+let _importOverrides = {};
+let _importApplied = new Set();
+let _importSelected = new Set();
+let _importReviewMode = false;
+let _importFilters = { conf: 'all', type: 'all', geom: 'all' };
+let _importAppliedCounts = { wall: 0, boundary: 0, partition: 0, door: 0, skip: 0 };
+const IMPORT_AUTO_THRESHOLD = 70;
+
+function importDefaultType(el) {
+  if (!el) return 'skip';
+  // uncertain defaults to boundary, but low confidence stays in review flow.
+  if (el._type === 'uncertain') return 'boundary';
+  return el._type || 'skip';
+}
+
+function importTypeLabel(type) {
+  if (type === 'wall') return 'Стена';
+  if (type === 'boundary') return 'Граница';
+  if (type === 'partition') return 'Перегородка';
+  if (type === 'door') return 'Дверь';
+  return 'Пропуск';
+}
+
+function importKindClass(type) {
+  return type === 'wall' || type === 'boundary' || type === 'partition' || type === 'door' ? type : 'skip';
+}
+
+function importConfColor(confPct) {
+  return confPct >= 70 ? '#22c55e' : confPct >= 40 ? '#f59e0b' : '#ef4444';
+}
+
+function resetImportState() {
+  _importResult = null;
+  _importItems = [];
+  _importOverrides = {};
+  _importApplied = new Set();
+  _importSelected = new Set();
+  _importReviewMode = false;
+  _importFilters = { conf: 'all', type: 'all', geom: 'all' };
+  _importAppliedCounts = { wall: 0, boundary: 0, partition: 0, door: 0, skip: 0 };
+}
+
+function importPtsLength(pts) {
+  if (!Array.isArray(pts) || pts.length < 2) return 0;
+  let total = 0;
+  for (let i = 1; i < pts.length; i += 1) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    total += Math.hypot(Number(b?.[0] || 0) - Number(a?.[0] || 0), Number(b?.[1] || 0) - Number(a?.[1] || 0));
+  }
+  return total;
+}
+
+function importReason(el) {
+  const closed = !!el?.closed;
+  const len = Math.round(importPtsLength(el?.pts || []));
+  const thick = Number(el?.thick);
+  const rawFill = String(el?.color || '').trim().toLowerCase();
+  const hasFill = !!rawFill
+    && rawFill !== 'none'
+    && rawFill !== 'transparent'
+    && rawFill !== '#00000000'
+    && !/^rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0(?:\.0+)?\s*\)$/.test(rawFill);
+  const typeHint = `класс ${importTypeLabel(importDefaultType(el))}`;
+  const thickTxt = Number.isFinite(thick) ? `толщина ${thick.toFixed(1)}` : 'толщина n/a';
+  const geomTxt = closed ? 'замкнутый контур (зона/fill)' : 'открытая линия';
+  const fillTxt = closed ? (hasFill ? 'fill есть' : 'fill нет') : 'fill n/a';
+  return `${typeHint} · ${geomTxt} · ${fillTxt} · ${thickTxt} · длина ${len}`;
+}
+
+function buildImportItems(res) {
+  const all = [
+    ...((res.walls || []).map(e => ({ ...e, _type: 'wall' }))),
+    ...((res.boundaries || []).map(e => ({ ...e, _type: 'boundary' }))),
+    ...((res.partitions || []).map(e => ({ ...e, _type: 'partition' }))),
+    ...((res.doors || []).map(e => ({ ...e, _type: 'door' }))),
+    ...((res.uncertain || []).map(e => ({ ...e, _type: 'uncertain' }))),
+  ];
+  return all.map((el, idx) => {
+    const confPct = Math.max(0, Math.min(100, Math.round(Number(el?.conf || 0) * 100)));
+    return {
+      ...el,
+      _idx: idx,
+      _confPct: confPct,
+      _len: importPtsLength(el?.pts || []),
+      _reason: importReason(el),
+    };
+  });
+}
+
+function importCurrentType(idx) {
+  const el = _importItems[idx];
+  return _importOverrides[idx] || importDefaultType(el);
+}
+
+function importAutoIndices() {
+  return _importItems
+    .filter(el => Number(el?._confPct || 0) >= IMPORT_AUTO_THRESHOLD)
+    .map(el => el._idx);
+}
+
+function importReviewIndices() {
+  return _importItems
+    .filter(el => Number(el?._confPct || 0) < IMPORT_AUTO_THRESHOLD)
+    .map(el => el._idx);
+}
+
+function importVisibleIndices() {
+  const base = (_importReviewMode ? importReviewIndices() : _importItems.map(el => el._idx))
+    .filter(idx => !_importApplied.has(idx));
+  return base.filter((idx) => {
+    const el = _importItems[idx];
+    if (!el) return false;
+    const conf = Number(el._confPct || 0);
+    if (_importFilters.conf === 'lt40' && !(conf < 40)) return false;
+    if (_importFilters.conf === '40to69' && !(conf >= 40 && conf < 70)) return false;
+    if (_importFilters.conf === 'gte70' && !(conf >= 70)) return false;
+    const type = importCurrentType(idx);
+    if (_importFilters.type !== 'all' && _importFilters.type !== type) return false;
+    if (_importFilters.geom === 'open' && el.closed) return false;
+    if (_importFilters.geom === 'closed' && !el.closed) return false;
+    return true;
+  });
+}
+
+function syncImportSummary() {
+  const summaryEl = $el('ed-import-summary');
+  if (!summaryEl || !_importItems.length) return;
+  const autoTotal = importAutoIndices().length;
+  const autoPending = importAutoIndices().filter(idx => !_importApplied.has(idx)).length;
+  const reviewTotal = importReviewIndices().length;
+  const reviewPending = importReviewIndices().filter(idx => !_importApplied.has(idx)).length;
+  summaryEl.textContent =
+    `Авто (≥${IMPORT_AUTO_THRESHOLD}%): ${autoTotal - autoPending}/${autoTotal} применено · ` +
+    `Review (<${IMPORT_AUTO_THRESHOLD}%): ${reviewPending}/${reviewTotal} осталось` +
+    (_importSelected.size ? ` · Выделено: ${_importSelected.size}` : '');
+}
+
+function updateImportActionButtons() {
+  const autoBtn = $el('ed-import-apply-auto');
+  const reviewBtn = $el('ed-import-review');
+  const applyReviewBtn = $el('ed-import-apply-review');
+  const reviewControls = $el('ed-import-review-controls');
+  const hasData = !!_importResult && _importItems.length > 0;
+
+  [autoBtn, reviewBtn, applyReviewBtn].forEach((btn) => {
+    if (!btn) return;
+    btn.classList.toggle('ed-hidden', !hasData);
+  });
+  if (!hasData) {
+    reviewControls?.classList.add('ed-hidden');
+    return;
+  }
+
+  const autoPending = importAutoIndices().filter(idx => !_importApplied.has(idx)).length;
+  const reviewPending = importReviewIndices().filter(idx => !_importApplied.has(idx)).length;
+  if (autoBtn) {
+    autoBtn.textContent = `Применить авто (${autoPending})`;
+    autoBtn.disabled = autoPending === 0;
+  }
+  if (reviewBtn) {
+    reviewBtn.textContent = `Проверить спорные (${reviewPending})`;
+    reviewBtn.disabled = reviewPending === 0;
+  }
+  if (applyReviewBtn) {
+    applyReviewBtn.disabled = reviewPending === 0;
+    applyReviewBtn.classList.toggle('ed-hidden', !_importReviewMode);
+  }
+  reviewControls?.classList.toggle('ed-hidden', !_importReviewMode);
+}
+
+function renderImportRows() {
+  const itemsEl = $el('ed-import-items');
+  if (!itemsEl) return;
+  const visible = importVisibleIndices();
+  if (!visible.length) {
+    itemsEl.innerHTML = '<div class="ed-history-empty">Нет элементов по текущим фильтрам.</div>';
+    return;
+  }
+  itemsEl.innerHTML = visible.map((idx) => {
+    const el = _importItems[idx];
+    const type = importCurrentType(idx);
+    const confPct = Number(el?._confPct || 0);
+    const confColor = importConfColor(confPct);
+    const lowClass = confPct < IMPORT_AUTO_THRESHOLD ? ' low' : '';
+    const selectedClass = _importSelected.has(idx) ? ' selected' : '';
+    const kindClass = importKindClass(type);
+    const ptsCount = Array.isArray(el?.pts) ? el.pts.length : 0;
+    return `<div class="ed-import-row${lowClass}${selectedClass}" data-import-idx="${idx}">
+      <input type="checkbox" class="ed-import-check" data-import-check="${idx}" ${_importSelected.has(idx) ? 'checked' : ''}>
+      <select data-import-idx="${idx}" class="ed-import-type">
+        <option value="wall"      ${type === 'wall' ? 'selected' : ''}>Стена</option>
+        <option value="boundary"  ${type === 'boundary' ? 'selected' : ''}>Граница</option>
+        <option value="partition" ${type === 'partition' ? 'selected' : ''}>Перегородка</option>
+        <option value="door"      ${type === 'door' ? 'selected' : ''}>Дверь</option>
+        <option value="skip"      ${type === 'skip' ? 'selected' : ''}>Пропустить</option>
+      </select>
+      <div class="ed-import-meta">
+        <span class="ed-import-kind ${kindClass}" data-import-kind="${idx}">${importTypeLabel(type)}</span>
+        <span class="ed-import-pts">${ptsCount} pts · ${Math.round(el._len || 0)} u</span>
+        <span class="ed-import-reason">${el._reason}</span>
+      </div>
+      <span class="ed-import-conf" style="color:${confColor}">${confPct}%</span>
+      <div class="ed-conf-bar"><div class="ed-conf-fill" style="width:${confPct}%;background:${confColor}"></div></div>
+    </div>`;
+  }).join('');
+}
+
+function applyImportItems(indices) {
+  if (!_importResult || !ld || !Array.isArray(indices) || !indices.length) {
+    return { wall: 0, boundary: 0, partition: 0, door: 0, skip: 0, added: 0 };
+  }
+
+  const before = _importApplied.size;
+  if (_importResult.vb && before === 0) ld.vb = _importResult.vb;
+  if (!Array.isArray(ld.walls)) ld.walls = [];
+  if (!Array.isArray(ld.boundaries)) ld.boundaries = [];
+  if (!Array.isArray(ld.partitions)) ld.partitions = [];
+  if (!Array.isArray(ld.doors)) ld.doors = [];
+
+  const out = { wall: 0, boundary: 0, partition: 0, door: 0, skip: 0, added: 0 };
+  indices.forEach((idx) => {
+    if (_importApplied.has(idx)) return;
+    const el = _importItems[idx];
+    if (!el) return;
+    const type = importCurrentType(idx);
+    _importApplied.add(idx);
+    if (type === 'skip') {
+      out.skip += 1;
+      _importAppliedCounts.skip += 1;
+      return;
+    }
+    const item = {
+      id: uid(),
+      pts: el.pts,
+      thick: el.thick || 4,
+      closed: !!el.closed,
+      conf: el.conf,
+      label: el.label || null,
+    };
+    if (type === 'boundary') {
+      item.color = normalizeHexColor(el.color, DEFAULT_ZONE_COLOR);
+      item.label_size = Number.isFinite(Number(el.label_size))
+        ? Math.max(8, Math.min(120, Number(el.label_size)))
+        : defaultZoneLabelSize();
+    }
+    if (type === 'wall')      { ld.walls.push(item); out.wall += 1; out.added += 1; _importAppliedCounts.wall += 1; }
+    if (type === 'boundary')  { ld.boundaries.push(item); out.boundary += 1; out.added += 1; _importAppliedCounts.boundary += 1; }
+    if (type === 'partition') { ld.partitions.push(item); out.partition += 1; out.added += 1; _importAppliedCounts.partition += 1; }
+    if (type === 'door')      { ld.doors.push(item); out.door += 1; out.added += 1; _importAppliedCounts.door += 1; }
+  });
+  return out;
+}
+
+function renderImportPreview() {
+  const layer = _layer('import-preview');
+  if (!layer) return;
+  layer.innerHTML = '';
+
+  const overlay = $el('ed-import-overlay');
+  if (!_importResult || !overlay || overlay.classList.contains('ed-hidden') || !_importItems.length) return;
+  const sw = Math.max(1.05, ed.vb.w * 0.0011);
+
+  for (let i = 0; i < _importItems.length; i += 1) {
+    if (_importApplied.has(i)) continue;
+    const el = _importItems[i];
+    const pts = Array.isArray(el?.pts) ? el.pts : [];
+    if (pts.length < 2) continue;
+
+    const type = importCurrentType(i);
+    const confPct = Number(el?._confPct || 0);
+    const lowConf = confPct < IMPORT_AUTO_THRESHOLD;
+    const tag = el.closed ? 'polygon' : 'polyline';
+    const shape = _makePolyEl(tag, pts, !!el.closed);
+
+    shape.setAttribute('pointer-events', 'none');
+    shape.setAttribute('stroke-linecap', 'round');
+    shape.setAttribute('stroke-linejoin', 'round');
+
+    if (type === 'wall') {
+      shape.setAttribute('fill', 'none');
+      shape.setAttribute('stroke', STRUCT_COLORS.wall);
+      shape.setAttribute('stroke-width', String(sw * 1.35));
+    } else if (type === 'boundary') {
+      shape.setAttribute('fill', el.closed ? '#1d4ed8' : 'none');
+      shape.setAttribute('fill-opacity', el.closed ? '0.08' : '0');
+      shape.setAttribute('stroke', '#1d4ed8');
+      shape.setAttribute('stroke-width', String(sw));
+    } else if (type === 'partition') {
+      shape.setAttribute('fill', 'none');
+      shape.setAttribute('stroke', STRUCT_COLORS.partition);
+      shape.setAttribute('stroke-width', String(sw * 0.95));
+      shape.setAttribute('stroke-dasharray', '7 4');
+    } else if (type === 'door') {
+      shape.setAttribute('fill', 'none');
+      shape.setAttribute('stroke', STRUCT_COLORS.door);
+      shape.setAttribute('stroke-width', String(sw));
+    } else {
+      shape.setAttribute('fill', 'none');
+      shape.setAttribute('stroke', '#94a3b8');
+      shape.setAttribute('stroke-width', String(sw * 0.85));
+      shape.setAttribute('stroke-dasharray', '4 4');
+    }
+
+    if (lowConf) {
+      shape.setAttribute('opacity', type === 'skip' ? '0.72' : '0.88');
+      if (type !== 'skip' && !shape.getAttribute('stroke-dasharray')) {
+        shape.setAttribute('stroke-dasharray', '4 3');
+      }
+    } else {
+      shape.setAttribute('opacity', type === 'skip' ? '0.56' : '0.95');
+    }
+
+    layer.appendChild(shape);
+  }
+}
+
+function applyImportAuto(opts = {}) {
+  const pending = importAutoIndices().filter(idx => !_importApplied.has(idx));
+  if (!pending.length) {
+    if (!opts.silent) edToast('Авто-элементы уже применены', 'info');
+    return;
+  }
+  const before = _importApplied.size;
+  const out = applyImportItems(pending);
+  if (out.added > 0) {
+    markDirty();
+    if (before === 0) fitToScreen();
+    renderAll();
+  }
+  if (!opts.silent) {
+    edToast(`Авто применено: ${out.wall} стен, ${out.boundary} границ, ${out.partition} перегородок, ${out.door} дверей`, 'success');
+  }
+  syncImportSummary();
+  updateImportActionButtons();
+  renderImportRows();
+  renderImportPreview();
+}
+
+function openImportReview() {
+  _importReviewMode = true;
+  _importSelected.clear();
+  _importFilters.conf = 'all';
+  const confSel = $el('ed-import-filter-conf');
+  if (confSel) confSel.value = _importFilters.conf;
+  syncImportSummary();
+  updateImportActionButtons();
+  renderImportRows();
+  renderImportPreview();
+}
+
+function applyImportReview() {
+  if (!_importResult || !ld) return;
+  if (importAutoIndices().some(idx => !_importApplied.has(idx))) {
+    applyImportAuto({ silent: true });
+  }
+  const pending = importReviewIndices().filter(idx => !_importApplied.has(idx));
+  if (!pending.length) {
+    closeImportModal();
+    edToast('Спорных элементов не осталось', 'info');
+    return;
+  }
+  const before = _importApplied.size;
+  const out = applyImportItems(pending);
+  if (out.added > 0) {
+    markDirty();
+    if (before === 0) fitToScreen();
+    renderAll();
+  }
+  const totalApplied = _importAppliedCounts.wall + _importAppliedCounts.boundary + _importAppliedCounts.partition + _importAppliedCounts.door;
+  closeImportModal();
+  edToast(
+    `Импорт завершён: применено ${totalApplied} элементов (${_importAppliedCounts.wall} стен, ${_importAppliedCounts.boundary} границ, ${_importAppliedCounts.partition} перегородок, ${_importAppliedCounts.door} дверей)`,
+    'success',
+  );
+}
+
+function setImportFilter(key, value) {
+  if (!['conf', 'type', 'geom'].includes(key)) return;
+  _importFilters[key] = value;
+  _importSelected.clear();
+  syncImportSummary();
+  renderImportRows();
+  renderImportPreview();
+}
+
+function selectVisibleImportRows() {
+  importVisibleIndices().forEach(idx => _importSelected.add(idx));
+  syncImportSummary();
+  renderImportRows();
+}
+
+function clearImportSelection() {
+  _importSelected.clear();
+  syncImportSummary();
+  renderImportRows();
+}
+
+function bulkAssignImportType(type) {
+  const visible = importVisibleIndices().filter(idx => !_importApplied.has(idx));
+  const target = (_importSelected.size ? [..._importSelected] : visible).filter(idx => !_importApplied.has(idx));
+  if (!target.length) {
+    edToast('Нет элементов для пакетного назначения', 'info');
+    return;
+  }
+  target.forEach((idx) => { _importOverrides[idx] = type; });
+  syncImportSummary();
+  renderImportRows();
+  renderImportPreview();
+  edToast(`Назначено "${importTypeLabel(type)}" для ${target.length} элементов`, 'info');
+}
+
+function bindImportListEvents() {
+  const itemsEl = $el('ed-import-items');
+  if (!itemsEl || itemsEl._importEventsBound) return;
+  itemsEl.addEventListener('change', (e) => {
+    const sel = e.target.closest('select[data-import-idx]');
+    if (sel) {
+      const idx = Number(sel.dataset.importIdx);
+      if (Number.isFinite(idx)) _importOverrides[idx] = sel.value;
+      syncImportSummary();
+      renderImportRows();
+      renderImportPreview();
+      return;
+    }
+    const chk = e.target.closest('input[data-import-check]');
+    if (!chk) return;
+    const idx = Number(chk.dataset.importCheck);
+    if (!Number.isFinite(idx)) return;
+    if (chk.checked) _importSelected.add(idx); else _importSelected.delete(idx);
+    syncImportSummary();
+    renderImportRows();
+  });
+  itemsEl.addEventListener('click', (e) => {
+    if (e.target.closest('select') || e.target.closest('input[data-import-check]')) return;
+    const row = e.target.closest('.ed-import-row[data-import-idx]');
+    if (!row) return;
+    const idx = Number(row.dataset.importIdx);
+    if (!Number.isFinite(idx)) return;
+    if (_importSelected.has(idx)) _importSelected.delete(idx); else _importSelected.add(idx);
+    syncImportSummary();
+    renderImportRows();
+  });
+  itemsEl._importEventsBound = true;
+}
 
 async function handleImportFile(file) {
   if (!ed.floorId) { edToast('Сначала выберите этаж', 'error'); return; }
@@ -2331,7 +3200,7 @@ async function handleImportFile(file) {
       });
       if (!resp.ok) { const b = await resp.json().catch(()=>({})); edToast('Ошибка: '+(b.detail||resp.status),'error'); return; }
       const data = await resp.json();
-      if (!ld) ld = { v:2, vb:[0,0,1000,1000], bg_url:null, bg_transform:null, walls:[], boundaries:[], partitions:[], desks:[] };
+      if (!ld) ld = { v:2, vb:[0,0,1000,1000], bg_url:null, bg_transform:null, walls:[], boundaries:[], partitions:[], doors:[], desks:[] };
       const canAdaptVb = !_layoutHasGeometry(ld);
       ld.bg_url = data.plan_url || null;
       if (canAdaptVb && rasterDims && rasterDims.w > 0 && rasterDims.h > 0) {
@@ -2366,15 +3235,14 @@ async function handleImportFile(file) {
 
 function showImportResult(res) {
   const statsEl = $el('ed-import-stats');
-  const itemsEl = $el('ed-import-items');
   const resultEl = $el('ed-import-result');
-  const applyBtn = $el('ed-import-apply');
 
   if (statsEl) {
     statsEl.innerHTML = [
       { n: res.stats.walls,      l: 'Стены'       },
       { n: res.stats.boundaries, l: 'Границы'     },
       { n: res.stats.partitions, l: 'Перегородки' },
+      { n: res.stats.doors || 0, l: 'Двери'       },
       { n: res.stats.uncertain,  l: 'Неопределено'},
       { n: res.stats.skipped,    l: 'Пропущено'   },
       { n: res.stats.total_elements, l: 'Всего'   },
@@ -2383,84 +3251,43 @@ function showImportResult(res) {
     ).join('');
   }
 
-  if (itemsEl) {
-    const all = [
-      ...res.walls.map(e => ({ ...e, _type: 'wall' })),
-      ...res.boundaries.map(e => ({ ...e, _type: 'boundary' })),
-      ...res.partitions.map(e => ({ ...e, _type: 'partition' })),
-      ...res.uncertain.map(e => ({ ...e, _type: 'uncertain' })),
-    ];
-    itemsEl.innerHTML = all.slice(0, 200).map((el, i) => {
-      const confPct = Math.round((el.conf || 0) * 100);
-      const confColor = confPct >= 70 ? '#22c55e' : confPct >= 40 ? '#f59e0b' : '#ef4444';
-      return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #e3ebf7">
-        <select data-import-idx="${i}" style="background:#ffffff;border:1px solid #c4d4e8;color:#243b53;border-radius:5px;font-size:11px;padding:2px 4px">
-          <option value="wall"      ${el._type==='wall'      ?'selected':''}>Стена</option>
-          <option value="boundary"  ${el._type==='boundary'  ?'selected':''}>Граница</option>
-          <option value="partition" ${el._type==='partition' ?'selected':''}>Перегородка</option>
-          <option value="skip"      ${el._type==='uncertain' ?'selected':''}>Пропустить</option>
-        </select>
-        <span style="flex:1;color:#627d98">${el.pts?.length||0} pts</span>
-        <span style="color:${confColor};font-size:10px">${confPct}%</span>
-        <div class="ed-conf-bar" style="width:40px"><div class="ed-conf-fill" style="width:${confPct}%;background:${confColor}"></div></div>
-      </div>`;
-    }).join('') + (all.length > 200 ? `<p style="color:#829ab1;padding:4px 0">… и ещё ${all.length-200} элементов</p>` : '');
-    // Store full list for apply
-    itemsEl._importList = all;
-  }
+  _importItems = buildImportItems(res);
+  _importOverrides = {};
+  _importItems.forEach((el) => {
+    _importOverrides[el._idx] = importDefaultType(el);
+  });
+  _importApplied = new Set();
+  _importSelected = new Set();
+  _importReviewMode = false;
+  _importFilters = { conf: 'all', type: 'all', geom: 'all' };
+  _importAppliedCounts = { wall: 0, boundary: 0, partition: 0, door: 0, skip: 0 };
 
   if (resultEl) resultEl.classList.remove('ed-hidden');
-  if (applyBtn) applyBtn.classList.remove('ed-hidden');
-}
-
-function applyImport() {
-  if (!_importResult || !ld) return;
-  const itemsEl = $el('ed-import-items');
-  const all = itemsEl?._importList || [];
-
-  // Use select overrides if present
-  const selects = itemsEl?.querySelectorAll('select[data-import-idx]');
-  const overrides = {};
-  selects?.forEach(sel => { overrides[parseInt(sel.dataset.importIdx)] = sel.value; });
-
-  let wCount = 0, bCount = 0, pCount = 0;
-
-  // Update viewBox from import
-  if (_importResult.vb) ld.vb = _importResult.vb;
-
-  all.forEach((el, i) => {
-    const type = overrides[i] || el._type;
-    if (type === 'skip' || type === 'uncertain') return;
-    const item = {
-      id: uid(),
-      pts: el.pts,
-      thick: el.thick || 4,
-      closed: el.closed || false,
-      conf: el.conf,
-      label: el.label || null,
-    };
-    if (type === 'boundary') {
-      item.color = normalizeHexColor(el.color, DEFAULT_ZONE_COLOR);
-    }
-    if (type === 'wall')      { ld.walls.push(item);      wCount++; }
-    if (type === 'boundary')  { ld.boundaries.push(item); bCount++; }
-    if (type === 'partition') { ld.partitions.push(item); pCount++; }
-  });
-
-  markDirty();
-  closeImportModal();
-  fitToScreen();
-  renderAll();
-  edToast(`Импортировано: ${wCount} стен, ${bCount} границ, ${pCount} перегородок`, 'success');
+  const confSel = $el('ed-import-filter-conf'); if (confSel) confSel.value = _importFilters.conf;
+  const typeSel = $el('ed-import-filter-type'); if (typeSel) typeSel.value = _importFilters.type;
+  const geomSel = $el('ed-import-filter-geom'); if (geomSel) geomSel.value = _importFilters.geom;
+  bindImportListEvents();
+  syncImportSummary();
+  updateImportActionButtons();
+  renderImportRows();
+  renderImportPreview();
 }
 
 function closeImportModal() {
   $el('ed-import-overlay')?.classList.add('ed-hidden');
-  _importResult = null;
+  resetImportState();
   const resultEl = $el('ed-import-result');
   if (resultEl) resultEl.classList.add('ed-hidden');
-  const applyBtn = $el('ed-import-apply');
-  if (applyBtn) applyBtn.classList.add('ed-hidden');
+  ['ed-import-review', 'ed-import-apply-auto', 'ed-import-apply-review'].forEach((id) => {
+    const btn = $el(id);
+    if (btn) btn.classList.add('ed-hidden');
+  });
+  $el('ed-import-review-controls')?.classList.add('ed-hidden');
+  const itemsEl = $el('ed-import-items');
+  if (itemsEl) itemsEl.innerHTML = '';
+  const summaryEl = $el('ed-import-summary');
+  if (summaryEl) summaryEl.textContent = '';
+  renderImportPreview();
 }
 
 /* ── History ────────────────────────────────────────────────────────────────── */
@@ -2540,7 +3367,7 @@ async function edRestoreRevision(revisionId) {
       return;
     }
     const data = await resp.json();
-    ld = data.layout;
+    ld = ensureLayoutArrays(data.layout);
     ed.status = data.status;
     ed.version = data.version;
     ed.dirty = false;
@@ -2669,6 +3496,7 @@ function initEditorKeyboard() {
       case 'w': case 'W': setMode('wall');      break;
       case 'b': case 'B': setMode('boundary');  break;
       case 'p': case 'P': setMode('partition'); break;
+      case 'o': case 'O': setMode('door');      break;
       case 'd': case 'D': setMode('desk');      break;
       case 'f': case 'F': fitToScreen();         break;
       case 'g': case 'G':
@@ -2681,6 +3509,10 @@ function initEditorKeyboard() {
         updateStatusBar();
         break;
       case 'Escape':
+        if (!$el('ed-import-overlay')?.classList.contains('ed-hidden')) {
+          closeImportModal();
+          break;
+        }
         if (!$el('ed-history-overlay')?.classList.contains('ed-hidden')) {
           closeHistoryModal();
           break;
@@ -2700,6 +3532,9 @@ function initEditorKeyboard() {
         break;
       case 'Delete': case 'Backspace':
         if (deleteSelectedDesks()) {
+          break;
+        }
+        if (deleteSelectedWalls()) {
           break;
         }
         if (ed.selType) {
@@ -2831,10 +3666,15 @@ function initDeskBulkControls() {
   const apply = () => {
     const nextPlaceMode = $el('ed-desk-place-mode')?.value === 'block' ? 'block' : 'single';
     const wasBlock = ed.deskTool.placeMode === 'block';
+    const baseSize = baseDeskSize();
+    const maxW = Math.max(120, baseSize.w * 8);
+    const maxH = Math.max(90, baseSize.h * 8);
 
     ed.deskTool.placeMode = nextPlaceMode;
     ed.deskTool.pattern = $el('ed-desk-block-pattern')?.value === 'double' ? 'double' : 'rows';
     ed.deskTool.axis = $el('ed-desk-block-axis')?.value === 'vertical' ? 'vertical' : 'horizontal';
+    ed.deskTool.deskW = clampNum($el('ed-desk-width')?.value, 4, maxW, ed.deskTool.deskW ?? baseSize.w);
+    ed.deskTool.deskH = clampNum($el('ed-desk-height')?.value, 4, maxH, ed.deskTool.deskH ?? baseSize.h);
     ed.deskTool.seatsPerRow = clampInt($el('ed-desk-seats-per-row')?.value, 1, 100, ed.deskTool.seatsPerRow || 6);
     ed.deskTool.rowCount = clampInt($el('ed-desk-row-count')?.value, 1, 50, ed.deskTool.rowCount || 2);
     ed.deskTool.pairCount = clampInt($el('ed-desk-pair-count')?.value, 1, 25, ed.deskTool.pairCount || 1);
@@ -2850,7 +3690,7 @@ function initDeskBulkControls() {
     renderDrawing();
   };
 
-  ['ed-desk-place-mode', 'ed-desk-block-pattern', 'ed-desk-block-axis', 'ed-desk-seats-per-row', 'ed-desk-row-count', 'ed-desk-pair-count']
+  ['ed-desk-place-mode', 'ed-desk-block-pattern', 'ed-desk-block-axis', 'ed-desk-width', 'ed-desk-height', 'ed-desk-seats-per-row', 'ed-desk-row-count', 'ed-desk-pair-count']
     .forEach(id => {
       $el(id)?.addEventListener('change', apply);
       $el(id)?.addEventListener('input', apply);
@@ -2921,7 +3761,19 @@ function initFloorEditor() {
   // Import modal
   $el('ed-import-close')?.addEventListener('click',  closeImportModal);
   $el('ed-import-cancel')?.addEventListener('click', closeImportModal);
-  $el('ed-import-apply')?.addEventListener('click',  applyImport);
+  $el('ed-import-apply-auto')?.addEventListener('click', applyImportAuto);
+  $el('ed-import-review')?.addEventListener('click', openImportReview);
+  $el('ed-import-apply-review')?.addEventListener('click', applyImportReview);
+  $el('ed-import-filter-conf')?.addEventListener('change', (e) => setImportFilter('conf', e.target.value));
+  $el('ed-import-filter-type')?.addEventListener('change', (e) => setImportFilter('type', e.target.value));
+  $el('ed-import-filter-geom')?.addEventListener('change', (e) => setImportFilter('geom', e.target.value));
+  $el('ed-import-select-visible')?.addEventListener('click', selectVisibleImportRows);
+  $el('ed-import-clear-selection')?.addEventListener('click', clearImportSelection);
+  $el('ed-import-bulk-wall')?.addEventListener('click', () => bulkAssignImportType('wall'));
+  $el('ed-import-bulk-boundary')?.addEventListener('click', () => bulkAssignImportType('boundary'));
+  $el('ed-import-bulk-partition')?.addEventListener('click', () => bulkAssignImportType('partition'));
+  $el('ed-import-bulk-door')?.addEventListener('click', () => bulkAssignImportType('door'));
+  $el('ed-import-bulk-skip')?.addEventListener('click', () => bulkAssignImportType('skip'));
   $el('ed-import-browse')?.addEventListener('click', () => $el('ed-import-file')?.click());
   $el('ed-import-file')?.addEventListener('change', function() {
     if (this.files[0]) { handleImportFile(this.files[0]); this.value = ''; }
@@ -2945,8 +3797,14 @@ function initFloorEditor() {
     if (e.target?.id === 'ed-history-overlay') closeHistoryModal();
   });
 
-  // Release lock on page close
-  window.addEventListener('beforeunload', () => { if (ed.locked && ed.floorId && isLockOwnedByMe()) releaseLock(); });
+  // Warn user before closing tab if draft changes are not saved.
+  window.addEventListener('beforeunload', (e) => {
+    if (!ed?.dirty) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+  // Release lock only when page is actually being hidden/unloaded.
+  window.addEventListener('pagehide', releaseLockOnExit);
 
   initPropsListeners();
   initDeskBulkControls();
