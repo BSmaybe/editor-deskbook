@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.orm import Session
 
 from . import models, schemas
+from .config import settings
+
+
+def _now_app() -> datetime:
+    """Current datetime in the app's configured timezone."""
+    return datetime.now(ZoneInfo(settings.APP_TIMEZONE))
+
+
+def _today_app() -> date:
+    """Today's date in the app's configured timezone."""
+    return _now_app().date()
 
 
 def _time_overlaps(start_a: time, end_a: time, start_b: time, end_b: time) -> bool:
@@ -186,7 +198,7 @@ def checkin_reservation(
     if desk is None:
         raise KeyError("desk")
 
-    today = datetime.utcnow().date()
+    today = _today_app()
 
     reservation = (
         db.query(models.Reservation)
@@ -202,7 +214,7 @@ def checkin_reservation(
     if reservation is None:
         raise ValueError("No active reservation for today")
 
-    reservation.checked_in_at = datetime.utcnow()
+    reservation.checked_in_at = _now_app()
     db.commit()
     db.refresh(reservation)
     return reservation
@@ -216,7 +228,7 @@ def cancel_noshow_reservations(db: Session) -> int:
     minutes when no policy exists for an office.
     """
     DEFAULT_TIMEOUT = 15
-    now_utc = datetime.utcnow()
+    now_utc = _now_app()
 
     # Fetch all active, unchecked-in reservations that have a start_time set
     active_reservations = (

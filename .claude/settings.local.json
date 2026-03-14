@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(docker compose:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(docker exec:*)",
+      "Bash(node:*)",
+      "Bash(curl -s \"http://localhost:8000/api/floors\" | python3 -m json.tool 2>&1 | head -30)",
+      "Bash(curl -s \"http://localhost:8000/offices\" | python3 -m json.tool 2>&1 | head -20)"
     ]
   }
 }

@@ -4,6 +4,7 @@ from datetime import date, datetime, time
 from typing import Optional
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     Date,
@@ -39,6 +40,7 @@ class User(Base):
     position: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     user_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="available")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
 
     __table_args__ = (
         CheckConstraint("role IN ('admin', 'user')", name="ck_users_role"),

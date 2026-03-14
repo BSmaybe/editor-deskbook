@@ -49,3 +49,4 @@ docker-compose.override.yml
 # Static uploads (generated at runtime)
 backend/static/*.png
 backend/static/*.jpg
+backend/static/*.svg

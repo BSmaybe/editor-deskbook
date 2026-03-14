@@ -1,5 +1,49 @@
 const API_BASE = "/api";
 
+// ── Pagination ────────────────────────────────────────────────────────────────
+var _pages = {};
+var PAGE_SIZE = 15;
+
+function _getPage(tableId) { return _pages[tableId] || 1; }
+function _setPage(tableId, p) { _pages[tableId] = p; }
+
+function renderPagination(containerId, total, tableId) {
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  var totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  var cur = Math.min(_getPage(tableId), totalPages);
+  _setPage(tableId, cur);
+  var from = (cur - 1) * PAGE_SIZE + 1;
+  var to   = Math.min(cur * PAGE_SIZE, total);
+  el.innerHTML = (
+    '<span style="color:var(--text-2)">' + (total ? from + '–' + to + ' из ' + total : '0') + '</span>' +
+    '<div style="display:flex;gap:4px">' +
+      '<button onclick="changePage(\'' + tableId + '\',-1)" ' + (cur <= 1 ? 'disabled' : '') + ' class="btn btn-secondary btn-sm" style="padding:2px 8px">&#8249;</button>' +
+      '<span style="padding:2px 8px;font-weight:500">' + cur + ' / ' + totalPages + '</span>' +
+      '<button onclick="changePage(\'' + tableId + '\',1)" ' + (cur >= totalPages ? 'disabled' : '') + ' class="btn btn-secondary btn-sm" style="padding:2px 8px">&#8250;</button>' +
+    '</div>'
+  );
+}
+
+function changePage(tableId, delta) {
+  _setPage(tableId, (_getPage(tableId) + delta));
+  var reloaders = {
+    offices:      loadOffices,
+    floors:       loadFloors,
+    desks:        loadDesks,
+    reservations: loadReservations,
+    departments:  loadDepartments,
+    users:        loadUsers,
+  };
+  if (reloaders[tableId]) reloaders[tableId]();
+}
+
+function pageSlice(arr, tableId) {
+  var cur  = _getPage(tableId);
+  var from = (cur - 1) * PAGE_SIZE;
+  return arr.slice(from, from + PAGE_SIZE);
+}
+
 const SPACE_LABELS = {
   desk: "Рабочий стол",
   meeting_room: "Переговорная",
@@ -260,6 +304,27 @@ async function loadAnalytics() {
         }).join("")
       : '<tr><td colspan="2" class="empty">Нет данных</td></tr>';
 
+    var chartEl = document.getElementById("desks-chart");
+    if (chartEl && data.top_desks && data.top_desks.length) {
+      var maxVal = data.top_desks[0].total || 1;
+      chartEl.innerHTML = data.top_desks.slice(0, 10).map(function (d) {
+        var pct = Math.round(d.total / maxVal * 100);
+        return (
+          '<div style="display:flex;align-items:center;gap:10px;font-size:13px">' +
+            '<span style="width:120px;text-align:right;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + d.label + '">' + d.label + '</span>' +
+            '<div style="flex:1;background:var(--border);border-radius:4px;height:20px;overflow:hidden">' +
+              '<div style="height:100%;background:var(--accent);border-radius:4px;width:' + pct + '%;transition:width .4s;display:flex;align-items:center;padding-left:6px">' +
+                '<span style="font-size:11px;font-weight:600;color:white;white-space:nowrap">' + (pct > 15 ? d.total : '') + '</span>' +
+              '</div>' +
+            '</div>' +
+            '<span style="width:24px;font-weight:600">' + d.total + '</span>' +
+          '</div>'
+        );
+      }).join('');
+    } else if (chartEl) {
+      chartEl.innerHTML = '<p class="empty">Нет данных</p>';
+    }
+
   } catch (e) {
     showToast("Аналитика: " + e.message, "error");
   }
@@ -288,9 +353,11 @@ function renderOfficesTable() {
   officesBody.innerHTML = "";
   if (!state.offices.length) {
     officesBody.innerHTML = '<tr><td colspan="4" class="empty">Нет офисов.</td></tr>';
+    renderPagination('offices-pagination', 0, 'offices');
     return;
   }
-  state.offices.forEach(function (o) {
+  var slice = pageSlice(state.offices, 'offices');
+  slice.forEach(function (o) {
     var tr = document.createElement("tr");
     tr.innerHTML = "<td>" + o.id + "</td><td>" + o.name + "</td><td>" + (o.address || "—") + "</td><td></td>";
     tr.querySelector("td:last-child").append(
@@ -307,15 +374,18 @@ function renderOfficesTable() {
     );
     officesBody.append(tr);
   });
+  renderPagination('offices-pagination', state.offices.length, 'offices');
 }
 
 function renderFloorsTable() {
   floorsBody.innerHTML = "";
   if (!state.floors.length) {
     floorsBody.innerHTML = '<tr><td colspan="5" class="empty">Нет этажей.</td></tr>';
+    renderPagination('floors-pagination', 0, 'floors');
     return;
   }
-  state.floors.forEach(function (f) {
+  var slice = pageSlice(state.floors, 'floors');
+  slice.forEach(function (f) {
     var tr = document.createElement("tr");
     var planCell = f.plan_url
       ? '<a href="' + f.plan_url + '" target="_blank" rel="noopener">Посмотреть</a>'
@@ -335,6 +405,7 @@ function renderFloorsTable() {
     );
     floorsBody.append(tr);
   });
+  renderPagination('floors-pagination', state.floors.length, 'floors');
 }
 
 function renderDesksTable() {
@@ -402,9 +473,11 @@ function renderPoliciesTable() {
   policiesBody.innerHTML = "";
   if (!state.policies.length) {
     policiesBody.innerHTML = '<tr><td colspan="7" class="empty">Нет политик.</td></tr>';
+    renderPagination('policies-pagination', 0, 'policies');
     return;
   }
-  state.policies.forEach(function (p) {
+  var slice = pageSlice(state.policies, 'policies');
+  slice.forEach(function (p) {
     var tr = document.createElement("tr");
     tr.innerHTML = (
       "<td>" + p.id + "</td>" +
@@ -429,15 +502,18 @@ function renderPoliciesTable() {
     );
     policiesBody.append(tr);
   });
+  renderPagination('policies-pagination', state.policies.length, 'policies');
 }
 
 function renderReservationsTable() {
   reservationsBody.innerHTML = "";
   if (!state.reservations.length) {
     reservationsBody.innerHTML = '<tr><td colspan="9" class="empty">Нет бронирований.</td></tr>';
+    renderPagination('reservations-pagination', 0, 'reservations');
     return;
   }
-  state.reservations.forEach(function (r) {
+  var slice = pageSlice(state.reservations, 'reservations');
+  slice.forEach(function (r) {
     var tr = document.createElement("tr");
     var checkinText = r.checked_in_at ? r.checked_in_at.slice(11, 16) : "—";
     var statusClass = r.status === "active" ? "active" : "cancelled";
@@ -458,6 +534,7 @@ function renderReservationsTable() {
     }
     reservationsBody.append(tr);
   });
+  renderPagination('reservations-pagination', state.reservations.length, 'reservations');
 }
 
 // ── Populate selects ──────────────────────────────────────────────────────────
@@ -498,6 +575,56 @@ var placementFloorId = null;
 var _selectedIdx     = null;
 var _placementMode   = "select"; // "select" | "desk" | "room"
 
+// ── Multi-selection ────────────────────────────────────────────────────────────
+var _selectedIdxs = new Set(); // indices of all selected desks (rubber-band)
+
+// ── Undo/Redo history ─────────────────────────────────────────────────────────
+var _history    = [];
+var _historyIdx = -1;
+
+function _pushHistory() {
+  _history = _history.slice(0, _historyIdx + 1);
+  _history.push(JSON.parse(JSON.stringify(pendingDesks)));
+  _historyIdx = _history.length - 1;
+  _updateUndoRedoBtns();
+}
+
+function _updateUndoRedoBtns() {
+  var u = document.getElementById("undo-btn");
+  var r = document.getElementById("redo-btn");
+  if (u) u.disabled = _historyIdx <= 0;
+  if (r) r.disabled = _historyIdx >= _history.length - 1;
+}
+
+function doUndo() {
+  if (_historyIdx <= 0) return;
+  _historyIdx--;
+  pendingDesks = JSON.parse(JSON.stringify(_history[_historyIdx]));
+  _selectedIdx = null;
+  renderPlacementEditor();
+  updatePropertiesPanel();
+  _updateUndoRedoBtns();
+}
+
+function doRedo() {
+  if (_historyIdx >= _history.length - 1) return;
+  _historyIdx++;
+  pendingDesks = JSON.parse(JSON.stringify(_history[_historyIdx]));
+  _selectedIdx = null;
+  renderPlacementEditor();
+  updatePropertiesPanel();
+  _updateUndoRedoBtns();
+}
+
+// ── Snap-to-grid ──────────────────────────────────────────────────────────────
+var _snapEnabled = false;
+var SNAP_GRID    = 0.025;
+
+function _snap(val) {
+  if (!_snapEnabled) return val;
+  return Math.round(val / SNAP_GRID) * SNAP_GRID;
+}
+
 var TILE_W  = { desk: 0.03, room: 0.08 };
 var TILE_H  = { desk: 0.02, room: 0.05 };
 var MIN_W   = 0.01, MAX_W = 0.30;
@@ -515,12 +642,13 @@ function escHtml(s) {
 
 // ── Desk anchor (small dot, center = position_x + w/2, position_y + h/2) ────
 function createAnchor(d, idx, img) {
-  var ns    = "http://www.w3.org/2000/svg";
-  var dw    = d.w || TILE_W.desk;
-  var dh    = d.h || TILE_H.desk;
-  var acx   = (d.position_x + dw / 2) * 1000;
-  var acy   = (d.position_y + dh / 2) * 1000;
-  var isSel = idx === _selectedIdx;
+  var ns         = "http://www.w3.org/2000/svg";
+  var dw         = d.w || TILE_W.desk;
+  var dh         = d.h || TILE_H.desk;
+  var acx        = (d.position_x + dw / 2) * 1000;
+  var acy        = (d.position_y + dh / 2) * 1000;
+  var isSel      = idx === _selectedIdx;
+  var isMultiSel = _selectedIdxs.has(idx);
 
   var g = document.createElementNS(ns, "g");
   g.classList.add("placement-anchor");
@@ -561,7 +689,7 @@ function createAnchor(d, idx, img) {
   dot.setAttribute("cx",           String(acx));
   dot.setAttribute("cy",           String(acy));
   dot.setAttribute("r",            String(ANCHOR_R));
-  dot.setAttribute("fill",         SPACE_COLORS["desk"] || "#2563eb");
+  dot.setAttribute("fill",         isMultiSel ? "#f59e0b" : (SPACE_COLORS["desk"] || "#2563eb"));
   dot.setAttribute("stroke",       "white");
   dot.setAttribute("stroke-width", "4");
   g.appendChild(dot);
@@ -584,8 +712,8 @@ function createAnchor(d, idx, img) {
     var my  = Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height));
     var cdw = pendingDesks[idx].w || TILE_W.desk;
     var cdh = pendingDesks[idx].h || TILE_H.desk;
-    var nx  = Math.round(Math.max(0, Math.min(1 - cdw, mx - cdw / 2)) * 1000) / 1000;
-    var ny  = Math.round(Math.max(0, Math.min(1 - cdh, my - cdh / 2)) * 1000) / 1000;
+    var nx  = _snap(Math.max(0, Math.min(1 - cdw, mx - cdw / 2)));
+    var ny  = _snap(Math.max(0, Math.min(1 - cdh, my - cdh / 2)));
     pendingDesks[idx].position_x = nx;
     pendingDesks[idx].position_y = ny;
     var nacx = (nx + cdw / 2) * 1000;
@@ -599,7 +727,8 @@ function createAnchor(d, idx, img) {
   g.addEventListener("pointerup", function (e) {
     if (!g.hasPointerCapture(e.pointerId)) return;
     if (_anchorMoved) {
-      // Drag ended: commit selection and re-render to sync selection visuals
+      // Drag ended: push undo snapshot, commit selection and re-render
+      _pushHistory();
       _selectedIdx = idx;
       renderMarkers();
       updatePropertiesPanel();
@@ -614,12 +743,13 @@ function createAnchor(d, idx, img) {
 
 // ── Room / large-space block (rect with resize handle) ────────────────────
 function createBlock(d, idx, img) {
-  var ns    = "http://www.w3.org/2000/svg";
-  var tileW = (d.w || TILE_W.room) * 1000;
-  var tileH = (d.h || TILE_H.room) * 1000;
-  var tx    = d.position_x * 1000;
-  var ty    = d.position_y * 1000;
-  var isSel = idx === _selectedIdx;
+  var ns         = "http://www.w3.org/2000/svg";
+  var tileW      = (d.w || TILE_W.room) * 1000;
+  var tileH      = (d.h || TILE_H.room) * 1000;
+  var tx         = d.position_x * 1000;
+  var ty         = d.position_y * 1000;
+  var isSel      = idx === _selectedIdx;
+  var isMultiSel = _selectedIdxs.has(idx);
 
   var g = document.createElementNS(ns, "g");
   g.classList.add("placement-block");
@@ -631,8 +761,8 @@ function createBlock(d, idx, img) {
   rect.setAttribute("width",        String(tileW));
   rect.setAttribute("height",       String(tileH));
   rect.setAttribute("rx",           "8");
-  rect.setAttribute("fill",         SPACE_COLORS[d.space_type] || "#7c3aed");
-  rect.setAttribute("fill-opacity", "0.7");
+  rect.setAttribute("fill",         isMultiSel ? "#f59e0b" : (SPACE_COLORS[d.space_type] || "#7c3aed"));
+  rect.setAttribute("fill-opacity", isMultiSel ? "0.5" : "0.7");
   rect.setAttribute("stroke",       "white");
   rect.setAttribute("stroke-width", "4");
   g.appendChild(rect);
@@ -666,8 +796,8 @@ function createBlock(d, idx, img) {
     if (!g.hasPointerCapture(e.pointerId)) return;
     _blockMoved = true;
     var ir = img.getBoundingClientRect();
-    var x  = Math.round(Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width))  * 1000) / 1000;
-    var y  = Math.round(Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height)) * 1000) / 1000;
+    var x  = _snap(Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width)));
+    var y  = _snap(Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height)));
     pendingDesks[idx].position_x = x;
     pendingDesks[idx].position_y = y;
     rect.setAttribute("x", String(x * 1000));
@@ -684,6 +814,7 @@ function createBlock(d, idx, img) {
   g.addEventListener("pointerup", function (e) {
     if (!g.hasPointerCapture(e.pointerId)) return;
     if (_blockMoved) {
+      _pushHistory();
       _selectedIdx = idx;
       renderMarkers();
       updatePropertiesPanel();
@@ -764,7 +895,16 @@ function updatePropertiesPanel() {
   var formEl  = document.getElementById("tile-properties-form");
   if (!emptyEl || !formEl) return;
 
+  // Multi-select: show count in empty panel, hide form
+  if (_selectedIdxs.size > 1) {
+    emptyEl.textContent = "Выбрано: " + _selectedIdxs.size + " объектов. Del — удалить.";
+    emptyEl.style.display = "";
+    formEl.style.display  = "none";
+    return;
+  }
+
   if (_selectedIdx === null || !pendingDesks[_selectedIdx]) {
+    emptyEl.textContent = "Выберите объект на плане, чтобы редактировать свойства.";
     emptyEl.style.display = "";
     formEl.style.display  = "none";
     return;
@@ -812,6 +952,7 @@ function initPlacementEditor() {
     if (!confirm("Очистить все плитки с плана этажа?")) return;
     pendingDesks = [];
     _selectedIdx = null;
+    _pushHistory();
     renderPlacementEditor();
     updatePropertiesPanel();
   });
@@ -859,19 +1000,101 @@ function initPlacementEditor() {
     if (_selectedIdx === null) return;
     pendingDesks.splice(_selectedIdx, 1);
     _selectedIdx = null;
+    _pushHistory();
     renderPlacementEditor();
     updatePropertiesPanel();
   });
 
-  // Click on overlay/SVG background → add object (only in desk/room mode)
+  // ── Rubber-band selection (select mode drag) ──────────────────────────────
+  var _rubberStart = null;
+  var _rubberRect  = null; // SVG rect element for visual feedback
+
+  function _getRubberSvg() {
+    return document.getElementById("placement-svg");
+  }
+
+  function _clearRubber() {
+    if (_rubberRect && _rubberRect.parentNode) _rubberRect.parentNode.removeChild(_rubberRect);
+    _rubberRect = null;
+    _rubberStart = null;
+  }
+
+  overlay.addEventListener("pointermove", function (e) {
+    if (!_rubberStart || _placementMode !== "select") return;
+    var ir  = img.getBoundingClientRect();
+    var x1  = Math.max(0, Math.min(1, (_rubberStart.clientX - ir.left) / ir.width));
+    var y1  = Math.max(0, Math.min(1, (_rubberStart.clientY - ir.top)  / ir.height));
+    var x2  = Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width));
+    var y2  = Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height));
+    var svgEl = _getRubberSvg();
+    if (!svgEl) return;
+    if (!_rubberRect) {
+      _rubberRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      _rubberRect.setAttribute("fill",            "rgba(59,130,246,0.12)");
+      _rubberRect.setAttribute("stroke",          "#3b82f6");
+      _rubberRect.setAttribute("stroke-width",    "2");
+      _rubberRect.setAttribute("stroke-dasharray","6 3");
+      _rubberRect.setAttribute("pointer-events",  "none");
+      svgEl.appendChild(_rubberRect);
+    }
+    var rx = Math.min(x1, x2) * 1000, ry = Math.min(y1, y2) * 1000;
+    var rw = Math.abs(x2 - x1) * 1000, rh = Math.abs(y2 - y1) * 1000;
+    _rubberRect.setAttribute("x", String(rx));
+    _rubberRect.setAttribute("y", String(ry));
+    _rubberRect.setAttribute("width",  String(rw));
+    _rubberRect.setAttribute("height", String(rh));
+  });
+
+  // Click on overlay/SVG background → add object (desk/room mode) or rubber-band (select mode)
   var addStart = null;
   overlay.addEventListener("pointerdown", function (e) {
     var isObj = e.target.closest && (e.target.closest(".placement-anchor") || e.target.closest(".placement-block"));
     if (isObj) return;
+    if (_placementMode === "select") {
+      _rubberStart = { clientX: e.clientX, clientY: e.clientY };
+      return;
+    }
     if (_placementMode !== "desk" && _placementMode !== "room") return;
     addStart = { x: e.clientX, y: e.clientY };
   });
   overlay.addEventListener("pointerup", function (e) {
+    // Handle rubber-band release in select mode
+    if (_rubberStart && _placementMode === "select") {
+      var ir   = img.getBoundingClientRect();
+      var x1   = Math.max(0, Math.min(1, (_rubberStart.clientX - ir.left) / ir.width));
+      var y1   = Math.max(0, Math.min(1, (_rubberStart.clientY - ir.top)  / ir.height));
+      var x2   = Math.max(0, Math.min(1, (e.clientX - ir.left) / ir.width));
+      var y2   = Math.max(0, Math.min(1, (e.clientY - ir.top)  / ir.height));
+      var isDrag = Math.abs(e.clientX - _rubberStart.clientX) > 8 || Math.abs(e.clientY - _rubberStart.clientY) > 8;
+      _clearRubber();
+      if (isDrag) {
+        var minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+        var minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+        _selectedIdxs.clear();
+        pendingDesks.forEach(function (d, i) {
+          if (d.position_x === null || d.position_y === null) return;
+          var cx = d.position_x + (d.w || TILE_W.desk) / 2;
+          var cy = d.position_y + (d.h || TILE_H.desk) / 2;
+          if (cx >= minX && cx <= maxX && cy >= minY && cy <= maxY) _selectedIdxs.add(i);
+        });
+        if (_selectedIdxs.size === 1) {
+          _selectedIdx = Array.from(_selectedIdxs)[0];
+          _selectedIdxs.clear();
+        } else {
+          _selectedIdx = null;
+        }
+        renderMarkers();
+        updatePropertiesPanel();
+      } else {
+        // Simple click on background → deselect all
+        _selectedIdx = null;
+        _selectedIdxs.clear();
+        renderMarkers();
+        updatePropertiesPanel();
+      }
+      return;
+    }
+
     if (!addStart) return;
     var isObj = e.target.closest && (e.target.closest(".placement-anchor") || e.target.closest(".placement-block"));
     if (isObj) { addStart = null; return; }
@@ -886,33 +1109,61 @@ function initPlacementEditor() {
     var newW    = isRoom ? TILE_W.room : TILE_W.desk;
     var newH    = isRoom ? TILE_H.room : TILE_H.desk;
     // For desks: center anchor on cursor. For rooms: top-left at cursor.
-    var posX    = isRoom ? mx : Math.max(0, mx - newW / 2);
-    var posY    = isRoom ? my : Math.max(0, my - newH / 2);
+    var posX    = _snap(isRoom ? mx : Math.max(0, mx - newW / 2));
+    var posY    = _snap(isRoom ? my : Math.max(0, my - newH / 2));
     pendingDesks.push({
       label:       isRoom ? "R-" + autoIdx : "D-" + autoIdx,
       type:        "flex",
       space_type:  isRoom ? "meeting_room" : "desk",
       assigned_to: "",
-      position_x:  Math.round(posX * 1000) / 1000,
-      position_y:  Math.round(posY * 1000) / 1000,
+      position_x:  posX,
+      position_y:  posY,
       w:           newW,
       h:           newH,
     });
+    _pushHistory();
     _selectedIdx = pendingDesks.length - 1;
     renderPlacementEditor();
     updatePropertiesPanel();
   });
 
-  // Del / Backspace to delete selected desk
+  // Del / Backspace to delete selected desk; Ctrl+Z/Y for undo/redo
   document.addEventListener("keydown", function (e) {
-    if (_selectedIdx === null) return;
-    if (e.key !== "Delete" && e.key !== "Backspace") return;
     var active = document.activeElement;
-    if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT")) return;
-    pendingDesks.splice(_selectedIdx, 1);
-    _selectedIdx = null;
-    renderPlacementEditor();
-    updatePropertiesPanel();
+    var inInput = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT");
+
+    // Undo/Redo — always active (even in inputs we allow it)
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === "z") {
+      e.preventDefault();
+      doUndo();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.shiftKey && e.key === "z"))) {
+      e.preventDefault();
+      doRedo();
+      return;
+    }
+
+    if (inInput) return;
+
+    if (e.key === "Delete" || e.key === "Backspace") {
+      if (_selectedIdxs.size > 0) {
+        // Delete all rubber-band selected
+        var toDelete = Array.from(_selectedIdxs).sort(function (a, b) { return b - a; });
+        toDelete.forEach(function (i) { pendingDesks.splice(i, 1); });
+        _selectedIdxs.clear();
+        _selectedIdx = null;
+        _pushHistory();
+        renderPlacementEditor();
+        updatePropertiesPanel();
+      } else if (_selectedIdx !== null) {
+        pendingDesks.splice(_selectedIdx, 1);
+        _selectedIdx = null;
+        _pushHistory();
+        renderPlacementEditor();
+        updatePropertiesPanel();
+      }
+    }
   });
 
   // Deselect on Escape
@@ -922,6 +1173,15 @@ function initPlacementEditor() {
       selectDesk(null);
     }
   });
+
+  // Undo/Redo buttons
+  document.getElementById("undo-btn").addEventListener("click", doUndo);
+  document.getElementById("redo-btn").addEventListener("click", doRedo);
+
+  // Snap-to-grid toggle
+  document.getElementById("snap-toggle").addEventListener("change", function () {
+    _snapEnabled = this.checked;
+  });
 }
 
 async function loadPlacementFloor(floorId) {
@@ -929,8 +1189,12 @@ async function loadPlacementFloor(floorId) {
   var noplan = document.getElementById("placement-no-plan");
   area.style.display = "none";
   noplan.classList.add("hidden");
-  pendingDesks = [];
-  _selectedIdx = null;
+  pendingDesks  = [];
+  _selectedIdx  = null;
+  _selectedIdxs = new Set();
+  _history      = [];
+  _historyIdx   = -1;
+  _updateUndoRedoBtns();
   if (!floorId) return;
 
   var floor = state.floors.find(function (f) { return String(f.id) === String(floorId); });
@@ -958,6 +1222,7 @@ async function loadPlacementFloor(floorId) {
     pendingDesks = [];
   }
 
+  _pushHistory(); // initial state as undo base
   renderPlacementEditor();
   updatePropertiesPanel();
 }
@@ -1030,6 +1295,7 @@ function renderPlacementEditor() {
       pendingDesks.splice(i, 1);
       if (_selectedIdx === i) _selectedIdx = null;
       else if (_selectedIdx !== null && _selectedIdx > i) _selectedIdx--;
+      _pushHistory();
       renderPlacementEditor();
       updatePropertiesPanel();
     });
@@ -1106,6 +1372,7 @@ document.querySelectorAll(".nav-item[data-tab]").forEach(function (btn) {
     btn.classList.add("active");
     document.getElementById("tab-" + btn.dataset.tab).classList.remove("hidden");
     if (btn.dataset.tab === "analytics") loadAnalytics();
+    if (btn.dataset.tab === "users") loadUsers();
   });
 });
 
@@ -1169,6 +1436,21 @@ document.getElementById("refresh-desks")?.addEventListener("click", loadDesks);
 document.getElementById("refresh-policies").addEventListener("click", loadPolicies);
 document.getElementById("refresh-reservations").addEventListener("click", loadReservations);
 document.getElementById("refresh-analytics").addEventListener("click", loadAnalytics);
+document.getElementById("refresh-users")?.addEventListener("click", loadUsers);
+document.getElementById("users-search")?.addEventListener("input", renderUsers);
+
+document.getElementById("export-reservations-csv")?.addEventListener("click", function() {
+  var rows = [["ID","Стол","Пользователь","Дата","Начало","Конец","Статус"]];
+  state.reservations.forEach(function(r) {
+    rows.push([r.id, r.desk_id, r.user_id, r.reservation_date, r.start_time, r.end_time, r.status]);
+  });
+  var csv = rows.map(function(r) { return r.map(function(c) { return '"' + String(c).replace(/"/g,'""') + '"'; }).join(','); }).join('\n');
+  var blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'reservations.csv'; a.click();
+  URL.revokeObjectURL(url);
+});
 
 // ── Create office ─────────────────────────────────────────────────────────────
 document.getElementById("create-office-btn").addEventListener("click", async function () {
@@ -1227,6 +1509,11 @@ document.getElementById("upload-plan-btn").addEventListener("click", async funct
     showToast("План этажа загружен.", "success");
     planFile.value = "";
     await loadFloors();
+    // Auto-refresh placement editor if this floor is currently open
+    var selFloor = document.getElementById("placement-floor-select");
+    if (selFloor && String(selFloor.value) === String(floorId)) {
+      await loadPlacementFloor(floorId);
+    }
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
@@ -1260,37 +1547,128 @@ document.getElementById("create-policy-btn").addEventListener("click", async fun
 
 // ── Departments ───────────────────────────────────────────────────────────────
 
+// ── Users management ──────────────────────────────────────────────────────────
+var _allUsers = [];
+
+async function loadUsers() {
+  try {
+    _allUsers = await apiRequest("/admin/users");
+    renderUsers();
+  } catch(e) {
+    showToast("Пользователи: " + e.message, "error");
+  }
+}
+
+function renderUsers() {
+  var search = (document.getElementById("users-search")?.value || "").toLowerCase();
+  var filtered = search
+    ? _allUsers.filter(function(u) {
+        return u.username.toLowerCase().includes(search) || (u.email || "").toLowerCase().includes(search);
+      })
+    : _allUsers;
+  var tbody = document.getElementById("users-body");
+  if (!tbody) return;
+  var slice = pageSlice(filtered, 'users');
+  tbody.innerHTML = slice.map(function(u) {
+    return (
+      '<tr style="opacity:' + (u.is_active === false ? '0.5' : '1') + '">' +
+        '<td>' + u.id + '</td>' +
+        '<td><strong>' + u.username + '</strong></td>' +
+        '<td style="font-size:12px;color:var(--text-2)">' + (u.email || '—') + '</td>' +
+        '<td>' + (u.full_name || '—') + '</td>' +
+        '<td>' + (u.department || '—') + '</td>' +
+        '<td>' +
+          '<select class="desk-select" style="font-size:12px;padding:2px 6px" onchange="adminSetRole(\'' + u.username + '\',this.value)">' +
+            '<option value="user"' + (u.role === 'user' ? ' selected' : '') + '>user</option>' +
+            '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>admin</option>' +
+          '</select>' +
+        '</td>' +
+        '<td><span style="font-size:11px;background:var(--bg-2);padding:2px 6px;border-radius:4px">' + (u.user_status || 'available') + '</span></td>' +
+        '<td style="text-align:center">' +
+          '<button onclick="adminToggleActive(\'' + u.username + '\',' + !!u.is_active + ')" ' +
+          'class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px">' +
+          (u.is_active === false ? '&#10003; Активировать' : '&#8856; Заблокировать') + '</button>' +
+        '</td>' +
+        '<td>' +
+          '<button onclick="adminDeleteUser(\'' + u.username + '\')" class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 6px;color:#dc2626">Удалить</button>' +
+        '</td>' +
+      '</tr>'
+    );
+  }).join('') || '<tr><td colspan="9" class="empty">Нет пользователей</td></tr>';
+  renderPagination('users-pagination', filtered.length, 'users');
+}
+
+async function adminSetRole(username, role) {
+  try {
+    await apiRequest('/admin/users/' + username, { method: 'PATCH', body: JSON.stringify({ role: role }) });
+    var u = _allUsers.find(function(x) { return x.username === username; });
+    if (u) u.role = role;
+    showToast('Роль обновлена.', 'success');
+  } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+async function adminToggleActive(username, currentlyActive) {
+  try {
+    await apiRequest('/admin/users/' + username, { method: 'PATCH', body: JSON.stringify({ is_active: !currentlyActive }) });
+    var u = _allUsers.find(function(x) { return x.username === username; });
+    if (u) u.is_active = !currentlyActive;
+    renderUsers();
+    showToast(currentlyActive ? 'Пользователь заблокирован.' : 'Пользователь активирован.', 'success');
+  } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+async function adminDeleteUser(username) {
+  if (!confirm('Удалить пользователя ' + username + '? Это действие нельзя отменить.')) return;
+  try {
+    await apiRequest('/admin/users/' + username, { method: 'DELETE' });
+    _allUsers = _allUsers.filter(function(u) { return u.username !== username; });
+    renderUsers();
+    showToast('Пользователь удалён.', 'success');
+  } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+var _allDepartments = [];
+
 async function loadDepartments() {
   const tbody = document.getElementById("departments-body");
   if (!tbody) return;
   try {
-    const depts = await apiRequest("/departments");
-    if (!depts.length) {
-      tbody.innerHTML = '<tr><td colspan="2" class="empty">Нет отделов</td></tr>';
-      return;
-    }
-    tbody.innerHTML = "";
-    for (const d of depts) {
-      const tr = document.createElement("tr");
-      const tdName = document.createElement("td");
-      tdName.textContent = d.name;
-      const tdAct = document.createElement("td");
-      tdAct.append(makeDeleteBtn("Удалить", async function () {
-        if (!confirm("Удалить отдел «" + d.name + "»?")) return;
-        try {
-          await apiRequest("/departments/" + d.id, { method: "DELETE" });
-          showToast("Отдел «" + d.name + "» удалён.", "success");
-          await loadDepartments();
-        } catch (e) {
-          showToast("Ошибка: " + e.message, "error");
-        }
-      }));
-      tr.append(tdName, tdAct);
-      tbody.append(tr);
-    }
+    _allDepartments = await apiRequest("/departments");
+    renderDepartmentsTable();
   } catch (e) {
     tbody.innerHTML = '<tr><td colspan="2" class="empty">Ошибка загрузки</td></tr>';
   }
+}
+
+function renderDepartmentsTable() {
+  const tbody = document.getElementById("departments-body");
+  if (!tbody) return;
+  if (!_allDepartments.length) {
+    tbody.innerHTML = '<tr><td colspan="2" class="empty">Нет отделов</td></tr>';
+    renderPagination('departments-pagination', 0, 'departments');
+    return;
+  }
+  tbody.innerHTML = "";
+  var slice = pageSlice(_allDepartments, 'departments');
+  for (const d of slice) {
+    const tr = document.createElement("tr");
+    const tdName = document.createElement("td");
+    tdName.textContent = d.name;
+    const tdAct = document.createElement("td");
+    tdAct.append(makeDeleteBtn("Удалить", async function () {
+      if (!confirm("Удалить отдел «" + d.name + "»?")) return;
+      try {
+        await apiRequest("/departments/" + d.id, { method: "DELETE" });
+        showToast("Отдел «" + d.name + "» удалён.", "success");
+        await loadDepartments();
+      } catch (e) {
+        showToast("Ошибка: " + e.message, "error");
+      }
+    }));
+    tr.append(tdName, tdAct);
+    tbody.append(tr);
+  }
+  renderPagination('departments-pagination', _allDepartments.length, 'departments');
 }
 
 document.getElementById("refresh-departments")?.addEventListener("click", loadDepartments);

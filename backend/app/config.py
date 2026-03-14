@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     FRONTEND_URL: str = "http://localhost:3000"
     ADMIN_REGISTER_SECRET: Optional[str] = None
+    # Comma-separated allowed CORS origins; "*" = allow all (dev only)
+    ALLOWED_ORIGINS: str = "*"
+    # IANA timezone name for "today" comparisons (e.g. "Europe/Almaty")
+    APP_TIMEZONE: str = "UTC"
 
     class Config:
         env_file = ".env"

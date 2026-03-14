@@ -306,40 +306,44 @@ async function refreshAvailability() {
   const rd = dateInput.value;
   const st = startInput.value;
   const et = endInput.value;
+
+  // No date/time yet — render gray "unknown" dots silently, no error
   if (!rd || !st || !et) {
-    addMessage("Заполните дату и время.", "error");
+    state.availability.clear();
+    renderPlanMarkersFiltered();
     return;
   }
+
   state.availability.clear();
 
-  const availFetch = Promise.all(
-    state.desks.map(async (desk) => {
-      const qs = new URLSearchParams({
-        desk_id: String(desk.id),
-        reservation_date: rd,
-        start_time: st,
-        end_time: et,
-      });
-      const uid = userInput.value.trim();
-      if (uid) qs.append("user_id", uid);
-      try {
-        const result = await apiRequest(`/availability?${qs}`);
-        state.availability.set(desk.id, result);
-      } catch (e) {
-        state.availability.set(desk.id, { available: false, reason: e.message });
-      }
-    })
-  );
+  const uid = userInput?.value?.trim() || null;
+  const deskIds = state.desks.map((d) => d.id);
+
+  const batchBody = { desk_ids: deskIds, reservation_date: rd, start_time: st, end_time: et };
+  if (uid) batchBody.user_id = uid;
 
   const floorId = floorSelect.value;
-  const resvFetch = (floorId
-    ? apiRequest(`/floors/${floorId}/reservations?date=${rd}`)
-    : Promise.resolve([])
-  ).then((all) => {
-    state.floorReservations = all;
-  }).catch(() => { state.floorReservations = []; });
 
-  await Promise.all([availFetch, resvFetch]);
+  const [, ] = await Promise.all([
+    // Single batch request instead of N individual requests
+    apiRequest("/availability/batch", { method: "POST", body: JSON.stringify(batchBody) })
+      .then((data) => {
+        data.results.forEach((item) => {
+          state.availability.set(item.desk_id, { available: item.available, reason: item.reason });
+        });
+      })
+      .catch(() => {
+        // Fallback: mark all as unknown on error
+        state.desks.forEach((d) => state.availability.set(d.id, { available: false, reason: "Ошибка" }));
+      }),
+
+    (floorId
+      ? apiRequest(`/floors/${floorId}/reservations?date=${rd}`)
+      : Promise.resolve([])
+    ).then((all) => { state.floorReservations = all; })
+     .catch(() => { state.floorReservations = []; }),
+  ]);
+
   renderPlanMarkersFiltered();
   renderColleagues();
 }
@@ -404,9 +408,13 @@ async function reserveBatch(deskId, dates, startTime, endTime) {
       body: JSON.stringify({ desk_id: deskId, dates, start_time: startTime, end_time: endTime }),
     });
     const created = result.created?.length ?? 0;
-    const skipped = result.skipped?.length ?? 0;
-    if (skipped > 0) {
-      addMessage(`Создано ${created} броней, пропущено ${skipped} (конфликты).`, "info");
+    const skipped = result.skipped ?? [];
+    if (skipped.length > 0) {
+      const dateList = skipped.map(d => {
+        const dt = new Date(d + "T00:00:00");
+        return dt.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+      }).join(", ");
+      addMessage(`Создано ${created} броней. Пропущено ${skipped.length}: ${dateList} — место занято.`, "info");
     } else {
       addMessage(`Серия создана: ${created} бронирований.`, "success");
     }
@@ -532,7 +540,7 @@ function initZoomPan() {
   });
 
   document.getElementById("fit-mode-btn")?.addEventListener("click", () => {
-    _fitMode = _fitMode === 'height' ? 'contain' : 'height';
+    _fitMode = _fitMode === 'contain' ? 'fill' : 'contain';
     fitFloorPlan();
   });
 
@@ -547,27 +555,34 @@ function initZoomPan() {
 // ── Fit image to wrapper ──────────────────────────────────────────────────────
 
 function fitFloorPlan() {
-  if (!floorPlanImage.naturalWidth || !mapZoomWrapper.clientWidth || !mapZoomWrapper.clientHeight) return;
+  if (!mapZoomWrapper.clientWidth || !mapZoomWrapper.clientHeight) return;
   const frame = document.getElementById("map-image-frame");
   if (!frame) return;
 
   const wW = mapZoomWrapper.clientWidth;
   const wH = mapZoomWrapper.clientHeight;
-  const nW = floorPlanImage.naturalWidth;
-  const nH = floorPlanImage.naturalHeight;
+  // SVG images may report naturalWidth=0 when no explicit width/height attrs; fall back to wrapper
+  const nW = floorPlanImage.naturalWidth  || wW;
+  const nH = floorPlanImage.naturalHeight || wH;
+  if (!nW || !nH) return;
 
-  if (_fitMode === 'height') {
+  if (_fitMode === 'fill') {
+    // Cover: scale to fill entire wrapper maintaining aspect ratio; may overflow → pan
+    const scale = Math.max(wW / nW, wH / nH);
+    _imgW = Math.round(nW * scale);
+    _imgH = Math.round(nH * scale);
+  } else if (_fitMode === 'height') {
     // Fill container height exactly; frame may be wider than wrapper → pan
     _imgH = wH;
     _imgW = Math.round(nW * wH / nH);
   } else {
-    // Contain: fit entire image, cap scale at 1.0 (no upscale = no blur)
+    // Contain: fit entire image into wrapper (scale up or down, no upscale cap)
     if (wW / nW < wH / nH) {
-      _imgW = Math.min(nW, wW);
-      _imgH = Math.round(_imgW * nH / nW);
+      _imgW = wW;
+      _imgH = Math.round(wW * nH / nW);
     } else {
-      _imgH = Math.min(nH, wH);
-      _imgW = Math.round(_imgH * nW / nH);
+      _imgH = wH;
+      _imgW = Math.round(wH * nW / nH);
     }
   }
 
@@ -591,11 +606,11 @@ function fitFloorPlan() {
 
   const btn = document.getElementById("fit-mode-btn");
   if (btn) {
-    btn.textContent = _fitMode === 'height' ? '⊠' : '↕';
-    btn.title = _fitMode === 'height'
-      ? 'По высоте — нажать: Вписать целиком'
-      : 'Вписать целиком — нажать: По высоте';
-    btn.classList.toggle("active", _fitMode === 'contain');
+    btn.textContent = _fitMode === 'contain' ? '⊠' : '↕';
+    btn.title = _fitMode === 'contain'
+      ? 'Вся карта — нажать: На весь фрейм'
+      : 'На весь фрейм — нажать: Вся карта';
+    btn.classList.toggle("active", _fitMode === 'fill');
   }
 
   // Focus pending desk after navigation (navigateToDesk sets this)
@@ -1227,16 +1242,36 @@ async function buildRoute(deskId) {
   }
 }
 
-// ── Plan markers ────────────────────────────────────────────────────────────
+// ── Tooltip helpers ──────────────────────────────────────────────────────────
 
-// Space-type fill colors for SVG tiles (available state)
-const _TILE_FILL = {
-  desk:         { fill: "#dcfce7", stroke: "#16a34a" },
-  meeting_room: { fill: "#ede9fe", stroke: "#7c3aed" },
-  call_room:    { fill: "#cffafe", stroke: "#0891b2" },
-  open_space:   { fill: "#ecfccb", stroke: "#65a30d" },
-  lounge:       { fill: "#fef3c7", stroke: "#d97706" },
-};
+function _getTooltip() {
+  let tt = document.getElementById("map-tooltip");
+  if (!tt) {
+    tt = document.createElement("div");
+    tt.id = "map-tooltip";
+    tt.className = "map-tooltip";
+    tt.style.display = "none";
+    document.body.appendChild(tt);
+  }
+  return tt;
+}
+
+function _positionTooltip(e) {
+  const tt = _getTooltip();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const tw = tt.offsetWidth || 160, th = tt.offsetHeight || 48;
+  let x = e.clientX + 14, y = e.clientY - 10;
+  if (x + tw > vw - 8) x = e.clientX - tw - 10;
+  if (y + th > vh - 8) y = e.clientY - th - 4;
+  tt.style.left = x + "px";
+  tt.style.top  = y + "px";
+}
+
+function _escHtml(str) {
+  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// ── Plan markers ────────────────────────────────────────────────────────────
 
 function renderPlanMarkers(svgEl, desks) {
   if (!svgEl) return;
@@ -1254,17 +1289,19 @@ function renderPlanMarkers(svgEl, desks) {
       const st = d.space_type || "desk";
       const tileW = (d.w || 0.03) * 1000;
       const tileH = (d.h || 0.02) * 1000;
-      const tx    = d.position_x * 1000;
-      const ty    = d.position_y * 1000;
+      const cx    = d.position_x * 1000 + tileW / 2;
+      const cy    = d.position_y * 1000 + tileH / 2;
 
-      let fillColor, strokeColor;
+      // Dot color: blue=mine, green=available, red=busy, gray=unknown
+      let dotFill;
       if (isMine) {
-        fillColor = "#dbeafe"; strokeColor = "#2563eb";
+        dotFill = "#3b82f6";
+      } else if (!state.availability.has(d.id)) {
+        dotFill = "#94a3b8"; // gray — not checked yet
       } else if (avail?.available) {
-        const c = _TILE_FILL[st] || _TILE_FILL.desk;
-        fillColor = c.fill; strokeColor = c.stroke;
+        dotFill = "#22c55e";
       } else {
-        fillColor = "#fee2e2"; strokeColor = "#dc2626";
+        dotFill = "#ef4444";
       }
 
       const ns = "http://www.w3.org/2000/svg";
@@ -1276,36 +1313,52 @@ function renderPlanMarkers(svgEl, desks) {
       if (state.favorites.has(d.id)) g.classList.add("favorite");
       g.dataset.deskId = String(d.id);
 
-      const isDesk = st === "desk";
-      if (isDesk) {
-        // Desk: small circle at center of tile area
-        const cx = tx + tileW / 2;
-        const cy = ty + tileH / 2;
-        const r  = 6;
-        const circ = document.createElementNS(ns, "circle");
-        circ.setAttribute("cx",           String(cx));
-        circ.setAttribute("cy",           String(cy));
-        circ.setAttribute("r",            String(r));
-        circ.setAttribute("fill",         fillColor);
-        circ.setAttribute("stroke",       strokeColor);
-        circ.setAttribute("stroke-width", "2");
-        g.appendChild(circ);
-      } else {
-        // Room: rectangle block
-        const rect = document.createElementNS(ns, "rect");
-        rect.setAttribute("x",            String(tx));
-        rect.setAttribute("y",            String(ty));
-        rect.setAttribute("width",        String(tileW));
-        rect.setAttribute("height",       String(tileH));
-        rect.setAttribute("rx",           "8");
-        rect.setAttribute("fill",         fillColor);
-        rect.setAttribute("stroke",       strokeColor);
-        rect.setAttribute("stroke-width", "2");
-        g.appendChild(rect);
-      }
+      // White halo for visibility on any map background
+      const halo = document.createElementNS(ns, "circle");
+      halo.setAttribute("cx", String(cx));
+      halo.setAttribute("cy", String(cy));
+      halo.setAttribute("r",  "5");
+      halo.setAttribute("fill", "white");
+      halo.setAttribute("opacity", "0.7");
+      g.appendChild(halo);
+
+      // Colored dot (no stroke)
+      const circ = document.createElementNS(ns, "circle");
+      circ.setAttribute("cx",   String(cx));
+      circ.setAttribute("cy",   String(cy));
+      circ.setAttribute("r",    "4");
+      circ.setAttribute("fill", dotFill);
+      circ.classList.add("desk-dot");
+      g.appendChild(circ);
+
+      // Tooltip on hover
+      const _spaceLabel = { desk: "Стол", meeting_room: "Переговорная", call_room: "Call-room", open_space: "Open Space", lounge: "Лаунж" };
+      g.addEventListener("mouseenter", (e) => {
+        const occupant = state.floorReservations.find((r) => r.desk_id === d.id && r.status === "active");
+        let statusText, statusColor;
+        if (isMine) {
+          statusText = "Моё место"; statusColor = "#93c5fd";
+        } else if (!state.availability.has(d.id)) {
+          statusText = "Не проверено"; statusColor = "#cbd5e1";
+        } else if (avail?.available) {
+          statusText = "Свободно"; statusColor = "#86efac";
+        } else {
+          statusText = occupant ? `Занято · ${occupant.user_id}` : "Занято";
+          statusColor = "#fca5a5";
+        }
+        const tt = _getTooltip();
+        tt.innerHTML =
+          `<span class="tt-name">${_escHtml(d.label)}</span>` +
+          `<span class="tt-meta">${_spaceLabel[st] || st} · <span style="color:${statusColor}">${statusText}</span></span>`;
+        tt.style.display = "block";
+        _positionTooltip(e);
+      });
+      g.addEventListener("mousemove", _positionTooltip);
+      g.addEventListener("mouseleave", () => { _getTooltip().style.display = "none"; });
 
       g.addEventListener("click", (e) => {
         e.stopPropagation();
+        _getTooltip().style.display = "none";
         showSidePanel(g, d);
       });
 
@@ -1332,13 +1385,17 @@ const _LEGEND_COLORS = {
 function renderLegend(desks) {
   const el = document.getElementById("map-legend");
   if (!el) return;
-  const types = [...new Set(desks.map(d => d.space_type || "desk"))];
-  if (types.length <= 1) { el.style.display = "none"; return; }
+  if (!desks.length) { el.style.display = "none"; return; }
   el.style.display = "";
-  el.innerHTML = types.map(t =>
+  el.innerHTML = [
+    { color: "#22c55e", label: "Свободно" },
+    { color: "#ef4444", label: "Занято" },
+    { color: "#3b82f6", label: "Моё место" },
+    { color: "#94a3b8", label: "Не проверено" },
+  ].map(({ color, label }) =>
     `<span class="legend-item">
-       <span class="legend-dot" style="background:${_LEGEND_COLORS[t] || "#888"}"></span>
-       ${_LEGEND_LABELS[t] || t}
+       <span class="legend-dot" style="background:${color}"></span>
+       ${label}
      </span>`
   ).join("");
 }

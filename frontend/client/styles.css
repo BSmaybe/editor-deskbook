@@ -361,21 +361,11 @@ body {
 /* ── SVG desk tiles ── */
 #desk-svg-overlay { overflow: visible; }
 .desk-tile { cursor: pointer; }
-.desk-tile rect { transition: opacity .15s; }
-.desk-tile.tile-mine rect                      { fill: #dbeafe; stroke: #2563eb; }
-.desk-tile.tile-available rect                 { fill: #dcfce7; stroke: #16a34a; }
-.desk-tile.tile-available.st-meeting_room rect { fill: #ede9fe; stroke: #7c3aed; }
-.desk-tile.tile-available.st-call_room rect    { fill: #cffafe; stroke: #0891b2; }
-.desk-tile.tile-available.st-open_space rect   { fill: #ecfccb; stroke: #65a30d; }
-.desk-tile.tile-available.st-lounge rect       { fill: #fef3c7; stroke: #d97706; }
-.desk-tile.tile-busy rect                      { fill: #fee2e2; stroke: #dc2626; }
-.desk-tile.highlighted rect,
-.desk-tile.highlighted circle { stroke: #d97706 !important; stroke-width: 3 !important; filter: drop-shadow(0 0 4px rgba(217,119,6,.75)); }
-.desk-tile.selected rect,
-.desk-tile.selected circle    { stroke-width: 3 !important; filter: drop-shadow(0 0 3px rgba(0,0,0,.35)); }
-.desk-tile.filtered-out        { display: none; }
-.desk-tile.favorite circle,
-.desk-tile.favorite rect       { stroke: #f59e0b !important; stroke-width: 2 !important; }
+.desk-tile .desk-dot { transition: opacity .15s; }
+.desk-tile.highlighted .desk-dot { stroke: #d97706 !important; stroke-width: 3 !important; filter: drop-shadow(0 0 4px rgba(217,119,6,.75)); }
+.desk-tile.selected .desk-dot    { stroke-width: 3 !important; filter: drop-shadow(0 0 3px rgba(0,0,0,.35)); }
+.desk-tile.filtered-out          { display: none; }
+.desk-tile.favorite .desk-dot    { stroke: #f59e0b !important; stroke-width: 2 !important; }
 
 /* ── Map popup ── */
 .map-popup {
@@ -512,8 +502,6 @@ body {
 }
 .desk-tile.highlighted { animation: pulse-highlight 1.5s ease-in-out infinite; }
 
-/* ── Favorite tile — gold border ── */
-.desk-tile.favorite rect { stroke: #f59e0b !important; stroke-width: 2 !important; }
 
 /* ── Active colleague item ── */
 .colleague-item.active-colleague {
@@ -821,10 +809,58 @@ body {
   min-height: 0;
   margin: 0;
 }
-.map-column .card .card-header    { flex-shrink: 0; margin-bottom: 10px; }
-.map-column .card .search-bar     { flex-shrink: 0; }
-.map-column .card .map-legend     { flex-shrink: 0; }
-.map-column .card .space-filter-bar { flex-shrink: 0; }
+
+/* Full-frame map: no padding, UI overlays float on top */
+#floor-plan-card {
+  padding: 0;
+  position: relative;
+}
+
+/* Search bar — floats top-left over the map */
+#floor-plan-card .search-bar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: calc(100% - 80px);
+  max-width: 320px;
+  z-index: 15;
+  margin: 0;
+}
+
+/* Space-type filter pills — floats below search */
+#floor-plan-card .space-filter-bar {
+  position: absolute;
+  top: 58px;
+  left: 10px;
+  z-index: 15;
+  max-width: calc(100% - 80px);
+  margin: 0;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  box-shadow: var(--shadow);
+}
+
+/* Legend — floats bottom-left */
+#floor-plan-card .map-legend {
+  position: absolute;
+  bottom: 12px;
+  left: 10px;
+  z-index: 15;
+  margin: 0;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  box-shadow: var(--shadow);
+  max-width: calc(100% - 80px);
+}
+
 .map-column .map-zoom-wrapper     { flex: 1; min-height: 0; min-width: 0; }
 
 /* Frame is sized by fitFloorPlan; image fills it via CSS (browser handles scaling) */
@@ -1149,6 +1185,33 @@ body {
 .sheet-toggle-btn:hover { background: var(--primary-hover); }
 .sheet-toggle-btn.sheet-open { background: #374151; }
 
+/* ── Desk tooltip ── */
+.map-tooltip {
+  position: fixed;
+  z-index: 500;
+  background: rgba(15, 23, 42, 0.93);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 7px;
+  padding: 6px 10px;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  max-width: 220px;
+}
+.map-tooltip .tt-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+}
+.map-tooltip .tt-meta {
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+  white-space: nowrap;
+}
+
 /* ── Map legend ── */
 .map-legend {
   display: flex;
@@ -1345,8 +1408,6 @@ body {
 }
 .space-filter-pill.active .space-filter-pill-dot { background: white !important; }
 
-/* Filtered-out tiles: hidden */
-.desk-tile.filtered-out { display: none; }
 
 /* ── Recurring booking section ── */
 .recur-section {
@@ -1469,3 +1530,243 @@ body {
   gap: 8px;
   height: 100px;
 }
+
+/* ═══════════════════════════════════════════════════════
+   Profile page — redesign
+═══════════════════════════════════════════════════════ */
+
+/* ── Hero card ── */
+.pf-hero-card {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.pf-cover {
+  height: 96px;
+  background: linear-gradient(135deg, #2563eb 0%, #7c3aed 60%, #ec4899 100%);
+}
+.pf-hero-body {
+  padding: 0 24px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.pf-avatar-wrap {
+  position: relative;
+  margin-top: -48px;
+}
+.pf-avatar-xl {
+  width: 96px; height: 96px; border-radius: 50%;
+  background: var(--primary);
+  border: 4px solid var(--surface);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 32px; font-weight: 700; color: #fff;
+  box-shadow: 0 4px 16px rgba(0,0,0,.15);
+  user-select: none;
+}
+.pf-avatar-dot {
+  position: absolute;
+  bottom: 4px; right: 4px;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 3px solid var(--surface);
+  background: #10b981;
+}
+.pf-hero-name {
+  font-size: 22px; font-weight: 700; color: var(--text);
+  margin: 0; text-align: center;
+}
+.pf-hero-sub {
+  font-size: 14px; color: var(--text-2);
+  margin: 0; text-align: center;
+}
+.pf-hero-info { text-align: center; }
+
+/* ── Status switcher ── */
+.pf-status-switcher {
+  display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+}
+.pf-status-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface);
+  font-size: 13px; font-weight: 500;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.pf-status-btn:hover { border-color: var(--border-2); background: var(--bg-2); }
+.pf-status-btn.active {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+}
+.pf-status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+
+/* ── Stats row ── */
+.pf-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+.pf-stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  box-shadow: var(--shadow-sm);
+}
+.pf-stat-icon {
+  width: 40px; height: 40px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+}
+.pf-stat-val { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1; }
+.pf-stat-lbl { font-size: 11px; color: var(--text-2); text-align: center; }
+
+/* ── Profile info view ── */
+.pf-info-rows { display: flex; flex-direction: column; }
+.pf-info-row {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.pf-info-row:last-child { border-bottom: none; }
+.pf-info-row-icon {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-2); flex-shrink: 0; margin-top: 2px;
+}
+.pf-info-row-lbl { font-size: 11px; color: var(--text-2); margin-bottom: 2px; }
+.pf-info-row-val { font-size: 14px; font-weight: 500; color: var(--text); }
+
+/* ── Booking groups ── */
+.pf-booking-group { padding: 4px 0; }
+.pf-booking-group + .pf-booking-group { border-top: 1px solid var(--border); }
+.pf-booking-group-lbl {
+  font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  padding: 10px 16px 6px;
+}
+.pf-booking-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  border-radius: 0;
+  transition: background .12s;
+}
+.pf-booking-item:hover { background: var(--bg-2); }
+.pf-booking-main { flex: 1; min-width: 0; }
+.pf-booking-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 14px; margin-bottom: 2px; flex-wrap: wrap;
+}
+.pf-booking-meta { font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
+.pf-time-bar {
+  height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;
+}
+.pf-time-fill {
+  height: 100%; background: var(--primary); border-radius: 2px;
+  transition: width .3s;
+}
+.pf-badge {
+  font-size: 10px; font-weight: 600; padding: 2px 7px;
+  border-radius: 10px; white-space: nowrap;
+}
+.pf-badge-ok   { background: #ecfdf5; color: #059669; }
+.pf-badge-warn { background: #fffbeb; color: #d97706; }
+.pf-cancel-btn {
+  flex-shrink: 0; font-size: 12px;
+  color: var(--danger); border-color: var(--danger-border);
+  background: var(--danger-bg);
+  opacity: .7; transition: opacity .15s;
+}
+.pf-cancel-btn:hover { opacity: 1; }
+
+/* ── Password fields ── */
+.pf-pw-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;
+  padding-top: 16px;
+}
+@media (max-width: 600px) { .pf-pw-grid { grid-template-columns: 1fr; } }
+.pf-pw-wrap {
+  position: relative;
+}
+.pf-pw-wrap input { padding-right: 38px; }
+.pf-pw-eye {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer;
+  color: var(--text-2); padding: 4px;
+  display: flex; align-items: center;
+}
+.pf-pw-eye:hover { color: var(--text); }
+.pf-pw-strength {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px;
+}
+.pf-pw-strength-bar {
+  flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;
+}
+.pf-pw-strength-fill {
+  height: 100%; border-radius: 2px; background: #ef4444;
+  transition: width .25s, background .25s;
+  width: 0;
+}
+.pf-pw-strength-lbl { font-size: 11px; font-weight: 600; white-space: nowrap; }
+
+/* ── Favorites ── */
+.pf-fav-list { display: flex; flex-direction: column; }
+.pf-fav-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  transition: background .12s;
+}
+.pf-fav-item:last-child { border-bottom: none; }
+.pf-fav-item:hover { background: var(--bg-2); }
+.pf-fav-icon {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: var(--primary-light);
+  border: 1px solid var(--primary-border);
+  color: var(--primary);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.pf-fav-info { flex: 1; min-width: 0; }
+.pf-fav-info strong { display: block; font-size: 14px; }
+.pf-fav-info span { font-size: 12px; color: var(--text-2); }
+.pf-fav-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ── Team grid ── */
+.pf-team-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+  background: var(--border);
+}
+@media (max-width: 480px) { .pf-team-grid { grid-template-columns: 1fr; } }
+.pf-team-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  transition: background .12s;
+}
+.pf-team-card:hover { background: var(--bg-2); }
+.pf-team-avatar-wrap { position: relative; flex-shrink: 0; }
+.pf-team-avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; color: #fff;
+}
+.pf-team-status-dot {
+  position: absolute; bottom: 0; right: 0;
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid var(--surface);
+}
+.pf-team-info { flex: 1; min-width: 0; overflow: hidden; }
+.pf-team-info strong { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-team-info span { font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.pf-team-find { flex-shrink: 0; font-size: 12px; }

@@ -3,7 +3,17 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator
+
+
+def _validate_password(v: str) -> str:
+    if len(v) < 8:
+        raise ValueError("Пароль должен содержать минимум 8 символов")
+    if not any(c.isdigit() for c in v):
+        raise ValueError("Пароль должен содержать хотя бы одну цифру")
+    if not any(c.isalpha() for c in v):
+        raise ValueError("Пароль должен содержать хотя бы одну букву")
+    return v
 
 
 def _strip(value: Optional[str]) -> Optional[str]:
@@ -158,6 +168,24 @@ class AvailabilityResponse(BaseModel):
     reason: Optional[str] = None
 
 
+class AvailabilityBatchRequest(BaseModel):
+    desk_ids: list[int] = Field(..., min_length=1, max_length=500)
+    reservation_date: date
+    start_time: time
+    end_time: time
+    user_id: Optional[str] = None
+
+
+class AvailabilityBatchItem(BaseModel):
+    desk_id: int
+    available: bool
+    reason: Optional[str] = None
+
+
+class AvailabilityBatchResponse(BaseModel):
+    results: list[AvailabilityBatchItem]
+
+
 # ---------------------------------------------------------------------------
 # Batch reservations
 # ---------------------------------------------------------------------------
@@ -238,6 +266,16 @@ class Message(BaseModel):
     message: str
 
 
+class PasswordChange(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_complexity(cls, v: str) -> str:
+        return _validate_password(v)
+
+
 # ---------------------------------------------------------------------------
 # Auth schemas
 # ---------------------------------------------------------------------------
@@ -245,9 +283,14 @@ class Message(BaseModel):
 class UserRegister(BaseModel):
     username: str = Field(..., min_length=2, max_length=120)
     email: str = Field(..., max_length=320)
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=8)
     role: str = Field("user", pattern="^(admin|user)$")
     admin_secret: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def password_complexity(cls, v: str) -> str:
+        return _validate_password(v)
 
 
 class UserResponse(BaseModel):
@@ -261,6 +304,7 @@ class UserResponse(BaseModel):
     position: Optional[str] = None
     phone: Optional[str] = None
     user_status: str = "available"
+    is_active: bool = True
 
 
 class Token(BaseModel):
@@ -277,6 +321,7 @@ class UserPublic(BaseModel):
     position: Optional[str] = None
     phone: Optional[str] = None
     user_status: str = "available"
+    is_active: bool = True
 
 
 class UserLocation(BaseModel):
@@ -325,3 +370,8 @@ class FavoriteCreate(BaseModel):
 class FavoriteItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     desk_id: int
+
+
+class UserAdminUpdate(BaseModel):
+    role: Optional[str] = Field(None, pattern="^(admin|user)$")
+    is_active: Optional[bool] = None

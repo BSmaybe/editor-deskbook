@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, time
 import io
 from pathlib import Path
 import shutil
+import time as _time
 import uuid
 from typing import Optional
 
@@ -46,6 +48,8 @@ async def lifespan(app: FastAPI):
         # Tile dimensions (normalized 0-1)
         "ALTER TABLE desks ADD COLUMN IF NOT EXISTS w FLOAT NOT NULL DEFAULT 0.07;",
         "ALTER TABLE desks ADD COLUMN IF NOT EXISTS h FLOAT NOT NULL DEFAULT 0.05;",
+        # User active/inactive flag
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;",
     ]
     try:
         with engine.connect() as conn:
@@ -87,13 +91,39 @@ app = FastAPI(title="Desk Booking API", version="0.1.0", lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+_origins = (
+    ["*"]
+    if settings.ALLOWED_ORIGINS.strip() == "*"
+    else [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=settings.ALLOWED_ORIGINS.strip() != "*",
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Rate limiter (in-memory, per IP)
+# ---------------------------------------------------------------------------
+
+_rl_store: dict[str, list[float]] = defaultdict(list)
+
+
+def _rate_limit(request: Request, max_req: int = 10, window: int = 60) -> None:
+    """Raise 429 if the caller exceeds max_req requests within `window` seconds."""
+    ip = request.client.host if request.client else "unknown"
+    key = f"{ip}:{request.url.path}"
+    now = _time.monotonic()
+    hits = [t for t in _rl_store[key] if now - t < window]
+    hits.append(now)
+    _rl_store[key] = hits
+    if len(hits) > max_req:
+        raise HTTPException(
+            status_code=429,
+            detail="Слишком много запросов. Попробуйте позже.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +131,8 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 @app.post("/auth/register", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(payload: schemas.UserRegister, db: Session = Depends(get_db)) -> models.User:
+async def register(request: Request, payload: schemas.UserRegister, db: Session = Depends(get_db)) -> models.User:
+    _rate_limit(request, max_req=5, window=60)
     # Block admin self-registration unless correct secret provided
     if payload.role == "admin":
         if (
@@ -127,15 +158,22 @@ async def register(payload: schemas.UserRegister, db: Session = Depends(get_db))
 
 @app.post("/auth/login", response_model=schemas.Token)
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ) -> schemas.Token:
+    _rate_limit(request, max_req=10, window=60)
     user = crud.get_user_by_username(db, form_data.username)
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not getattr(user, "is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Аккаунт заблокирован. Обратитесь к администратору.",
         )
     token = create_access_token({"sub": user.username, "role": user.role})
     return schemas.Token(access_token=token)
@@ -164,6 +202,49 @@ async def list_users(
     db: Session = Depends(get_db),
 ) -> list[models.User]:
     return crud.get_users(db)
+
+
+@app.get("/admin/users", response_model=list[schemas.UserResponse], tags=["admin"])
+async def admin_list_users(
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[models.User]:
+    return db.query(models.User).order_by(models.User.id).all()
+
+
+@app.patch("/admin/users/{username}", response_model=schemas.UserResponse, tags=["admin"])
+async def admin_update_user(
+    username: str,
+    payload: schemas.UserAdminUpdate,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> models.User:
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if user is None:
+        raise HTTPException(404, "User not found")
+    if payload.role is not None:
+        user.role = payload.role
+    if payload.is_active is not None:
+        user.is_active = payload.is_active
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@app.delete("/admin/users/{username}", status_code=204, tags=["admin"])
+async def admin_delete_user(
+    username: str,
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Response:
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if user is None:
+        raise HTTPException(404, "User not found")
+    if user.username == current_user.username:
+        raise HTTPException(400, "Cannot delete yourself")
+    db.delete(user)
+    db.commit()
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +325,19 @@ async def update_user_profile(
         return crud.update_user_profile(db, username, payload)
     except KeyError:
         raise HTTPException(status_code=404, detail="User not found")
+
+
+@app.post("/users/me/password", response_model=schemas.Message, tags=["users"])
+async def change_password(
+    payload: schemas.PasswordChange,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Текущий пароль неверен")
+    current_user.hashed_password = get_password_hash(payload.new_password)
+    db.commit()
+    return {"message": "Пароль изменён"}
 
 
 # ---------------------------------------------------------------------------
@@ -408,12 +502,16 @@ async def upload_floor_plan(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> models.Floor:
-    if file.content_type not in {"image/png", "image/x-png"}:
-        raise HTTPException(status_code=400, detail="Only PNG files are supported")
+    _ALLOWED_TYPES = {"image/png", "image/x-png", "image/jpeg", "image/jpg", "image/svg+xml", "image/svg"}
+    _ALLOWED_EXTS  = {".png", ".jpg", ".jpeg", ".svg"}
+    if file.content_type not in _ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail="Only PNG, JPEG, or SVG files are supported")
     extension = Path(file.filename or "").suffix.lower()
-    if extension and extension != ".png":
-        raise HTTPException(status_code=400, detail="Only PNG files are supported")
-    filename = f"floor_{floor_id}_{uuid.uuid4().hex}.png"
+    if extension and extension not in _ALLOWED_EXTS:
+        raise HTTPException(status_code=400, detail="Only PNG, JPEG, or SVG files are supported")
+    if not extension:
+        extension = ".svg" if "svg" in (file.content_type or "") else ".png"
+    filename = f"floor_{floor_id}_{uuid.uuid4().hex}{extension}"
     destination = STATIC_DIR / filename
     with destination.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -478,6 +576,14 @@ async def list_desks(
     floor_id: Optional[int] = Query(default=None), db: Session = Depends(get_db)
 ) -> list[models.Desk]:
     return crud.list_desks(db, floor_id)
+
+
+@app.get("/desks/{desk_id}", response_model=schemas.Desk)
+async def get_desk(desk_id: int, db: Session = Depends(get_db)) -> models.Desk:
+    desk = db.query(models.Desk).filter(models.Desk.id == desk_id).first()
+    if desk is None:
+        raise HTTPException(status_code=404, detail="Desk not found")
+    return desk
 
 
 @app.patch(
@@ -569,6 +675,30 @@ async def check_availability(
         return crud.check_availability(db, desk_id, reservation_date, start_time, end_time, user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Desk not found")
+
+
+@app.post("/availability/batch", response_model=schemas.AvailabilityBatchResponse)
+async def check_availability_batch(
+    payload: schemas.AvailabilityBatchRequest,
+    db: Session = Depends(get_db),
+) -> schemas.AvailabilityBatchResponse:
+    if payload.start_time >= payload.end_time:
+        raise HTTPException(status_code=400, detail="Start time must be before end time")
+    results = []
+    for desk_id in payload.desk_ids:
+        try:
+            avail = crud.check_availability(
+                db, desk_id, payload.reservation_date,
+                payload.start_time, payload.end_time, payload.user_id,
+            )
+            results.append(schemas.AvailabilityBatchItem(
+                desk_id=desk_id, available=avail.available, reason=avail.reason,
+            ))
+        except KeyError:
+            results.append(schemas.AvailabilityBatchItem(
+                desk_id=desk_id, available=False, reason="Место не найдено",
+            ))
+    return schemas.AvailabilityBatchResponse(results=results)
 
 
 # ---------------------------------------------------------------------------

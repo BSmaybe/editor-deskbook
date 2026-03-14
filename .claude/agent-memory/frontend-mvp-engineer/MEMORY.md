@@ -135,6 +135,16 @@
 - Validation: `endDate < minDate` (not `<= today` — avoids timezone comparison bug)
 - CSS: `.recur-section`, `.recur-toggle-btn`, `.recur-toggle-icon`, `.recur-body.open`, `.recur-days`, `.recur-day-btn.active`, `.recur-end-row`
 
+### Phase 9 Features (Iteration 3 — implemented in admin/)
+- **`is_active` on User model**: `Boolean NOT NULL DEFAULT TRUE` column; migration added to `_profile_migrations`; `UserResponse` and `UserPublic` schemas include `is_active: bool = True`; `UserAdminUpdate` schema added at end of schemas.py
+- **Admin user endpoints**: `GET /admin/users`, `PATCH /admin/users/{username}`, `DELETE /admin/users/{username}` — all use `Depends(require_admin)`
+- DELETE 204 pattern in FastAPI: use `status_code=204` with `-> Response` return type and `return Response(status_code=204)` — do NOT use `response_class=Response` on the decorator (causes assertion error)
+- **Users tab** (`#tab-users`): nav item with `data-lucide="user-cog"`; table with ID/login/email/name/dept/role/status/active/actions columns; inline `onchange="adminSetRole()"` and `onclick="adminToggleActive()"` / `onclick="adminDeleteUser()"` handlers (global functions)
+- **Client-side pagination utility** (`admin.js`): `_pages{}`, `PAGE_SIZE=15`, `pageSlice(arr, tableId)`, `renderPagination(containerId, total, tableId)`, `changePage(tableId, delta)` — wired via inline `onclick` in rendered HTML; `changePage` dispatches to loader functions by tableId key
+- **Pagination applied to**: offices, floors, policies, reservations, departments, users — each table card wrapped in `.card style="overflow:hidden"` div with `<div id="{name}-pagination">` after the `.table-wrapper`
+- **loadDepartments refactor**: extracted `_allDepartments[]` + `renderDepartmentsTable()` to support pageSlice (same pattern as users)
+- **Analytics additions**: CSV export button `#export-reservations-csv` next to refresh button; bar chart `#desks-chart` div between occupancy card and the desks/users grid; bar chart rendered inline in `loadAnalytics()` using pure HTML/CSS — no Chart.js
+
 ### Known Patterns to Watch
 - `admin.js` must NOT use ES module syntax (loaded as plain `<script>`)
 - `app.js` in client uses `type="module"` — ES2020+ fine
