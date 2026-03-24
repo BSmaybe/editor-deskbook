@@ -810,15 +810,30 @@
   window.addEventListener('scroll', checkInView, { passive: true });
 
   // Form submit
-  function submitForm(e) {
+  async function submitForm(e) {
     e.preventDefault();
     const btn = document.getElementById('submitBtn');
+    const form = document.getElementById('pilotForm');
     btn.textContent = 'Отправляем…';
     btn.disabled = true;
-    setTimeout(() => {
-      document.getElementById('pilotForm').classList.add('hidden');
-      document.getElementById('formSuccess').classList.remove('hidden');
-    }, 900);
+
+    const data = {
+      name:      form.querySelector('[placeholder="Асель Бекова"]').value,
+      company:   form.querySelector('[placeholder="ТОО «Название»"]').value,
+      email:     form.querySelector('[type="email"]').value,
+      team_size: form.querySelector('select').value,
+    };
+
+    try {
+      await fetch('http://localhost:8000/leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+    } catch (_) { /* не блокируем UX если бэкенд недоступен */ }
+
+    form.classList.add('hidden');
+    document.getElementById('formSuccess').classList.remove('hidden');
   }
 </script>
 

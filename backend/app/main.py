@@ -1256,3 +1256,47 @@ async def delete_policy(policy_id: int, db: Session = Depends(get_db)) -> schema
     except KeyError:
         raise HTTPException(status_code=404, detail="Policy not found")
     return schemas.Message(message="deleted")
+
+
+# ── Lead form ──────────────────────────────────────────────────────────────
+
+class LeadRequest(schemas.BaseModel):
+    name: str
+    company: str
+    email: str
+    team_size: str
+
+
+@app.post("/leads", status_code=201)
+async def submit_lead(lead: LeadRequest):
+    """Receive a landing-page lead and send an email notification."""
+    if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
+        # SMTP not configured — accept silently so form still works
+        return {"ok": True}
+
+    import smtplib, ssl
+    from email.mime.text import MIMEText
+
+    body = (
+        f"Новая заявка на пилот DeskBook\n\n"
+        f"Имя:      {lead.name}\n"
+        f"Компания: {lead.company}\n"
+        f"Email:    {lead.email}\n"
+        f"Команда:  {lead.team_size}\n"
+    )
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = f"[DeskBook] Заявка от {lead.company}"
+    msg["From"] = settings.SMTP_USER
+    msg["To"] = settings.LEAD_TO_EMAIL or settings.SMTP_USER
+
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, context=ctx) as s:
+            s.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            s.sendmail(msg["From"], [msg["To"]], msg.as_bytes())
+    except Exception as exc:
+        # Don't fail the user-facing request on mail errors
+        import logging
+        logging.getLogger(__name__).error("Lead email failed: %s", exc)
+
+    return {"ok": True}

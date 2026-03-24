@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     # IANA timezone name for "today" comparisons (e.g. "Europe/Almaty")
     APP_TIMEZONE: str = "UTC"
 
+    # SMTP for lead notifications
+    SMTP_HOST: str = "smtp.yandex.ru"
+    SMTP_PORT: int = 465
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    LEAD_TO_EMAIL: str = ""
+
     class Config:
         env_file = ".env"
 
