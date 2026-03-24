@@ -573,9 +573,17 @@
             <input type="text" placeholder="ТОО «Название»" required class="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-3 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all placeholder-slate-300">
           </div>
         </div>
-        <div>
-          <label class="block text-[12px] font-semibold text-slate-600 mb-1.5">Рабочий email</label>
-          <input type="email" placeholder="asel@company.kz" required class="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-3 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all placeholder-slate-300">
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-[12px] font-semibold text-slate-600 mb-1.5">Рабочий email</label>
+            <input id="fieldEmail" type="email" placeholder="asel@company.kz" required class="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-3 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all placeholder-slate-300">
+            <p id="errEmail" class="hidden text-[11px] text-red-500 mt-1">Введите корректный email</p>
+          </div>
+          <div>
+            <label class="block text-[12px] font-semibold text-slate-600 mb-1.5">Телефон</label>
+            <input id="fieldPhone" type="tel" placeholder="+7 700 000 00 00" required class="w-full text-sm border border-slate-200 rounded-xl px-3.5 py-3 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all placeholder-slate-300">
+            <p id="errPhone" class="hidden text-[11px] text-red-500 mt-1">Введите номер телефона</p>
+          </div>
         </div>
         <div>
           <label class="block text-[12px] font-semibold text-slate-600 mb-1.5">Размер команды</label>
@@ -810,18 +818,45 @@
   window.addEventListener('scroll', checkInView, { passive: true });
 
   // Form submit
+  function setError(id, show) {
+    document.getElementById(id).classList.toggle('hidden', !show);
+  }
+  function markField(input, valid) {
+    input.classList.toggle('border-red-400', !valid);
+    input.classList.toggle('ring-red-100',  !valid);
+  }
+
   async function submitForm(e) {
     e.preventDefault();
-    const btn = document.getElementById('submitBtn');
-    const form = document.getElementById('pilotForm');
+    const form  = document.getElementById('pilotForm');
+    const btn   = document.getElementById('submitBtn');
+
+    const nameEl    = form.querySelector('[placeholder="Асель Бекова"]');
+    const companyEl = form.querySelector('[placeholder="ТОО «Название»"]');
+    const emailEl   = document.getElementById('fieldEmail');
+    const phoneEl   = document.getElementById('fieldPhone');
+    const selectEl  = form.querySelector('select');
+
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailEl.value.trim());
+    const phoneRaw = phoneEl.value.replace(/\D/g, '');
+    const phoneOk  = phoneRaw.length >= 10;
+
+    setError('errEmail', !emailOk);
+    setError('errPhone', !phoneOk);
+    markField(emailEl, emailOk);
+    markField(phoneEl, phoneOk);
+
+    if (!emailOk || !phoneOk) return;
+
     btn.textContent = 'Отправляем…';
     btn.disabled = true;
 
     const data = new FormData();
-    data.append('name',      form.querySelector('[placeholder="Асель Бекова"]').value);
-    data.append('company',   form.querySelector('[placeholder="ТОО «Название»"]').value);
-    data.append('email',     form.querySelector('[type="email"]').value);
-    data.append('team_size', form.querySelector('select').value);
+    data.append('name',      nameEl.value.trim());
+    data.append('company',   companyEl.value.trim());
+    data.append('email',     emailEl.value.trim());
+    data.append('phone',     phoneEl.value.trim());
+    data.append('team_size', selectEl.value);
 
     try {
       await fetch('https://formspree.io/f/mjganzjp', {
