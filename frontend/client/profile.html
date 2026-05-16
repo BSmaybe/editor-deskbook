@@ -12,7 +12,7 @@
 <body>
   <header class="app-header">
     <div class="header-brand">
-      <a href="./index.html" class="btn btn-secondary btn-sm btn-icon" title="На главную" style="border-radius:8px">
+      <a href="./app.html" class="btn btn-secondary btn-sm btn-icon" title="На главную" style="border-radius:8px">
         <i data-lucide="arrow-left" style="width:16px;height:16px"></i>
       </a>
       <div class="header-brand-icon">
@@ -232,6 +232,15 @@
     } catch { return true; }
   }
 
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   const token    = localStorage.getItem("user_token");
   const username = localStorage.getItem("user_username");
   if (!token || !username || isTokenExpired(token)) {
@@ -318,6 +327,9 @@
     const fields = ["full_name","department","position","phone"];
     const rows = fields.map(f => {
       const val = data[f];
+      const safeVal = (val === null || val === undefined || val === "")
+        ? '<span style="color:var(--text-3)">—</span>'
+        : escapeHtml(val);
       return `
         <div class="pf-info-row">
           <div class="pf-info-row-icon">
@@ -325,7 +337,7 @@
           </div>
           <div>
             <div class="pf-info-row-lbl">${INFO_LABELS[f]}</div>
-            <div class="pf-info-row-val">${val || '<span style="color:var(--text-3)">—</span>'}</div>
+            <div class="pf-info-row-val">${safeVal}</div>
           </div>
         </div>`;
     }).join("");
@@ -427,7 +439,8 @@
       renderInfoView(data);
       showViewMode();
     } catch (err) {
-      msgEl.innerHTML = `<div class="error-msg">${err.message}</div>`;
+      const messageEsc = escapeHtml(err.message || "Ошибка сохранения профиля");
+      msgEl.innerHTML = `<div class="error-msg">${messageEsc}</div>`;
     } finally {
       saveBtn.disabled = false; saveBtn.textContent = "Сохранить";
     }
@@ -518,14 +531,17 @@
 
           const item = document.createElement("div");
           item.className = "pf-booking-item";
+          const lblEsc = escapeHtml(lbl);
+          const dateStrEsc = escapeHtml(dateStr);
+          const timeStrEsc = escapeHtml(timeStr);
           item.innerHTML = `
             <div class="pf-booking-main">
               <div class="pf-booking-label">
                 <i data-lucide="monitor" style="width:13px;height:13px;color:var(--text-2);flex-shrink:0"></i>
-                <strong>${lbl}</strong>
+                <strong>${lblEsc}</strong>
                 ${checkinHtml}
               </div>
-              <div class="pf-booking-meta">${dateStr} &nbsp;·&nbsp; ${timeStr}</div>
+              <div class="pf-booking-meta">${dateStrEsc} &nbsp;·&nbsp; ${timeStrEsc}</div>
               <div class="pf-time-bar">
                 <div class="pf-time-fill" style="margin-left:${startPct}%;width:${Math.max(widthPct,2)}%"></div>
               </div>
@@ -546,7 +562,8 @@
 
       if (window.lucide) lucide.createIcons({ nodes: [container] });
     } catch (e) {
-      container.innerHTML = `<p class="empty" style="padding:16px">Ошибка: ${e.message}</p>`;
+      const messageEsc = escapeHtml(e.message || "Не удалось загрузить бронирования");
+      container.innerHTML = `<p class="empty" style="padding:16px">Ошибка: ${messageEsc}</p>`;
     }
   }
 
@@ -606,7 +623,8 @@
       document.getElementById("password-form").reset();
       document.getElementById("pw-strength").style.display = "none";
     } catch (err) {
-      msgEl.innerHTML = `<div class="error-msg">${err.message}</div>`;
+      const messageEsc = escapeHtml(err.message || "Не удалось изменить пароль");
+      msgEl.innerHTML = `<div class="error-msg">${messageEsc}</div>`;
     } finally {
       saveBtn.disabled = false; saveBtn.textContent = "Изменить пароль";
     }
@@ -642,16 +660,18 @@
       for (const d of desks) {
         const icon  = FAV_ICONS[d.space_type]  || "monitor";
         const lbl   = FAV_LABELS[d.space_type] || d.space_type || "Место";
+        const deskLabelEsc = escapeHtml(d.label || "—");
+        const lblEsc = escapeHtml(lbl);
         const item  = document.createElement("div");
         item.className = "pf-fav-item";
         item.innerHTML = `
           <div class="pf-fav-icon"><i data-lucide="${icon}" style="width:16px;height:16px"></i></div>
           <div class="pf-fav-info">
-            <strong>${d.label}</strong>
-            <span>${lbl} · ${d.type === "fixed" ? "Закреплённое" : "Гибкое"}</span>
+            <strong>${deskLabelEsc}</strong>
+            <span>${lblEsc} · ${d.type === "fixed" ? "Закреплённое" : "Гибкое"}</span>
           </div>
           <div class="pf-fav-actions">
-            <a href="./index.html" class="btn btn-primary btn-sm" style="font-size:12px">Забронировать</a>
+            <a href="./app.html" class="btn btn-primary btn-sm" style="font-size:12px">Забронировать</a>
             <button class="btn btn-secondary btn-sm pf-fav-remove" style="font-size:12px">✕ Убрать</button>
           </div>`;
         item.querySelector(".pf-fav-remove").addEventListener("click", () => removeFav(item.querySelector(".pf-fav-remove"), d.id));
@@ -661,7 +681,8 @@
       container.append(list);
       if (window.lucide) lucide.createIcons({ nodes: [container] });
     } catch (e) {
-      container.innerHTML = `<p class="empty" style="padding:16px">Ошибка: ${e.message}</p>`;
+      const messageEsc = escapeHtml(e.message || "Не удалось загрузить избранное");
+      container.innerHTML = `<p class="empty" style="padding:16px">Ошибка: ${messageEsc}</p>`;
     }
   }
 
@@ -690,18 +711,21 @@
         const sub         = [m.position, m.department].filter(Boolean).join(" · ");
         const color       = avatarColor(m.username);
         const statusColor = STATUS_COLORS[m.user_status] || "#94a3b8";
+        const initialsEsc = escapeHtml(initials);
+        const displayNameEsc = escapeHtml(displayName);
+        const subEsc = escapeHtml(sub);
         const card        = document.createElement("div");
         card.className    = "pf-team-card";
         card.innerHTML    = `
           <div class="pf-team-avatar-wrap">
-            <div class="pf-team-avatar" style="background:${color}">${initials}</div>
+            <div class="pf-team-avatar" style="background:${color}">${initialsEsc}</div>
             <span class="pf-team-status-dot" style="background:${statusColor}" title="${STATUS_LABELS[m.user_status] || ''}"></span>
           </div>
           <div class="pf-team-info">
-            <strong>${displayName}</strong>
-            ${sub ? `<span>${sub}</span>` : ""}
+            <strong>${displayNameEsc}</strong>
+            ${sub ? `<span>${subEsc}</span>` : ""}
           </div>
-          <a href="./index.html?find=${encodeURIComponent(m.username)}" class="btn btn-secondary btn-sm pf-team-find">
+          <a href="./app.html?find=${encodeURIComponent(m.username)}" class="btn btn-secondary btn-sm pf-team-find">
             <i data-lucide="map-pin" style="width:12px;height:12px"></i> Найти
           </a>`;
         grid.append(card);

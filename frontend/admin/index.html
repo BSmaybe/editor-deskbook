@@ -60,6 +60,10 @@
           <i data-lucide="pencil-ruler" style="width:15px;height:15px"></i>
           Редактор
         </button>
+        <button class="nav-item" data-tab="components">
+          <i data-lucide="shapes" style="width:15px;height:15px"></i>
+          Компоненты
+        </button>
         <button class="nav-item" data-tab="policies">
           <i data-lucide="file-text" style="width:15px;height:15px"></i>
           Политики
@@ -188,6 +192,160 @@
         <!-- Планировка управляется через вкладку «Редактор» -->
       </div>
 
+      <!-- Components tab -->
+      <div id="tab-components" class="tab-content hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div>
+            <h2 style="font-size:20px;font-weight:700">Библиотека компонентов</h2>
+            <p style="margin-top:4px;color:var(--text-2);font-size:13px">Глобальные SVG-компоненты: доступны на всех этажах.</p>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" id="component-create-page-btn">Новый компонент</button>
+            <button class="btn btn-danger" id="component-delete-page-btn" disabled>Удалить</button>
+          </div>
+        </div>
+
+        <div class="comp-editor-layout">
+          <!-- Left: component list -->
+          <div class="comp-sidebar">
+            <div id="component-page-list" class="comp-list"></div>
+          </div>
+
+          <!-- Center: editor area -->
+          <div class="comp-editor-main">
+            <!-- Mode tabs -->
+            <div class="comp-editor-tabs">
+              <button class="comp-tab active" data-comp-mode="draw">Рисование</button>
+              <button class="comp-tab" data-comp-mode="code">SVG-код</button>
+            </div>
+
+            <!-- Draw mode -->
+            <div id="comp-draw-mode" class="comp-mode-panel">
+              <div class="comp-draw-toolbar">
+                <button class="comp-tool-btn active" data-tool="select" title="Выделение (V)">
+                  <svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 1l10 6.5L8.5 9l-2 5L3 1z" fill="currentColor"/></svg>
+                </button>
+                <button class="comp-tool-btn" data-tool="rect" title="Прямоугольник (R)">
+                  <svg width="16" height="16" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+                </button>
+                <button class="comp-tool-btn" data-tool="roundrect" title="Скруглённый (U)">
+                  <svg width="16" height="16" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+                </button>
+                <button class="comp-tool-btn" data-tool="ellipse" title="Эллипс (O)">
+                  <svg width="16" height="16" viewBox="0 0 16 16"><ellipse cx="8" cy="8" rx="6" ry="5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+                </button>
+                <button class="comp-tool-btn" data-tool="line" title="Линия (L)">
+                  <svg width="16" height="16" viewBox="0 0 16 16"><line x1="2" y1="14" x2="14" y2="2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+                <span class="comp-tool-sep"></span>
+                <label class="comp-tool-color" title="Заливка">
+                  <input type="color" id="comp-fill-color" value="#dbeafe">
+                  <span class="comp-color-swatch" id="comp-fill-swatch" style="background:#dbeafe"></span>
+                  Fill
+                </label>
+                <label class="comp-tool-color" title="Обводка">
+                  <input type="color" id="comp-stroke-color" value="#2563eb">
+                  <span class="comp-color-swatch" id="comp-stroke-swatch" style="background:#2563eb"></span>
+                  Stroke
+                </label>
+                <label class="comp-tool-num" title="Толщина обводки">
+                  W <input type="number" id="comp-stroke-width" value="1.5" min="0" max="20" step="0.5">
+                </label>
+                <label class="comp-tool-num" title="Скругление">
+                  R <input type="number" id="comp-border-radius" value="2" min="0" max="100" step="1">
+                </label>
+                <span class="comp-tool-sep"></span>
+                <button class="comp-tool-btn" id="comp-delete-shape" title="Удалить выделенное (Del)">
+                  <svg width="16" height="16" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+              <div class="comp-canvas-wrap">
+                <svg id="comp-canvas" viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <pattern id="comp-grid" width="10" height="10" patternUnits="userSpaceOnUse">
+                      <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e2e8f0" stroke-width="0.5"/>
+                    </pattern>
+                  </defs>
+                  <rect width="100%" height="100%" fill="url(#comp-grid)"/>
+                  <g id="comp-shapes"></g>
+                  <g id="comp-guides"></g>
+                </svg>
+              </div>
+            </div>
+
+            <!-- Code mode -->
+            <div id="comp-code-mode" class="comp-mode-panel" style="display:none">
+              <textarea id="comp-svg-code" class="comp-code-textarea" spellcheck="false" placeholder="Введите SVG-разметку, например:&#10;<rect x=&quot;0&quot; y=&quot;0&quot; width=&quot;100&quot; height=&quot;60&quot; rx=&quot;4&quot; fill=&quot;#dbeafe&quot; stroke=&quot;#2563eb&quot; stroke-width=&quot;1.5&quot;/>"></textarea>
+              <div class="comp-code-preview">
+                <p style="margin:0 0 6px;font-size:12px;color:var(--text-2)">Превью:</p>
+                <div id="comp-code-preview-area" class="comp-preview-box"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: properties -->
+          <div class="comp-properties">
+            <div id="component-page-details"></div>
+            <div class="comp-props-form">
+              <p id="comp-edit-mode-hint" style="margin:0 0 10px;color:var(--text-2);font-size:12px">Нажмите «Новый компонент» или выберите custom-компонент из списка для редактирования.</p>
+              <div class="ed-field">
+                <label for="comp-edit-name">Название</label>
+                <input type="text" id="comp-edit-name" maxlength="120" placeholder="Custom workplace">
+              </div>
+              <div class="ed-field">
+                <label for="comp-edit-id">Component ID</label>
+                <input type="text" id="comp-edit-id" maxlength="120" placeholder="custom-component">
+              </div>
+              <div class="ed-field">
+                <label for="comp-edit-type">Тип</label>
+                <select id="comp-edit-type">
+                  <option value="workplace">Workplace</option>
+                  <option value="desk">Desk</option>
+                  <option value="chair">Chair</option>
+                  <option value="meeting_table">Meeting table</option>
+                  <option value="conference_set">Conference set</option>
+                  <option value="asset">Asset</option>
+                </select>
+              </div>
+              <div class="ed-field">
+                <label>Размер по умолчанию</label>
+                <div style="display:flex;gap:8px">
+                  <input type="number" id="comp-edit-w" value="100" min="1" max="10000" step="1" placeholder="W" style="width:50%">
+                  <input type="number" id="comp-edit-h" value="60" min="1" max="10000" step="1" placeholder="H" style="width:50%">
+                </div>
+              </div>
+              <div class="ed-prop-section">Выбранная фигура</div>
+              <p id="comp-shape-empty" style="margin:0 0 10px;color:var(--text-2);font-size:12px">Выберите фигуру на canvas, чтобы менять ее координаты и размер.</p>
+              <div id="comp-shape-props" class="ed-hidden">
+                <p id="comp-shape-title" style="margin:0 0 8px;color:var(--text);font-size:12px;font-weight:700">Фигура</p>
+                <div id="comp-box-fields">
+                  <div class="ed-row2">
+                    <div class="ed-field"><label>X</label><input type="number" id="comp-shape-x" step="1"></div>
+                    <div class="ed-field"><label>Y</label><input type="number" id="comp-shape-y" step="1"></div>
+                  </div>
+                  <div class="ed-row3">
+                    <div class="ed-field"><label>W</label><input type="number" id="comp-shape-w" step="1" min="1"></div>
+                    <div class="ed-field"><label>H</label><input type="number" id="comp-shape-h" step="1" min="1"></div>
+                    <div class="ed-field"><label>R</label><input type="number" id="comp-shape-rx" step="1" min="0"></div>
+                  </div>
+                </div>
+                <div id="comp-line-fields" class="ed-hidden">
+                  <div class="ed-row2">
+                    <div class="ed-field"><label>X1</label><input type="number" id="comp-line-x1" step="1"></div>
+                    <div class="ed-field"><label>Y1</label><input type="number" id="comp-line-y1" step="1"></div>
+                  </div>
+                  <div class="ed-row2">
+                    <div class="ed-field"><label>X2</label><input type="number" id="comp-line-x2" step="1"></div>
+                    <div class="ed-field"><label>Y2</label><input type="number" id="comp-line-y2" step="1"></div>
+                  </div>
+                </div>
+              </div>
+              <button class="btn btn-primary btn-block" id="comp-save-btn">Сохранить компонент</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Floor Editor tab -->
       <div id="tab-editor" class="tab-content hidden">
 
@@ -209,12 +367,13 @@
               <button class="ed-btn ed-btn-ghost" id="ed-sync-bg-btn" title="Подогнать SVG под фон">Фон = SVG</button>
               <button class="ed-btn ed-btn-ghost" id="ed-bg-adjust-btn" title="Подвинуть / масштабировать фон">Правка фона</button>
               <button class="ed-btn ed-btn-ghost" id="ed-clear-bg-btn" title="Убрать фоновое изображение">Убрать фон</button>
-              <button class="ed-btn ed-btn-ghost" id="ed-sync-desks-btn" title="Синхронизировать места для бронирования">Синх. мест</button>
               <button class="ed-btn ed-btn-ghost" id="ed-import-btn">Импорт</button>
               <button class="ed-btn ed-btn-ghost" id="ed-history-btn">История</button>
               <div class="ed-toolbar-sep"></div>
               <button class="ed-btn ed-btn-primary" id="ed-save-btn" disabled>Сохранить</button>
               <button class="ed-btn ed-btn-green" id="ed-publish-btn" disabled>Опубликовать</button>
+              <button class="ed-btn ed-btn-ghost" id="ed-download-svg-btn" disabled title="Скачать опубликованный semantic SVG/XML">Скачать XML/SVG</button>
+              <button class="ed-btn ed-btn-ghost" id="ed-download-html-btn" disabled title="Скачать HTML с inline SVG, CSS hover и click-handler">Скачать HTML</button>
               <button class="ed-btn ed-btn-danger" id="ed-discard-btn" disabled>Отменить</button>
             </div>
           </div>
@@ -233,7 +392,8 @@
                 <button class="ed-mode-btn" data-mode="door" title="Дверь (O)">Дверь <span class="kbd">O</span></button>
               </div>
               <div class="ed-toolbar-sep"></div>
-              <button class="ed-mode-btn" data-mode="desk" title="Стол (D)">Место <span class="kbd">D</span></button>
+              <button class="ed-mode-btn" data-mode="desk" title="Рабочее место (D)">Место <span class="kbd">D</span></button>
+              <button class="ed-mode-btn" data-mode="component" title="Компонент (C)">Компонент <span class="kbd">C</span></button>
             </div>
 
             <div class="ed-kpis">
@@ -257,6 +417,14 @@
           </div>
 
           <div class="ed-toolbar-row ed-toolbar-row-tertiary ed-hidden" id="ed-desk-bulk-panel">
+            <div class="ed-bulk-field">
+              <label for="ed-desk-size-preset">Размер</label>
+              <select id="ed-desk-size-preset">
+                <option value="small">Мелкий</option>
+                <option value="normal" selected>Обычный</option>
+                <option value="large">Крупный</option>
+              </select>
+            </div>
             <div class="ed-bulk-field">
               <label for="ed-desk-place-mode">Вставка</label>
               <select id="ed-desk-place-mode">
@@ -301,6 +469,15 @@
             <div class="ed-bulk-note" id="ed-desk-bulk-note">Режим блока: клик + drag для превью, затем клик для подтверждения, Esc — отмена</div>
             <div class="ed-bulk-conflicts" id="ed-desk-bulk-conflicts" aria-live="polite"></div>
           </div>
+
+          <div class="ed-toolbar-row ed-toolbar-row-tertiary ed-hidden" id="ed-component-place-panel">
+            <div class="ed-bulk-field">
+              <label for="ed-component-place-select">Компонент</label>
+              <select id="ed-component-place-select"></select>
+            </div>
+            <button class="ed-btn ed-btn-ghost" id="ed-open-components-tab-btn" type="button">Библиотека</button>
+            <div class="ed-bulk-note" id="ed-component-place-note">Выберите компонент и кликните по карте, чтобы поставить объект.</div>
+          </div>
         </div>
 
         <!-- Body -->
@@ -316,6 +493,7 @@
               <button class="ed-toggle-btn" id="ed-left-collapse">◀</button>
             </div>
             <input id="ed-obj-search" placeholder="Поиск по метке или типу" autocomplete="off">
+            <div id="ed-inventory-filters" aria-label="Фильтры инвентаря"></div>
             <div id="ed-obj-list">
               <p style="color:#64748b;font-size:12px;padding:8px 10px">Загрузите этаж, чтобы увидеть объекты.</p>
             </div>
@@ -393,6 +571,10 @@
                     <input type="text" id="ep-label" maxlength="40">
                   </div>
                   <div class="ed-field">
+                    <label>Инвентарный номер</label>
+                    <input type="text" id="ep-inventory-number" maxlength="120" placeholder="INV-0001">
+                  </div>
+                  <div class="ed-field">
                     <label>Имя / описание</label>
                     <input type="text" id="ep-name" maxlength="120" placeholder="Необязательно">
                   </div>
@@ -403,6 +585,45 @@
                   <div class="ed-field">
                     <label>Отдел</label>
                     <input type="text" id="ep-dept" maxlength="120">
+                  </div>
+                  <div class="ed-prop-section">SVG/XML</div>
+                  <div class="ed-field">
+                    <label>Symbol</label>
+                    <div class="ed-field-with-btn">
+                      <select id="ep-symbol">
+                        <option value="workplace-desk-chair">Рабочее место</option>
+                        <option value="desk-short">Короткий стол</option>
+                        <option value="desk-long">Длинный стол</option>
+                        <option value="chair">Кресло</option>
+                        <option value="meeting-table">Переговорный стол</option>
+                        <option value="conference-chair">Конференц-кресло</option>
+                        <option value="conference-set">Конференц-сет</option>
+                      </select>
+                      <button class="ed-btn ed-btn-ghost ed-btn-sm" id="ep-edit-component-btn" type="button" title="Редактировать компонент">✎</button>
+                    </div>
+                  </div>
+                  <div class="ed-field">
+                    <label>Asset type</label>
+                    <select id="ep-asset-type">
+                      <option value="workplace">Workplace</option>
+                      <option value="desk">Desk</option>
+                      <option value="chair">Chair</option>
+                      <option value="meeting_table">Meeting table</option>
+                      <option value="conference_set">Conference set</option>
+                      <option value="asset">Asset</option>
+                    </select>
+                  </div>
+                  <div class="ed-field">
+                    <label>Workplace ID</label>
+                    <input type="text" id="ep-workplace-id" maxlength="120" placeholder="bcchub-wp3452">
+                  </div>
+                  <div class="ed-row2">
+                    <div class="ed-field"><label>Building</label><input type="text" id="ep-building-id" maxlength="120"></div>
+                    <div class="ed-field"><label>Storey</label><input type="text" id="ep-storey-id" maxlength="120"></div>
+                  </div>
+                  <div class="ed-field">
+                    <label>Zone</label>
+                    <input type="text" id="ep-zone-id" maxlength="120">
                   </div>
                   <div class="ed-prop-section">Тип</div>
                   <div class="ed-checkbox-row">
@@ -444,12 +665,13 @@
                     <button class="ed-btn ed-btn-ghost ed-btn-sm" id="ep-rot-right" type="button">+15° ⟳</button>
                     <button class="ed-btn ed-btn-ghost ed-btn-sm" id="ep-rot-reset" type="button">0°</button>
                   </div>
+                  <button class="ed-btn ed-btn-ghost" id="ep-standard-size" type="button" style="width:100%;margin-top:6px">Стандартный размер</button>
                   <button class="ed-btn ed-btn-danger" id="ep-desk-del" style="width:100%;margin-top:6px">Удалить стол</button>
                 </div>
 
                 <div id="ep-multi-desk-panel" class="ed-hidden">
-                  <div class="ed-prop-section">Мультивыбор мест</div>
-                  <p class="ed-multi-note" id="ep-multi-desk-count">Выбрано мест: 0</p>
+                  <div class="ed-prop-section">Мультивыбор объектов</div>
+                  <p class="ed-multi-note" id="ep-multi-desk-count">Выбрано объектов: 0</p>
                   <div class="ed-row2">
                     <div class="ed-field">
                       <label>Статус</label>
@@ -492,7 +714,9 @@
                     <div class="ed-field"><label>H</label><input type="number" id="ep-batch-h" step="1" min="1" placeholder="не менять"></div>
                     <div class="ed-field"><label>°</label><input type="number" id="ep-batch-r" step="5" min="-180" max="180" placeholder="не менять"></div>
                   </div>
-                  <button class="ed-btn ed-btn-primary" id="ep-batch-apply" type="button" style="width:100%">Применить к выбранным местам</button>
+                  <button class="ed-btn ed-btn-ghost" id="ep-batch-group-component" type="button" style="width:100%;margin-bottom:8px">Объединить выбранные в компонент</button>
+                  <button class="ed-btn ed-btn-ghost" id="ep-batch-standard-size" type="button" style="width:100%;margin-bottom:8px">Стандартный размер для выбранных</button>
+                  <button class="ed-btn ed-btn-primary" id="ep-batch-apply" type="button" style="width:100%">Применить к выбранным объектам</button>
                 </div>
               </div>
 
@@ -576,9 +800,9 @@
             </div>
             <div id="ed-import-body">
               <div id="ed-import-drop" class="ed-drop-zone">
-                <div>Перетащите SVG сюда или <u style="cursor:pointer" id="ed-import-browse">выберите файл</u></div>
-                <div style="font-size:11px;margin-top:6px;color:#334155">Также принимается PNG — используется как фон для трассировки</div>
-                <input id="ed-import-file" type="file" accept=".svg,.png,image/svg+xml,image/png" style="display:none">
+                <div>Перетащите SVG/HTML сюда или <u style="cursor:pointer" id="ed-import-browse">выберите файл</u></div>
+                <div style="font-size:11px;margin-top:6px;color:#334155">HTML/SVG с .workplace импортируется как компоненты; PNG используется как фон для трассировки</div>
+                <input id="ed-import-file" type="file" accept=".svg,.html,.htm,.png,image/svg+xml,text/html,image/png" style="display:none">
               </div>
               <div id="ed-import-result" class="ed-hidden">
                 <div class="ed-import-stats" id="ed-import-stats"></div>
@@ -899,6 +1123,7 @@
   <div id="admin-toast" class="admin-toast-container"></div>
 
   <script src="./editor.js"></script>
+  <script src="./components.js"></script>
   <script src="./admin.js"></script>
   <script>if (window.lucide) lucide.createIcons();</script>
 </body>

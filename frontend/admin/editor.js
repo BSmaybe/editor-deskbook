@@ -1,6 +1,6 @@
 /**
  * Floor Editor v2 — SVG-first canonical layout editor
- * Modes: select | pan | wall | boundary | partition | door | desk
+ * Modes: select | pan | wall | boundary | partition | door | desk | component
  * No external dependencies.
  */
 
@@ -26,6 +26,11 @@ const DEFAULT_ZONE_LABEL_SIZE = 18;
 const DRAW_ANGLE_STEP_DEG = 45;
 const PANEL_LEFT_KEY = 'editor_left_collapsed';
 const PANEL_RIGHT_KEY = 'editor_right_collapsed';
+const DESK_SIZE_PRESETS = {
+  small: 0.7,
+  normal: 1,
+  large: 1.4,
+};
 
 const DESK_COLORS = {
   flex:     { fill: '#dbeafe', stroke: '#2563eb' },
@@ -41,9 +46,44 @@ const MODE_HINTS = {
   boundary:  'Клик — точка; Shift — угол 45°; клик рядом с первой — замкнуть; Enter — замкнуть; Esc — отменить',
   partition: 'Клик — точка; Shift — угол 45°; Enter — завершить; Esc — отменить',
   door:      'Клик — точка; Shift — угол 45°; Enter/двойной клик — завершить; Esc — отменить',
-  desk:      'Клик — поставить стол; для блока выберите "Блок" в панели ниже',
+  desk:      'Клик — поставить рабочее место; для массовой расстановки выберите "Блок" в панели ниже',
+  component: 'Выберите reusable/custom компонент; клик — поставить объект на карту; создание компонентов вынесено во вкладку "Компоненты"',
 };
 const STRUCT_TYPES = ['wall', 'boundary', 'partition', 'door'];
+const BUILTIN_COMPONENTS = [
+  { id: 'workplace-desk-chair', label: 'Рабочее место: стол + кресло', asset_type: 'workplace', source: 'system', view_box: [0, 0, 140, 125], default_w: 140, default_h: 125 },
+  { id: 'chair', label: 'Кресло', asset_type: 'chair', source: 'system', view_box: [0, 0, 64, 64], default_w: 64, default_h: 64 },
+  { id: 'desk-short', label: 'Короткий стол', asset_type: 'desk', source: 'system', view_box: [0, 0, 100, 60], default_w: 100, default_h: 60 },
+  { id: 'desk-long', label: 'Длинный стол', asset_type: 'desk', source: 'system', view_box: [0, 0, 160, 60], default_w: 160, default_h: 60 },
+  { id: 'meeting-table', label: 'Переговорный стол', asset_type: 'meeting_table', source: 'system', view_box: [0, 0, 140, 90], default_w: 140, default_h: 90 },
+  { id: 'conference-chair', label: 'Конференц-кресло', asset_type: 'chair', source: 'system', view_box: [0, 0, 64, 64], default_w: 64, default_h: 64 },
+  { id: 'conference-set', label: 'Конференц-сет', asset_type: 'conference_set', source: 'system', view_box: [0, 0, 220, 150], default_w: 220, default_h: 150 },
+];
+const BUILTIN_COMPONENT_IDS = new Set(BUILTIN_COMPONENTS.map((s) => s.id));
+const LAYOUT_SYMBOLS = BUILTIN_COMPONENTS.map((c) => ({ id: c.id, label: c.label, assetType: c.asset_type }));
+const LAYOUT_SYMBOL_IDS = new Set(LAYOUT_SYMBOLS.map((s) => s.id));
+const ASSET_TYPES = new Set(['workplace', 'desk', 'chair', 'meeting_table', 'conference_set', 'asset']);
+const COMPONENT_ID_RE = /^[A-Za-z_][A-Za-z0-9_.:-]{0,119}$/;
+const INVENTORY_FILTERS = [
+  { id: 'workplace', label: 'Раб.места', color: '#2563eb' },
+  { id: 'desk', label: 'Столы', color: '#8b5e34' },
+  { id: 'chair', label: 'Стулья', color: '#64748b' },
+  { id: 'meeting_table', label: 'Переговорные', color: '#0f766e' },
+  { id: 'conference_set', label: 'Конф.сеты', color: '#7c3aed' },
+  { id: 'asset', label: 'Assets', color: '#64748b' },
+  { id: 'boundary', label: 'Границы', color: STRUCT_COLORS.boundary },
+  { id: 'wall', label: 'Стены', color: STRUCT_COLORS.wall },
+  { id: 'partition', label: 'Перегородки', color: STRUCT_COLORS.partition },
+  { id: 'door', label: 'Двери', color: STRUCT_COLORS.door },
+];
+const SVG_RENDER_TAGS = new Set(['g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'use']);
+const SVG_RENDER_ATTRS = new Set([
+  'class', 'id', 'd', 'x', 'y', 'width', 'height', 'rx', 'ry', 'cx', 'cy', 'r',
+  'x1', 'y1', 'x2', 'y2', 'points', 'transform', 'fill', 'stroke', 'stroke-width',
+  'stroke-linecap', 'stroke-linejoin', 'stroke-dasharray', 'fill-opacity',
+  'stroke-opacity', 'opacity', 'font-size', 'font-family', 'font-weight',
+  'text-anchor', 'dominant-baseline', 'href', 'xlink:href',
+]);
 
 /* ── State ──────────────────────────────────────────────────────────────────── */
 let ld = null;        // LayoutDocument (canonical)
@@ -73,10 +113,13 @@ function resetEd() {
     mode: 'select',
     snapGrid: false,
     gridSize: 10,
+    inventoryVisible: Object.fromEntries(INVENTORY_FILTERS.map((item) => [item.id, true])),
     altSnapOff: false,
     shiftFine: false,
     shiftDown: false,
     deskTool: {
+      componentId: 'workplace-desk-chair',
+      sizePreset: 'normal', // small | normal | large
       placeMode: 'single', // single | block
       pattern: 'rows',     // rows | double
       axis: 'horizontal',  // horizontal | vertical
@@ -86,6 +129,11 @@ function resetEd() {
       rowCount: 2,
       pairCount: 1,
       preview: null,       // transient preview for block placement
+    },
+    componentTool: {
+      componentId: 'chair',
+      objectW: null,
+      objectH: null,
     },
 
     // Drawing (wall/boundary/partition)
@@ -98,7 +146,6 @@ function resetEd() {
     multiStructKeys: [],
     marquee: null,   // { pointerId, start:{x,y}, current:{x,y}, append:boolean }
     dragGroup: null, // { pointerId, startPt:{x,y}, desks:[...], structs:[...], moved }
-
     // Pan
     panning:  false,
     panStart: null,
@@ -115,6 +162,199 @@ function uid() {
   return (typeof crypto !== 'undefined' && crypto.randomUUID)
     ? crypto.randomUUID()
     : 'id-' + Math.random().toString(36).slice(2);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeComponentId(value) {
+  const raw = String(value || '').trim();
+  return COMPONENT_ID_RE.test(raw) ? raw : null;
+}
+
+function slugifyComponentId(value, fallback = 'custom-component') {
+  let slug = String(value || fallback)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.:-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (!slug) slug = fallback;
+  if (!/^[a-z_]/.test(slug)) slug = `custom-${slug}`;
+  return slug.slice(0, 120);
+}
+
+function normalizeComponentRecord(component) {
+  const id = safeComponentId(component?.id);
+  if (!id) return null;
+  const viewBox = Array.isArray(component.view_box) && component.view_box.length === 4
+    ? component.view_box.map((n) => Number(n))
+    : [0, 0, 100, 60];
+  const vb = viewBox.every(Number.isFinite) && viewBox[2] > 0 && viewBox[3] > 0 ? viewBox : [0, 0, 100, 60];
+  const rawAssetType = String(component.asset_type || component.assetType || 'asset').trim();
+  const assetType = ASSET_TYPES.has(rawAssetType) ? rawAssetType : 'asset';
+  const source = component.source === 'custom' || !BUILTIN_COMPONENT_IDS.has(id) ? 'custom' : 'system';
+  return {
+    id,
+    label: String(component.label || id).slice(0, 120),
+    asset_type: assetType,
+    source,
+    view_box: vb,
+    default_w: clampNum(component.default_w ?? component.defaultW, 1, 10000, vb[2]),
+    default_h: clampNum(component.default_h ?? component.defaultH, 1, 10000, vb[3]),
+    svg_markup: source === 'custom' ? String(component.svg_markup || component.svgMarkup || '') : null,
+  };
+}
+
+function normalizeLayoutComponents(components) {
+  const out = BUILTIN_COMPONENTS.map((c) => ({ ...c }));
+  const seen = new Set(out.map((c) => c.id));
+  (Array.isArray(components) ? components : []).forEach((item) => {
+    const component = normalizeComponentRecord(item);
+    if (!component || component.source !== 'custom') return;
+    if (BUILTIN_COMPONENT_IDS.has(component.id) || seen.has(component.id)) return;
+    if (!component.svg_markup || !isSafeSvgMarkup(component.svg_markup)) return;
+    out.push(component);
+    seen.add(component.id);
+  });
+  return out;
+}
+
+function componentCatalog() {
+  const globals = typeof getGlobalComponents === 'function' ? getGlobalComponents() : [];
+  const out = BUILTIN_COMPONENTS.map((c) => ({ ...c }));
+  const byId = new Map(out.map((component) => [component.id, component]));
+  [...(ld?.components || []), ...globals].forEach((item) => {
+    const component = normalizeComponentRecord(item);
+    if (!component || component.source !== 'custom') return;
+    if (BUILTIN_COMPONENT_IDS.has(component.id)) return;
+    if (!component.svg_markup || !isSafeSvgMarkup(component.svg_markup)) return;
+    byId.set(component.id, component);
+  });
+  const custom = Array.from(byId.values()).filter((component) => component.source === 'custom');
+  return [...out, ...custom];
+}
+
+function ensureLayoutComponent(component) {
+  if (!ld || !component) return false;
+  const normalized = normalizeComponentRecord({ ...component, source: 'custom' });
+  if (!normalized || normalized.source !== 'custom') return false;
+  if (BUILTIN_COMPONENT_IDS.has(normalized.id)) return false;
+  if (!normalized.svg_markup || !isSafeSvgMarkup(normalized.svg_markup)) return false;
+
+  const previous = (ld.components || []).find((item) => item.id === normalized.id);
+  const nextComponents = (ld.components || []).filter((item) => item.id !== normalized.id);
+  ld.components = normalizeLayoutComponents([...nextComponents, normalized]);
+  const next = ld.components.find((item) => item.id === normalized.id);
+  return JSON.stringify(previous || null) !== JSON.stringify(next || null);
+}
+
+function componentForId(value, fallback = 'desk-short') {
+  const raw = String(value || '').trim();
+  const catalog = componentCatalog();
+  return catalog.find((component) => component.id === raw)
+    || catalog.find((component) => component.id === fallback)
+    || BUILTIN_COMPONENTS.find((component) => component.id === fallback)
+    || BUILTIN_COMPONENTS[0];
+}
+
+function normalizeLayoutSymbolId(value) {
+  return componentForId(value, 'desk-short').id;
+}
+
+function assetTypeForSymbol(symbolId) {
+  return componentForId(symbolId, 'desk-short')?.asset_type || 'asset';
+}
+
+function normalizeAssetType(value, symbolId = null) {
+  const raw = String(value || '').trim();
+  if (ASSET_TYPES.has(raw)) return raw;
+  return assetTypeForSymbol(symbolId);
+}
+
+function isWorkplaceObject(item) {
+  return (item?.asset_type || 'workplace') === 'workplace';
+}
+
+function inventoryTypeForDesk(item) {
+  if (isWorkplaceObject(item)) return 'workplace';
+  const raw = String(item?.asset_type || 'asset').trim();
+  return ASSET_TYPES.has(raw) ? raw : 'asset';
+}
+
+function isInventoryVisible(type) {
+  if (!ed.inventoryVisible) ed.inventoryVisible = Object.fromEntries(INVENTORY_FILTERS.map((item) => [item.id, true]));
+  return ed.inventoryVisible[type] !== false;
+}
+
+function inventoryCounts() {
+  const counts = Object.fromEntries(INVENTORY_FILTERS.map((item) => [item.id, 0]));
+  for (const desk of (ld?.desks || [])) {
+    const type = inventoryTypeForDesk(desk);
+    counts[type] = (counts[type] || 0) + 1;
+  }
+  counts.wall = (ld?.walls || []).length;
+  counts.boundary = (ld?.boundaries || []).length;
+  counts.partition = (ld?.partitions || []).length;
+  counts.door = (ld?.doors || []).length;
+  return counts;
+}
+
+function syncInventoryFilters() {
+  const wrap = $el('ed-inventory-filters');
+  if (!wrap) return;
+  const counts = inventoryCounts();
+  wrap.innerHTML = INVENTORY_FILTERS.map((item) => {
+    const checked = isInventoryVisible(item.id) ? 'checked' : '';
+    return `<label class="ed-inventory-filter" title="Показать/скрыть ${escapeHtml(item.label)}">
+      <input type="checkbox" data-inventory-filter="${escapeHtml(item.id)}" ${checked}>
+      <span>${escapeHtml(item.label)}</span>
+      <span class="ed-inventory-count">${counts[item.id] || 0}</span>
+    </label>`;
+  }).join('');
+  wrap.querySelectorAll('input[data-inventory-filter]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const type = input.dataset.inventoryFilter;
+      ed.inventoryVisible[type] = !!input.checked;
+      renderStructure();
+      renderDesks();
+      renderSelection();
+      renderObjectList();
+    });
+  });
+}
+
+function isSafeSvgMarkup(markup) {
+  const raw = String(markup || '');
+  const lower = raw.toLowerCase();
+  if (!raw.trim()) return false;
+  if (/<\s*(script|foreignobject|style)\b/i.test(raw)) return false;
+  if (/\son[a-z]+\s*=/i.test(raw)) return false;
+  if (/\sstyle\s*=/i.test(raw)) return false;
+  if (lower.includes('javascript:')) return false;
+  if (/\s(?:href|xlink:href)\s*=\s*['"]?(?:https?:|\/\/|data:)/i.test(raw)) return false;
+  const hrefRe = /\s(?:href|xlink:href)\s*=\s*['"]?([^'"\s>]+)/ig;
+  let hrefMatch;
+  while ((hrefMatch = hrefRe.exec(raw))) {
+    if (!/^#[A-Za-z_][A-Za-z0-9_.:-]{0,119}$/.test(hrefMatch[1])) return false;
+  }
+  const tagRe = /<\/?\s*([A-Za-z][A-Za-z0-9:_-]*)/g;
+  let match;
+  while ((match = tagRe.exec(raw))) {
+    const tag = match[1].split(':').pop().toLowerCase();
+    if (!SVG_RENDER_TAGS.has(tag)) return false;
+  }
+  return true;
+}
+
+function normalizeEntityId(value, fallback = null) {
+  const raw = String(value || '').trim();
+  return raw ? raw.slice(0, 120) : fallback;
 }
 
 function _degToRad(deg) {
@@ -253,12 +493,14 @@ function layoutStrokeWidth(kind, thick, vbWidth) {
 }
 
 function clampInt(v, min, max, fallback) {
+  if (v === null || v === undefined || v === '') return fallback;
   const n = parseInt(v, 10);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, n));
 }
 
 function clampNum(v, min, max, fallback) {
+  if (v === null || v === undefined || v === '') return fallback;
   const n = Number(v);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, n));
@@ -280,6 +522,11 @@ function takeNextDeskLabel(used) {
   return 'D-' + n;
 }
 
+function takeNextObjectLabel(used, component) {
+  if ((component?.asset_type || 'workplace') === 'workplace') return takeNextDeskLabel(used);
+  return String(component?.label || component?.id || 'Asset').slice(0, 40);
+}
+
 function baseDeskSize() {
   if (!ld) return { w: 28, h: 16 };
   const w = Math.max(8, ld.vb[2] * 0.028);
@@ -287,20 +534,68 @@ function baseDeskSize() {
   return { w, h };
 }
 
-function defaultDeskSize() {
+function deskSizeForPreset(preset = 'normal') {
   const base = baseDeskSize();
-  const maxW = Math.max(120, base.w * 8);
-  const maxH = Math.max(90, base.h * 8);
+  const factor = DESK_SIZE_PRESETS[preset] || DESK_SIZE_PRESETS.normal;
   return {
-    w: clampNum(ed?.deskTool?.deskW, 4, maxW, base.w),
-    h: clampNum(ed?.deskTool?.deskH, 4, maxH, base.h),
+    w: Math.max(4, base.w * factor),
+    h: Math.max(4, base.h * factor),
   };
 }
 
-function makeDeskRecord(rect, label) {
+function setDeskSizePreset(preset = 'normal') {
+  const nextPreset = DESK_SIZE_PRESETS[preset] ? preset : 'normal';
+  const size = deskSizeForPreset(nextPreset);
+  ed.deskTool.sizePreset = nextPreset;
+  ed.deskTool.deskW = size.w;
+  ed.deskTool.deskH = size.h;
+  _v('ed-desk-size-preset', nextPreset);
+  _v('ed-desk-width', Math.round(size.w * 10) / 10);
+  _v('ed-desk-height', Math.round(size.h * 10) / 10);
+  if (isDeskBlockMode() && ed.deskTool.preview) {
+    rebuildDeskBlockPreview(ed.deskTool.preview.current || ed.deskTool.preview.anchor);
+  }
+}
+
+function defaultDeskSize(opts = {}) {
+  const base = baseDeskSize();
+  const tool = opts.tool || (ed.mode === 'component' ? 'component' : 'desk');
+  const componentId = opts.componentId || (
+    tool === 'component'
+      ? ed?.componentTool?.componentId
+      : ed?.deskTool?.componentId
+  ) || 'workplace-desk-chair';
+  const component = componentForId(componentId, tool === 'component' ? 'chair' : 'workplace-desk-chair');
+  const componentBase = {
+    w: tool === 'desk' ? base.w : Number(component?.default_w || component?.defaultW || base.w),
+    h: tool === 'desk' ? base.h : Number(component?.default_h || component?.defaultH || base.h),
+  };
+  const maxW = Math.max(120, base.w * 8);
+  const maxH = Math.max(90, base.h * 8);
+  const configuredW = tool === 'component' ? ed?.componentTool?.objectW : ed?.deskTool?.deskW;
+  const configuredH = tool === 'component' ? ed?.componentTool?.objectH : ed?.deskTool?.deskH;
   return {
-    id: uid(), label, name: null, team: null, dept: null,
-    bookable: true, fixed: false, assigned_to: null, status: 'available',
+    w: clampNum(configuredW, 4, maxW, Number.isFinite(componentBase.w) ? componentBase.w : base.w),
+    h: clampNum(configuredH, 4, maxH, Number.isFinite(componentBase.h) ? componentBase.h : base.h),
+  };
+}
+
+function makeDeskRecord(rect, label, opts = {}) {
+  const id = uid();
+  const component = componentForId(opts.componentId || ed?.deskTool?.componentId || 'workplace-desk-chair', 'workplace-desk-chair');
+  const componentId = component?.id || 'desk-short';
+  const assetType = normalizeAssetType(opts.assetType || component?.asset_type, componentId);
+  const isWorkplace = assetType === 'workplace';
+  return {
+    id, label, inventory_number: null, name: null, team: null, dept: null,
+    building_id: ld?.building_id || null,
+    storey_id: ld?.storey_id || null,
+    zone_id: ld?.zone_id || null,
+    workplace_id: isWorkplace ? id : null,
+    component_id: componentId,
+    symbol_id: componentId,
+    asset_type: assetType,
+    bookable: isWorkplace, fixed: false, assigned_to: null, status: 'available',
     x: rect.x, y: rect.y, w: rect.w, h: rect.h, r: 0, locked: false,
   };
 }
@@ -314,17 +609,90 @@ function isDeskBlockMode() {
   return ed.mode === 'desk' && ed.deskTool.placeMode === 'block';
 }
 
+function componentOptionLabel(component) {
+  const type = component.asset_type === 'workplace' ? 'workplace' : component.asset_type.replace(/_/g, '-');
+  return `${component.label} (${type})`;
+}
+
+function syncComponentSelectElement(select, selectedId) {
+  if (!select) return;
+  const catalog = componentCatalog();
+  const selected = componentForId(selectedId || ed?.deskTool?.componentId || 'workplace-desk-chair', 'workplace-desk-chair')?.id;
+  select.innerHTML = '';
+  const groups = [
+    { label: 'Готовые компоненты', items: catalog.filter((component) => component.source !== 'custom') },
+    { label: 'Custom компоненты', items: catalog.filter((component) => component.source === 'custom') },
+  ];
+  groups.forEach((group) => {
+    if (!group.items.length) return;
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = group.label;
+    group.items.forEach((component) => {
+      const option = document.createElement('option');
+      option.value = component.id;
+      option.textContent = componentOptionLabel(component);
+      optgroup.appendChild(option);
+    });
+    select.appendChild(optgroup);
+  });
+  if (selected) select.value = selected;
+}
+
+function syncComponentPalette() {
+  if (!ed.componentTool) ed.componentTool = { componentId: 'chair', objectW: null, objectH: null };
+  const current = componentForId(ed.componentTool.componentId || 'chair', 'chair');
+  if (current) ed.componentTool.componentId = current.id;
+  syncComponentSelectElement($el('ed-component-place-select'), ed.componentTool.componentId);
+  syncComponentSelectElement($el('ep-symbol'), ed.selType === 'desk' ? selectedDeskRecords()[0]?.component_id : ed.componentTool.componentId);
+  [$el('ed-component-delete-btn'), $el('ed-component-library-delete')].forEach((deleteBtn) => {
+    if (!deleteBtn || !current) return;
+    const used = (ld?.desks || []).some((item) => (item.component_id || item.symbol_id) === current.id);
+    deleteBtn.disabled = current.source !== 'custom' || used;
+    deleteBtn.title = current.source !== 'custom'
+      ? 'Системные компоненты нельзя удалить'
+      : used
+        ? 'Компонент используется на карте'
+        : 'Удалить custom-компонент';
+  });
+  renderComponentLibrary();
+}
+
+function syncComponentPlaceControls() {
+  const panel = $el('ed-component-place-panel');
+  const show = ed.mode === 'component';
+  panel?.classList.toggle('ed-hidden', !show);
+  if (!show) return;
+
+  if (!ed.componentTool) ed.componentTool = { componentId: 'chair', objectW: null, objectH: null };
+  const component = componentForId(ed.componentTool.componentId || 'chair', 'chair');
+  if (component) {
+    ed.componentTool.componentId = component.id;
+    ed.componentTool.objectW = clampNum(component.default_w ?? component.defaultW, 4, 10000, 100);
+    ed.componentTool.objectH = clampNum(component.default_h ?? component.defaultH, 4, 10000, 60);
+  }
+  syncComponentPalette();
+
+  const note = $el('ed-component-place-note');
+  if (note && component) {
+    const type = component.asset_type === 'workplace' ? 'workplace' : String(component.asset_type || 'asset').replace(/_/g, '-');
+    note.textContent = `Компонент: ${component.label} (${type}). Клик по карте поставит объект. Новые symbols создаются во вкладке "Компоненты".`;
+  }
+}
+
 function syncDeskBulkControls() {
   const panel = $el('ed-desk-bulk-panel');
   const show = ed.mode === 'desk';
   panel?.classList.toggle('ed-hidden', !show);
   if (!show) return;
+  ed.deskTool.componentId = 'workplace-desk-chair';
 
   const baseSize = baseDeskSize();
   const maxW = Math.max(120, baseSize.w * 8);
   const maxH = Math.max(90, baseSize.h * 8);
-  ed.deskTool.deskW = clampNum(ed.deskTool.deskW, 4, maxW, baseSize.w);
-  ed.deskTool.deskH = clampNum(ed.deskTool.deskH, 4, maxH, baseSize.h);
+  const defaultSize = defaultDeskSize();
+  if (!DESK_SIZE_PRESETS[ed.deskTool.sizePreset]) ed.deskTool.sizePreset = 'normal';
+  ed.deskTool.deskW = clampNum(ed.deskTool.deskW, 4, maxW, defaultSize.w);
+  ed.deskTool.deskH = clampNum(ed.deskTool.deskH, 4, maxH, defaultSize.h);
   ed.deskTool.seatsPerRow = clampInt(ed.deskTool.seatsPerRow, 1, 100, 6);
   ed.deskTool.rowCount = clampInt(ed.deskTool.rowCount, 1, 50, 2);
   ed.deskTool.pairCount = clampInt(ed.deskTool.pairCount, 1, 25, 1);
@@ -332,6 +700,7 @@ function syncDeskBulkControls() {
   if (!['rows', 'double'].includes(ed.deskTool.pattern)) ed.deskTool.pattern = 'rows';
   if (!['horizontal', 'vertical'].includes(ed.deskTool.axis)) ed.deskTool.axis = 'horizontal';
 
+  _v('ed-desk-size-preset', ed.deskTool.sizePreset);
   _v('ed-desk-place-mode', ed.deskTool.placeMode);
   _v('ed-desk-block-pattern', ed.deskTool.pattern);
   _v('ed-desk-block-axis', ed.deskTool.axis);
@@ -443,16 +812,45 @@ function _layoutHasGeometry(doc) {
 
 function ensureLayoutArrays(doc) {
   if (!doc || typeof doc !== 'object') return doc;
+  doc.building_id = normalizeEntityId(doc.building_id, null);
+  doc.storey_id = normalizeEntityId(doc.storey_id, null);
+  doc.zone_id = normalizeEntityId(doc.zone_id, null);
   if (!Array.isArray(doc.walls)) doc.walls = [];
   if (!Array.isArray(doc.boundaries)) doc.boundaries = [];
   if (!Array.isArray(doc.partitions)) doc.partitions = [];
   if (!Array.isArray(doc.doors)) doc.doors = [];
   if (!Array.isArray(doc.desks)) doc.desks = [];
+  doc.components = normalizeLayoutComponents(doc.components);
+  const componentIds = new Set(doc.components.map((component) => component.id));
+  const findComponent = (id) => doc.components.find((component) => component.id === id);
   doc.walls = doc.walls.map(el => ({ ...el, locked: !!el?.locked }));
   doc.boundaries = doc.boundaries.map(el => ({ ...el, locked: !!el?.locked }));
   doc.partitions = doc.partitions.map(el => ({ ...el, locked: !!el?.locked }));
   doc.doors = doc.doors.map(el => ({ ...el, locked: !!el?.locked }));
-  doc.desks = doc.desks.map(d => ({ ...d, locked: !!d?.locked }));
+  doc.desks = doc.desks.map((d) => {
+    const src = d && typeof d === 'object' ? d : {};
+    const id = normalizeEntityId(src.id, uid());
+    const rawComponentId = safeComponentId(src.component_id || src.symbol_id);
+    const componentId = rawComponentId && componentIds.has(rawComponentId) ? rawComponentId : 'desk-short';
+    const component = findComponent(componentId);
+    const assetType = src.asset_type
+      ? normalizeAssetType(src.asset_type, componentId)
+      : (src.component_id ? (component?.asset_type || 'asset') : 'workplace');
+    return {
+      ...src,
+      id,
+      inventory_number: normalizeEntityId(src.inventory_number, null),
+      workplace_id: assetType === 'workplace' ? normalizeEntityId(src.workplace_id, id) : normalizeEntityId(src.workplace_id, null),
+      building_id: normalizeEntityId(src.building_id, doc.building_id),
+      storey_id: normalizeEntityId(src.storey_id, doc.storey_id),
+      zone_id: normalizeEntityId(src.zone_id, doc.zone_id),
+      component_id: componentId,
+      symbol_id: componentId,
+      asset_type: assetType,
+      bookable: assetType === 'workplace' ? src.bookable !== false : false,
+      locked: !!src.locked,
+    };
+  });
   return doc;
 }
 
@@ -1116,6 +1514,8 @@ function renderAll() {
   renderDesks();
   renderSelection();
   renderObjectList();
+  syncComponentPalette();
+  syncComponentPlaceControls();
   updateEditorKpis();
 }
 
@@ -1161,7 +1561,7 @@ function updateEditorKpis() {
   const disabledEl = $el('ed-kpi-disabled');
   if (!totalEl && !availableEl && !fixedEl && !disabledEl) return;
 
-  const desks = ld?.desks || [];
+  const desks = (ld?.desks || []).filter((d) => isWorkplaceObject(d));
   const total = desks.length;
   const available = desks.filter(d => d.status !== 'disabled' && d.status !== 'occupied' && d.bookable !== false && !d.fixed).length;
   const fixed = desks.filter(d => !!d.fixed).length;
@@ -1195,6 +1595,7 @@ function renderStructure() {
   function drawElements(arr, type) {
     const layer = layers[type];
     if (!layer) return;
+    if (!isInventoryVisible(type)) return;
     const defaultColor = STRUCT_COLORS[type];
 
     for (const el of arr) {
@@ -1295,6 +1696,178 @@ function renderStructure() {
   drawElements(ld.doors || [], 'door');
 }
 
+function safeSvgClassList(value) {
+  return String(value || '')
+    .split(/\s+/)
+    .map((part) => part.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, ''))
+    .filter(Boolean)
+    .slice(0, 10)
+    .join(' ');
+}
+
+function copySafeSvgNodeForCanvas(node) {
+  const tag = String(node?.localName || '').toLowerCase();
+  if (!SVG_RENDER_TAGS.has(tag)) return null;
+  const out = document.createElementNS(NS, tag);
+  Array.from(node.attributes || []).forEach((attr) => {
+    const name = String(attr.localName || attr.name || '').toLowerCase();
+    const value = String(attr.value || '').trim();
+    const lower = value.toLowerCase();
+    if (!SVG_RENDER_ATTRS.has(name)) return;
+    if (name.startsWith('on') || lower.includes('javascript:') || lower.includes('url(')) return;
+    if (/[\r\n\t]/.test(value)) return;
+    if ((name === 'href' || name === 'xlink:href') && !/^#[A-Za-z_][A-Za-z0-9_.:-]{0,119}$/.test(value)) return;
+    out.setAttribute(name === 'xlink:href' ? 'href' : name, name === 'class' ? safeSvgClassList(value) : value);
+  });
+  if (tag === 'text') out.textContent = String(node.textContent || '').slice(0, 300);
+  Array.from(node.children || []).forEach((child) => {
+    const cleanChild = copySafeSvgNodeForCanvas(child);
+    if (cleanChild) out.appendChild(cleanChild);
+  });
+  return out;
+}
+
+function appendCustomComponentVisual(g, component, desk) {
+  if (!component?.svg_markup || !isSafeSvgMarkup(component.svg_markup)) return false;
+  const parser = new DOMParser();
+  const parsed = parser.parseFromString(`<svg xmlns="${NS}">${component.svg_markup}</svg>`, 'image/svg+xml');
+  if (parsed.querySelector('parsererror')) return false;
+  const vb = Array.isArray(component.view_box) && component.view_box.length === 4 ? component.view_box : [0, 0, 100, 60];
+  const [vx, vy, vw, vh] = vb.map((n) => Number(n));
+  if (![vx, vy, vw, vh].every(Number.isFinite) || vw <= 0 || vh <= 0) return false;
+  const x = Number(desk.x || 0);
+  const y = Number(desk.y || 0);
+  const w = Math.max(1, Number(desk.w || 1));
+  const h = Math.max(1, Number(desk.h || 1));
+  const group = document.createElementNS(NS, 'g');
+  group.setAttribute('transform', `translate(${x} ${y}) scale(${w / vw} ${h / vh}) translate(${-vx} ${-vy})`);
+  Array.from(parsed.documentElement.children || []).forEach((child) => {
+    const clean = copySafeSvgNodeForCanvas(child);
+    if (clean) group.appendChild(clean);
+  });
+  if (!group.childNodes.length) return false;
+  g.appendChild(group);
+  return true;
+}
+
+function appendDeskAssetVisual(g, desk, fill, stroke, isSel, cursor, swBase) {
+  const component = componentForId(desk.component_id || desk.symbol_id, 'desk-short');
+  const componentId = component?.id || 'desk-short';
+  const outline = isSel ? '#3b82f6' : stroke;
+  const strokeWidth = String(isSel ? swBase * 2 : swBase);
+  const dash = isSel ? '5 2' : null;
+  const x = Number(desk.x || 0);
+  const y = Number(desk.y || 0);
+  const w = Math.max(1, Number(desk.w || 1));
+  const h = Math.max(1, Number(desk.h || 1));
+  const cx = x + w / 2;
+
+  const setCommon = (node, opts = {}) => {
+    node.setAttribute('stroke', opts.stroke || outline);
+    node.setAttribute('stroke-width', opts.strokeWidth || strokeWidth);
+    node.setAttribute('cursor', cursor);
+    if (dash) node.setAttribute('stroke-dasharray', dash);
+    return node;
+  };
+
+  const hit = document.createElementNS(NS, 'rect');
+  hit.setAttribute('x', x);
+  hit.setAttribute('y', y);
+  hit.setAttribute('width', w);
+  hit.setAttribute('height', h);
+  hit.setAttribute('fill', 'transparent');
+  hit.setAttribute('stroke', 'none');
+  hit.setAttribute('cursor', cursor);
+  g.appendChild(hit);
+
+  if (component?.source === 'custom' && appendCustomComponentVisual(g, component, desk)) return;
+
+  const drawDesk = (dx, dy, dw, dh, long = false) => {
+    const rect = setCommon(document.createElementNS(NS, 'rect'));
+    rect.setAttribute('x', dx);
+    rect.setAttribute('y', dy);
+    rect.setAttribute('width', dw);
+    rect.setAttribute('height', dh);
+    rect.setAttribute('rx', String(Math.max(1, dh * 0.08)));
+    rect.setAttribute('fill', fill);
+    g.appendChild(rect);
+    if (long) {
+      const divider = setCommon(document.createElementNS(NS, 'line'), { strokeWidth: String(Math.max(0.7, swBase)) });
+      divider.setAttribute('x1', dx + dw / 2);
+      divider.setAttribute('x2', dx + dw / 2);
+      divider.setAttribute('y1', dy + dh * 0.15);
+      divider.setAttribute('y2', dy + dh * 0.85);
+      divider.setAttribute('stroke-opacity', '0.65');
+      g.appendChild(divider);
+    }
+  };
+
+  const drawChair = (dx, dy, dw, dh) => {
+    const backH = Math.max(2, dh * 0.28);
+    const back = setCommon(document.createElementNS(NS, 'rect'));
+    back.setAttribute('x', dx + dw * 0.12);
+    back.setAttribute('y', dy + dh * 0.05);
+    back.setAttribute('width', dw * 0.76);
+    back.setAttribute('height', backH);
+    back.setAttribute('rx', String(Math.max(1, backH * 0.3)));
+    back.setAttribute('fill', fill);
+    g.appendChild(back);
+
+    const seat = setCommon(document.createElementNS(NS, 'rect'));
+    seat.setAttribute('x', dx + dw * 0.1);
+    seat.setAttribute('y', dy + backH);
+    seat.setAttribute('width', dw * 0.8);
+    seat.setAttribute('height', Math.max(1, (dh - backH) * 0.78));
+    seat.setAttribute('rx', String(Math.max(1, Math.min(dw, dh) * 0.14)));
+    seat.setAttribute('fill', fill);
+    g.appendChild(seat);
+  };
+
+  const drawMeeting = (dx, dy, dw, dh) => {
+    const table = setCommon(document.createElementNS(NS, 'rect'));
+    table.setAttribute('x', dx + dw * 0.08);
+    table.setAttribute('y', dy + dh * 0.16);
+    table.setAttribute('width', dw * 0.84);
+    table.setAttribute('height', dh * 0.68);
+    table.setAttribute('rx', String(Math.max(2, Math.min(dw, dh) * 0.2)));
+    table.setAttribute('fill', fill);
+    g.appendChild(table);
+    const chairR = Math.max(1.5, Math.min(dw, dh) * 0.06);
+    [[dx + dw * 0.2, dy + dh * 0.1], [dx + dw * 0.5, dy + dh * 0.08], [dx + dw * 0.8, dy + dh * 0.1], [dx + dw * 0.2, dy + dh * 0.9], [dx + dw * 0.5, dy + dh * 0.92], [dx + dw * 0.8, dy + dh * 0.9]].forEach(([px, py]) => {
+      const c = setCommon(document.createElementNS(NS, 'circle'), { strokeWidth: String(Math.max(0.6, swBase)) });
+      c.setAttribute('cx', px);
+      c.setAttribute('cy', py);
+      c.setAttribute('r', chairR);
+      c.setAttribute('fill', '#fff');
+      g.appendChild(c);
+    });
+  };
+
+  if (componentId === 'workplace-desk-chair') {
+    drawDesk(x, y, w, h * 0.56, false);
+    drawChair(x + w * 0.32, y + h * 0.62, w * 0.36, h * 0.34);
+    return;
+  }
+  if (componentId === 'chair' || componentId === 'conference-chair') {
+    drawChair(x, y, w, h);
+    return;
+  }
+  if (componentId === 'meeting-table') {
+    drawMeeting(x, y, w, h);
+    return;
+  }
+  if (componentId === 'conference-set') {
+    drawMeeting(x + w * 0.18, y + h * 0.22, w * 0.64, h * 0.56);
+    drawChair(x + w * 0.42, y, w * 0.16, h * 0.24);
+    drawChair(x + w * 0.42, y + h * 0.76, w * 0.16, h * 0.24);
+    drawChair(x, y + h * 0.38, w * 0.18, h * 0.24);
+    drawChair(x + w * 0.82, y + h * 0.38, w * 0.18, h * 0.24);
+    return;
+  }
+
+  drawDesk(x, y, w, h, componentId === 'desk-long');
+}
+
 function renderDesks() {
   const layer = _layer('desk');
   if (!layer || !ld) return;
@@ -1303,6 +1876,7 @@ function renderDesks() {
   const swBase = Math.max(0.5, ed.vb.w * 0.0012);
 
   for (const desk of ld.desks) {
+    if (!isInventoryVisible(inventoryTypeForDesk(desk))) continue;
     const isSel = isDeskSelected(desk.id);
     const isLocked = isDeskLocked(desk);
     const isFixed    = desk.fixed;
@@ -1318,39 +1892,38 @@ function renderDesks() {
 
     const g = document.createElementNS(NS, 'g');
     g.dataset.id = desk.id;
+    g.dataset.workplaceId = isWorkplaceObject(desk) ? (desk.workplace_id || desk.id) : '';
+    g.dataset.building = desk.building_id || ld.building_id || '';
+    g.dataset.storey = desk.storey_id || ld.storey_id || '';
+    g.dataset.zone = desk.zone_id || ld.zone_id || '';
+    g.dataset.componentId = normalizeLayoutSymbolId(desk.component_id || desk.symbol_id);
+    g.dataset.symbol = g.dataset.componentId;
+    g.dataset.assetType = normalizeAssetType(desk.asset_type, g.dataset.componentId);
+    g.dataset.inventoryNumber = desk.inventory_number || '';
     const cx = desk.x + desk.w / 2, cy = desk.y + desk.h / 2;
+    const cursor = ed.mode === 'select'
+      ? (isLocked ? 'not-allowed' : 'pointer')
+      : 'crosshair';
 
     if (desk.r) {
       g.setAttribute('transform', `rotate(${desk.r} ${cx} ${cy})`);
     }
 
-    const rect = document.createElementNS(NS, 'rect');
-    rect.setAttribute('x', desk.x); rect.setAttribute('y', desk.y);
-    rect.setAttribute('width', desk.w); rect.setAttribute('height', desk.h);
-    rect.setAttribute('rx', String(Math.max(1, desk.h * 0.08)));
-    rect.setAttribute('fill', fill);
-    rect.setAttribute('stroke', isSel ? '#3b82f6' : stroke);
-    rect.setAttribute('stroke-width', String(isSel ? swBase * 2 : swBase));
-    if (isSel) rect.setAttribute('stroke-dasharray', '5 2');
-    if (ed.mode === 'select') {
-      rect.setAttribute('cursor', isLocked ? 'not-allowed' : 'pointer');
-    } else {
-      rect.setAttribute('cursor', 'crosshair');
-    }
-    g.appendChild(rect);
+    appendDeskAssetVisual(g, desk, fill, stroke, isSel, cursor, swBase);
 
-    // Label
-    const txt = document.createElementNS(NS, 'text');
-    txt.setAttribute('x', String(cx)); txt.setAttribute('y', String(cy));
-    txt.setAttribute('text-anchor', 'middle');
-    txt.setAttribute('dominant-baseline', 'middle');
-    txt.setAttribute('font-size', String(Math.max(4, Math.min(desk.h * 0.38, desk.w * 0.18))));
-    txt.setAttribute('fill', stroke);
-    txt.setAttribute('pointer-events', 'none');
-    txt.setAttribute('font-family', 'system-ui, sans-serif');
-    txt.setAttribute('font-weight', '600');
-    txt.textContent = desk.label;
-    g.appendChild(txt);
+    if (isWorkplaceObject(desk)) {
+      const txt = document.createElementNS(NS, 'text');
+      txt.setAttribute('x', String(cx)); txt.setAttribute('y', String(cy));
+      txt.setAttribute('text-anchor', 'middle');
+      txt.setAttribute('dominant-baseline', 'middle');
+      txt.setAttribute('font-size', String(Math.max(4, Math.min(desk.h * 0.22, desk.w * 0.14))));
+      txt.setAttribute('fill', stroke);
+      txt.setAttribute('pointer-events', 'none');
+      txt.setAttribute('font-family', 'system-ui, sans-serif');
+      txt.setAttribute('font-weight', '600');
+      txt.textContent = desk.label;
+      g.appendChild(txt);
+    }
 
     // Interaction — drag to move in select mode
     g.addEventListener('pointerdown', ev => onDeskPointerDown(ev, desk));
@@ -1368,7 +1941,7 @@ function renderSelection() {
 
   if (ed.selType === 'desk' && ed.selId) {
     const desk = ld.desks.find(d => d.id === ed.selId);
-    if (desk) {
+    if (desk && isInventoryVisible(inventoryTypeForDesk(desk))) {
       const cx = desk.x + desk.w / 2;
       const cy = desk.y + desk.h / 2;
       const ang = _degToRad(desk.r || 0);
@@ -1675,57 +2248,70 @@ function updateStatusBar() {
 }
 
 function modeLabel(m) {
-  return { select:'Выбор', pan:'Рука', wall:'Стена', boundary:'Граница', partition:'Перегородка', door:'Дверь', desk:'Стол' }[m] || m;
+  return { select:'Выбор', pan:'Рука', wall:'Стена', boundary:'Граница', partition:'Перегородка', door:'Дверь', desk:'Место', component:'Компонент' }[m] || m;
 }
 
 /* ── Object list ────────────────────────────────────────────────────────────── */
 function renderObjectList() {
   const list = $el('ed-obj-list');
   if (!list) return;
+  syncInventoryFilters();
   if (!ld) { list.innerHTML = '<p style="color:#475569;font-size:12px;padding:8px 10px">Загрузите этаж</p>'; return; }
 
   const q = ($el('ed-obj-search')?.value || '').toLowerCase();
 
   function makeSection(title, items, type, colorFn) {
-    if (!items.length) return '';
-    const filtered = items.filter(it =>
-      !q || (it.label || it.pts?.length?.toString() || '').toLowerCase().includes(q)
-    );
+    if (!isInventoryVisible(type) || !items.length) return '';
+    const filtered = items.filter(it => {
+      const haystack = `${it.label || ''} ${it.inventory_number || ''} ${it.pts?.length?.toString() || ''}`.toLowerCase();
+      return !q || haystack.includes(q);
+    });
     if (!filtered.length) return '';
     let html = `<div class="ed-obj-section-header">${title} (${filtered.length})</div>`;
     for (const it of filtered) {
       let active = false;
-      if (type === 'desk') active = isDeskSelected(it.id);
+      if (ASSET_TYPES.has(type)) active = isDeskSelected(it.id);
       else active = isStructSelected(type, it.id);
       const lbl = it.label || `${title.slice(0,-1)} (${it.pts?.length || '?'} pts)`;
+      const inventory = ASSET_TYPES.has(type) && it.inventory_number ? ` · ${it.inventory_number}` : '';
+      const lblEsc = escapeHtml(lbl);
+      const inventoryEsc = escapeHtml(inventory);
+      const itemIdEsc = escapeHtml(it.id);
+      const itemTypeEsc = escapeHtml(type);
       const color = colorFn(it);
       const lockBadge = it.locked ? '<span class="ed-obj-lock" title="Закреплён">L</span>' : '';
-      html += `<div class="ed-obj-item${active?' active':''}" data-id="${it.id}" data-type="${type}">
+      html += `<div class="ed-obj-item${active?' active':''}" data-id="${itemIdEsc}" data-type="${itemTypeEsc}">
         <span class="ed-obj-dot" style="background:${color}"></span>
-        <span class="ed-obj-label" title="${lbl}">${lbl}</span>
+        <span class="ed-obj-label" title="${lblEsc}${inventoryEsc}">${lblEsc}${inventoryEsc}</span>
         ${lockBadge}
       </div>`;
     }
     return html;
   }
 
+  const desksByType = (type) => (ld.desks || []).filter((item) => inventoryTypeForDesk(item) === type);
   list.innerHTML =
-    makeSection('Столы',       ld.desks,      'desk',      d => d.fixed ? '#d97706' : '#2563eb') +
-    makeSection('Стены',       ld.walls,      'wall',      () => STRUCT_COLORS.wall) +
-    makeSection('Границы',     ld.boundaries, 'boundary',  b => normalizeHexColor(b.color, DEFAULT_ZONE_COLOR)) +
-    makeSection('Перегородки', ld.partitions, 'partition', () => STRUCT_COLORS.partition) +
-    makeSection('Двери',       ld.doors || [], 'door',     () => STRUCT_COLORS.door);
+    makeSection('Рабочие места', desksByType('workplace'), 'workplace', d => d.fixed ? '#d97706' : '#2563eb') +
+    makeSection('Столы',         desksByType('desk'),      'desk',      () => '#8b5e34') +
+    makeSection('Стулья',        desksByType('chair'),     'chair',     () => '#64748b') +
+    makeSection('Переговорные',  desksByType('meeting_table'), 'meeting_table', () => '#0f766e') +
+    makeSection('Конф. сеты',    desksByType('conference_set'), 'conference_set', () => '#7c3aed') +
+    makeSection('Assets',        desksByType('asset'),     'asset',     () => '#64748b') +
+    makeSection('Стены',         ld.walls,      'wall',      () => STRUCT_COLORS.wall) +
+    makeSection('Границы',       ld.boundaries, 'boundary',  b => normalizeHexColor(b.color, DEFAULT_ZONE_COLOR)) +
+    makeSection('Перегородки',   ld.partitions, 'partition', () => STRUCT_COLORS.partition) +
+    makeSection('Двери',         ld.doors || [], 'door',     () => STRUCT_COLORS.door);
 
   list.querySelectorAll('.ed-obj-item').forEach(item => {
     item.addEventListener('click', (ev) => {
       const type = item.dataset.type;
       const id = item.dataset.id;
       if (ev.shiftKey) {
-        if (type === 'desk') toggleDeskMultiSelection(id, { keepStruct: true });
+        if (ASSET_TYPES.has(type)) toggleDeskMultiSelection(id, { keepStruct: true });
         else if (isStructType(type)) toggleStructMultiSelection(type, id, { keepDesk: true });
         return;
       }
-      selectObj(type, id);
+      selectObj(ASSET_TYPES.has(type) ? 'desk' : type, id);
     });
   });
 }
@@ -1779,10 +2365,19 @@ function showPropsFor(type, id) {
     const d = ld.desks.find(x => x.id === id);
     if (!d) return;
     _v('ep-label', d.label);
+    _v('ep-inventory-number', d.inventory_number || '');
     _v('ep-name',  d.name || '');
     _v('ep-team',  d.team || '');
     _v('ep-dept',  d.dept || '');
-    _vc('ep-bookable', d.bookable !== false);
+    const componentId = normalizeLayoutSymbolId(d.component_id || d.symbol_id);
+    syncComponentSelectElement($el('ep-symbol'), componentId);
+    _v('ep-symbol', componentId);
+    _v('ep-asset-type', normalizeAssetType(d.asset_type, componentId));
+    _v('ep-workplace-id', isWorkplaceObject(d) ? (d.workplace_id || d.id) : (d.workplace_id || ''));
+    _v('ep-building-id', d.building_id || ld.building_id || '');
+    _v('ep-storey-id', d.storey_id || ld.storey_id || '');
+    _v('ep-zone-id', d.zone_id || ld.zone_id || '');
+    _vc('ep-bookable', isWorkplaceObject(d) && d.bookable !== false);
     _vc('ep-fixed',    !!d.fixed);
     _vc('ep-locked',   !!d.locked);
     _v('ep-assigned',  d.assigned_to || '');
@@ -1792,6 +2387,8 @@ function showPropsFor(type, id) {
     _v('ep-w', Math.round(d.w));
     _v('ep-h', Math.round(d.h));
     _v('ep-r', Math.round(d.r || 0));
+    const standardSizeBtn = $el('ep-standard-size');
+    if (standardSizeBtn) standardSizeBtn.disabled = isDeskLocked(d) || !isWorkplaceObject(d);
   }
 
   if (['wall','boundary','partition','door'].includes(type) && id && ld) {
@@ -1859,15 +2456,20 @@ function selectedDeskRecords(opts = {}) {
 function syncDeskBatchPanel() {
   const countEl = $el('ep-multi-desk-count');
   const applyBtn = $el('ep-batch-apply');
+  const standardSizeBtn = $el('ep-batch-standard-size');
+  const groupBtn = $el('ep-batch-group-component');
   const selected = selectedDeskRecords({ includePrimary: false, skipLocked: false });
   const locked = selected.filter((d) => isDeskLocked(d)).length;
   const editable = selected.length - locked;
+  const editableWorkplaces = selected.filter((d) => !isDeskLocked(d) && isWorkplaceObject(d)).length;
   if (countEl) {
     countEl.textContent = locked > 0
-      ? `Выбрано мест: ${selected.length} (редактируемо: ${editable}, закреплено: ${locked})`
-      : `Выбрано мест: ${selected.length}`;
+      ? `Выбрано объектов: ${selected.length} (редактируемо: ${editable}, закреплено: ${locked})`
+      : `Выбрано объектов: ${selected.length}`;
   }
   if (applyBtn) applyBtn.disabled = editable <= 0;
+  if (standardSizeBtn) standardSizeBtn.disabled = editableWorkplaces <= 0;
+  if (groupBtn) groupBtn.disabled = editable < 2;
 }
 
 function applyDeskBatchProps() {
@@ -1875,7 +2477,7 @@ function applyDeskBatchProps() {
   const targets = selectedDeskRecords({ includePrimary: false, skipLocked: true });
   const lockedSkipped = selectedDeskRecords({ includePrimary: false, skipLocked: false }).length - targets.length;
   if (!targets.length) {
-    edToast('Выбранные места закреплены и недоступны для редактирования', 'info');
+    edToast('Выбранные объекты закреплены и недоступны для редактирования', 'info');
     return;
   }
 
@@ -1919,10 +2521,225 @@ function applyDeskBatchProps() {
   syncDeskBatchPanel();
 
   if (lockedSkipped > 0) {
-    edToast(`Обновлено мест: ${targets.length}. Закреплено и пропущено: ${lockedSkipped}`, 'info');
+    edToast(`Обновлено объектов: ${targets.length}. Закреплено и пропущено: ${lockedSkipped}`, 'info');
   } else {
-    edToast(`Обновлено мест: ${targets.length}`, 'success');
+    edToast(`Обновлено объектов: ${targets.length}`, 'success');
   }
+}
+
+function resizeWorkplaceToStandardSize(d) {
+  if (!d || isDeskLocked(d) || !isWorkplaceObject(d)) return false;
+  const size = deskSizeForPreset('normal');
+  const currentW = Math.max(1, Number(d.w) || size.w);
+  const currentH = Math.max(1, Number(d.h) || size.h);
+  const cx = (Number(d.x) || 0) + currentW / 2;
+  const cy = (Number(d.y) || 0) + currentH / 2;
+  d.w = size.w;
+  d.h = size.h;
+  d.x = cx - size.w / 2;
+  d.y = cy - size.h / 2;
+  return true;
+}
+
+function applyStandardSizeToSelectedDesk() {
+  if (ed.selType !== 'desk' || !ed.selId || !ld) return;
+  const d = ld.desks.find((x) => x.id === ed.selId);
+  if (!d) return;
+  if (isDeskLocked(d)) {
+    edToast('Объект закреплён: изменение размера недоступно', 'info');
+    return;
+  }
+  if (!isWorkplaceObject(d)) {
+    edToast('Стандартный размер применяется только к объектам типа "Место"', 'info');
+    return;
+  }
+  if (!resizeWorkplaceToStandardSize(d)) return;
+
+  markDirty();
+  renderDesks();
+  renderSelection();
+  renderObjectList();
+  showPropsFor('desk', d.id);
+  edToast('Размер места приведён к стандартному', 'success');
+}
+
+function applyStandardSizeToSelectedDesks() {
+  if (!ld || !hasMultiDeskSelection()) return;
+  const selected = selectedDeskRecords({ includePrimary: false, skipLocked: false });
+  const targets = selected.filter((d) => !isDeskLocked(d) && isWorkplaceObject(d));
+  const skipped = selected.length - targets.length;
+  if (!targets.length) {
+    edToast('Нет редактируемых мест для изменения размера', 'info');
+    return;
+  }
+
+  for (const d of targets) resizeWorkplaceToStandardSize(d);
+
+  markDirty();
+  renderDesks();
+  renderSelection();
+  renderObjectList();
+  syncDeskBatchPanel();
+
+  if (skipped > 0) {
+    edToast(`Стандартный размер применён: ${targets.length}. Пропущено: ${skipped}`, 'info');
+  } else {
+    edToast(`Стандартный размер применён: ${targets.length}`, 'success');
+  }
+}
+
+function componentMarkupForComposition(component) {
+  if (!component) return '';
+  if (component.source === 'custom' && component.svg_markup && isSafeSvgMarkup(component.svg_markup)) {
+    return component.svg_markup;
+  }
+  if (typeof builtinComponentMarkup === 'function') {
+    const markup = builtinComponentMarkup(component);
+    return isSafeSvgMarkup(markup) ? markup : '';
+  }
+  const vb = Array.isArray(component.view_box) ? component.view_box : [0, 0, component.default_w || 100, component.default_h || 60];
+  const w = Math.max(1, Number(vb[2] || component.default_w || 100));
+  const h = Math.max(1, Number(vb[3] || component.default_h || 60));
+  return `<rect x="0" y="0" width="${svgNum(w)}" height="${svgNum(h)}" rx="2" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>`;
+}
+
+function composeSelectedDesksMarkup(desks, bounds) {
+  const parts = [];
+  for (const desk of desks) {
+    const component = componentForId(desk.component_id || desk.symbol_id, 'desk-short');
+    const markup = componentMarkupForComposition(component);
+    if (!markup) return null;
+    const vb = Array.isArray(component.view_box) && component.view_box.length === 4 ? component.view_box : [0, 0, 100, 60];
+    const vx = Number(vb[0]) || 0;
+    const vy = Number(vb[1]) || 0;
+    const vw = Math.max(1, Number(vb[2]) || 100);
+    const vh = Math.max(1, Number(vb[3]) || 60);
+    const localX = Number(desk.x || 0) - bounds.x;
+    const localY = Number(desk.y || 0) - bounds.y;
+    const w = Math.max(1, Number(desk.w || 1));
+    const h = Math.max(1, Number(desk.h || 1));
+    const assetType = normalizeAssetType(desk.asset_type, component.id);
+    const transforms = [
+      `translate(${svgNum(localX)} ${svgNum(localY)})`,
+      Math.abs(Number(desk.r || 0)) > 1e-6 ? `rotate(${svgNum(desk.r)} ${svgNum(w / 2)} ${svgNum(h / 2)})` : '',
+      `scale(${svgNum(w / vw)} ${svgNum(h / vh)})`,
+      `translate(${svgNum(-vx)} ${svgNum(-vy)})`,
+    ].filter(Boolean).join(' ');
+    parts.push(`<g class="component-child asset-${escapeHtml(assetType.replace(/_/g, '-'))}" transform="${escapeHtml(transforms)}">\n${markup}\n</g>`);
+  }
+  return parts.join('\n');
+}
+
+async function saveCompositeComponent(payload) {
+  const res = await fetch(API + '/components', {
+    method: 'POST',
+    headers: { ...ah(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || res.statusText);
+  }
+}
+
+async function groupSelectedDesksIntoComponent() {
+  if (!ld || !hasMultiDeskSelection()) return;
+  const selected = selectedDeskRecords({ includePrimary: false, skipLocked: false });
+  const targets = selected.filter((d) => !isDeskLocked(d));
+  const lockedSkipped = selected.length - targets.length;
+  if (targets.length < 2) {
+    edToast('Для объединения выберите минимум два незакрепленных объекта', 'info');
+    return;
+  }
+
+  const bounds = deskSelectionBounds(targets.map((d) => d.id));
+  if (!bounds) return;
+  const defaultName = `Группа ${targets.length} объектов`;
+  const label = String(prompt('Название нового общего компонента', defaultName) || '').trim();
+  if (!label) return;
+  const defaultId = typeof componentEditorCandidateId === 'function'
+    ? componentEditorCandidateId(label)
+    : componentCandidateId(label);
+  const id = safeComponentId(prompt('Component ID нового компонента', defaultId) || '');
+  if (!id) {
+    edToast('Component ID должен начинаться с буквы/_ и содержать только A-Z, 0-9, _, ., :, -', 'error');
+    return;
+  }
+  if (componentForId(id, null)?.id === id) {
+    edToast('Компонент с таким ID уже существует', 'error');
+    return;
+  }
+  const defaultAssetType = targets.some((d) => isWorkplaceObject(d)) && targets.length === 1 ? 'workplace' : 'asset';
+  const rawType = String(prompt('Тип общего объекта: workplace, desk, chair, meeting_table, conference_set, asset', defaultAssetType) || defaultAssetType).trim();
+  const assetType = ASSET_TYPES.has(rawType) ? rawType : 'asset';
+  const svgMarkup = composeSelectedDesksMarkup(targets, bounds);
+  if (!svgMarkup || !isSafeSvgMarkup(svgMarkup)) {
+    edToast('Не удалось собрать безопасную SVG-разметку из выбранных объектов', 'error');
+    return;
+  }
+
+  const payload = {
+    id,
+    label,
+    asset_type: assetType,
+    view_box: [0, 0, Math.max(1, bounds.w), Math.max(1, bounds.h)],
+    default_w: Math.max(1, bounds.w),
+    default_h: Math.max(1, bounds.h),
+    svg_markup: svgMarkup,
+  };
+
+  try {
+    await saveCompositeComponent(payload);
+    if (typeof loadGlobalComponents === 'function') await loadGlobalComponents();
+  } catch (e) {
+    edToast(`Ошибка создания компонента: ${e.message}`, 'error');
+    return;
+  }
+
+  const savedComponent = typeof savedComponentFromPayload === 'function'
+    ? savedComponentFromPayload(payload)
+    : normalizeComponentRecord({ ...payload, source: 'custom' });
+  ensureLayoutComponent(savedComponent);
+
+  const newId = uid();
+  const first = targets[0] || {};
+  const grouped = {
+    id: newId,
+    label,
+    inventory_number: null,
+    name: null,
+    team: null,
+    dept: null,
+    building_id: first.building_id || ld.building_id || null,
+    storey_id: first.storey_id || ld.storey_id || null,
+    zone_id: first.zone_id || ld.zone_id || null,
+    workplace_id: assetType === 'workplace' ? newId : null,
+    component_id: id,
+    symbol_id: id,
+    asset_type: assetType,
+    bookable: assetType === 'workplace',
+    fixed: false,
+    assigned_to: null,
+    status: 'available',
+    x: bounds.x,
+    y: bounds.y,
+    w: bounds.w,
+    h: bounds.h,
+    r: 0,
+    locked: false,
+  };
+
+  const targetIds = new Set(targets.map((d) => d.id));
+  ld.desks = [...(ld.desks || []).filter((d) => !targetIds.has(d.id)), grouped];
+  ed.multiDeskIds = [];
+  ed.multiStructKeys = [];
+  ed.selType = 'desk';
+  ed.selId = newId;
+  markDirty();
+  renderAll();
+  showPropsFor('desk', newId);
+  if (typeof selectComponentForPlacement === 'function') selectComponentForPlacement(id, { toast: false });
+  edToast(`Объединено объектов: ${targets.length}${lockedSkipped ? `. Закреплено и пропущено: ${lockedSkipped}` : ''}`, 'success');
 }
 
 function rotateDeskSelectionBy(deltaDeg) {
@@ -1990,13 +2807,18 @@ function toggleStructLabelAngleField() {
 }
 
 function initPropsListeners() {
-  const deskTextFields = ['ep-label','ep-name','ep-team','ep-dept','ep-assigned'];
+  const deskTextFields = ['ep-label','ep-inventory-number','ep-name','ep-team','ep-dept','ep-assigned','ep-workplace-id','ep-building-id','ep-storey-id','ep-zone-id'];
   deskTextFields.forEach(fid => {
     $el(fid)?.addEventListener('input', () => applyDeskProps());
     $el(fid)?.addEventListener('change', () => applyDeskProps());
   });
-  ['ep-status','ep-x','ep-y','ep-w','ep-h','ep-r'].forEach(fid => {
+  ['ep-status','ep-asset-type','ep-x','ep-y','ep-w','ep-h','ep-r'].forEach(fid => {
     $el(fid)?.addEventListener('change', () => applyDeskProps());
+  });
+  $el('ep-symbol')?.addEventListener('change', () => {
+    const symbolId = normalizeLayoutSymbolId($el('ep-symbol')?.value);
+    _v('ep-asset-type', assetTypeForSymbol(symbolId));
+    applyDeskProps();
   });
   ['ep-bookable','ep-fixed','ep-locked'].forEach(fid => {
     $el(fid)?.addEventListener('change', () => applyDeskProps());
@@ -2016,6 +2838,16 @@ function initPropsListeners() {
     renderObjectList();
   });
   $el('ep-batch-apply')?.addEventListener('click', () => applyDeskBatchProps());
+  $el('ep-standard-size')?.addEventListener('click', () => applyStandardSizeToSelectedDesk());
+  $el('ep-edit-component-btn')?.addEventListener('click', () => {
+    const componentId = $el('ep-symbol')?.value;
+    if (!componentId) return;
+    switchAdminTab('components');
+    if (typeof loadComponentIntoEditor === 'function') loadComponentIntoEditor(componentId);
+    if (typeof selectComponentForPlacement === 'function') selectComponentForPlacement(componentId, { toast: false });
+  });
+  $el('ep-batch-standard-size')?.addEventListener('click', () => applyStandardSizeToSelectedDesks());
+  $el('ep-batch-group-component')?.addEventListener('click', () => groupSelectedDesksIntoComponent());
 
   $el('ep-desk-del')?.addEventListener('click', () => {
     if (!ed.selId || ed.selType !== 'desk') return;
@@ -2051,10 +2883,22 @@ function applyDeskProps() {
   const d = ld.desks.find(x => x.id === ed.selId);
   if (!d) return;
   d.label       = $el('ep-label')?.value || d.label;
+  d.inventory_number = normalizeEntityId($el('ep-inventory-number')?.value, null);
   d.name        = $el('ep-name')?.value || null;
   d.team        = $el('ep-team')?.value || null;
   d.dept        = $el('ep-dept')?.value || null;
-  d.bookable    = !!$el('ep-bookable')?.checked;
+  const componentId = normalizeLayoutSymbolId($el('ep-symbol')?.value || d.component_id || d.symbol_id);
+  ensureLayoutComponent(componentForId(componentId, 'desk-short'));
+  d.component_id = componentId;
+  d.symbol_id = componentId;
+  d.asset_type  = normalizeAssetType($el('ep-asset-type')?.value, componentId);
+  d.workplace_id = d.asset_type === 'workplace'
+    ? normalizeEntityId($el('ep-workplace-id')?.value, d.id)
+    : normalizeEntityId($el('ep-workplace-id')?.value, null);
+  d.building_id = normalizeEntityId($el('ep-building-id')?.value, null);
+  d.storey_id   = normalizeEntityId($el('ep-storey-id')?.value, null);
+  d.zone_id     = normalizeEntityId($el('ep-zone-id')?.value, null);
+  d.bookable    = d.asset_type === 'workplace' ? !!$el('ep-bookable')?.checked : false;
   d.fixed       = !!$el('ep-fixed')?.checked;
   d.locked      = !!$el('ep-locked')?.checked;
   d.assigned_to = $el('ep-assigned')?.value || null;
@@ -2602,7 +3446,13 @@ function onSvgPointerDown(e) {
 
   if (ed.mode === 'desk') {
     e.preventDefault();
-    placeDeskAt(pt);
+    placeDeskAt(pt, { componentId: 'workplace-desk-chair', tool: 'desk' });
+    return;
+  }
+
+  if (ed.mode === 'component') {
+    e.preventDefault();
+    placeDeskAt(pt, { componentId: ed.componentTool?.componentId || 'chair', tool: 'component' });
     return;
   }
 
@@ -3161,9 +4011,11 @@ function commitDeskBlockPreview() {
   }
 
   const used = collectDeskNumberSet();
+  const component = componentForId('workplace-desk-chair', 'workplace-desk-chair');
   const inserted = preview.desks.map(r => makeDeskRecord(
     { x: r.x, y: r.y, w: r.w, h: r.h },
-    takeNextDeskLabel(used),
+    takeNextObjectLabel(used, component),
+    { componentId: component.id },
   ));
   ld.desks.push(...inserted);
   markDirty();
@@ -3179,17 +4031,22 @@ function commitDeskBlockPreview() {
   return true;
 }
 
-function placeDeskAt(pt) {
+function placeDeskAt(pt, opts = {}) {
   if (!ld) return;
   if (ld.desks.length >= MAX_LAYOUT_DESKS) {
     edToast(`Достигнут лимит ${MAX_LAYOUT_DESKS} мест`, 'error');
     return;
   }
-  const { w, h } = defaultDeskSize();
+  const tool = opts.tool || (ed.mode === 'component' ? 'component' : 'desk');
+  const fallback = tool === 'component' ? 'chair' : 'workplace-desk-chair';
+  const component = componentForId(opts.componentId || (tool === 'component' ? ed.componentTool?.componentId : 'workplace-desk-chair'), fallback);
+  if (tool === 'component') ensureLayoutComponent(component);
+  const { w, h } = defaultDeskSize({ componentId: component.id, tool });
   const used = collectDeskNumberSet();
   const desk = makeDeskRecord(
     { x: snapV(pt.x - w / 2), y: snapV(pt.y - h / 2), w, h },
-    takeNextDeskLabel(used),
+    takeNextObjectLabel(used, component),
+    { componentId: component.id },
   );
   ld.desks.push(desk);
   markDirty();
@@ -3231,6 +4088,9 @@ function setMode(mode) {
   if (ed.bgAdjust.active) {
     setBackgroundAdjustMode(false);
   }
+  if (mode === 'desk') {
+    ed.deskTool.componentId = 'workplace-desk-chair';
+  }
   ed.mode = mode;
 
   document.querySelectorAll('.ed-mode-btn').forEach(btn => {
@@ -3243,6 +4103,7 @@ function setMode(mode) {
     wrap.classList.add('mode-' + mode);
   }
   syncDeskBulkControls();
+  syncComponentPlaceControls();
   updateStatusBar();
   renderDrawing();
 }
@@ -3268,8 +4129,10 @@ async function edLoadFloor(floorId) {
   if (!floorId) {
     ld = null;
     ed = resetEd();
+    syncFloorSelects();
     renderAll();
     syncDeskBulkControls();
+    syncComponentPlaceControls();
     updateStatusBar();
     updateEditorUI();
     updateLockUI();
@@ -3278,12 +4141,13 @@ async function edLoadFloor(floorId) {
 
   cancelDeskBlockPreview();
   setBackgroundAdjustMode(false);
-  ed.floorId = floorId;
-  try {
+    ed.floorId = floorId;
+    syncFloorSelects();
+    try {
     const resp = await fetch(`${API}/floors/${floorId}/layout`, { headers: ah() });
     if (resp.status === 404) {
       // No layout yet — create empty
-      ld = { v: 2, vb: [0,0,1000,1000], bg_url: null, bg_transform: null, walls:[], boundaries:[], partitions:[], doors:[], desks:[] };
+      ld = ensureLayoutArrays({ v: 2, vb: [0,0,1000,1000], bg_url: null, bg_transform: null, walls:[], boundaries:[], partitions:[], doors:[], desks:[] });
       ed.status  = null;
       ed.version = 0;
     } else if (!resp.ok) {
@@ -3506,6 +4370,59 @@ async function edPublish() {
       );
     }
   } catch (ex) { edToast('Ошибка: ' + ex.message, 'error'); }
+}
+
+async function edDownloadSemanticSvg() {
+  return edDownloadPublishedArtifact({
+    path: 'published.svg',
+    ext: 'svg',
+    type: 'image/svg+xml;charset=utf-8',
+    label: 'XML/SVG',
+  });
+}
+
+async function edDownloadSemanticHtml() {
+  return edDownloadPublishedArtifact({
+    path: 'published.html',
+    ext: 'html',
+    type: 'text/html;charset=utf-8',
+    label: 'HTML',
+  });
+}
+
+async function edDownloadPublishedArtifact(opts) {
+  if (!ed.floorId) {
+    edToast('Выберите этаж', 'error');
+    return;
+  }
+  const { path, ext, type, label } = opts;
+  try {
+    const resp = await fetch(`${API}/floors/${ed.floorId}/layout/${path}`, { headers: ah() });
+    if (!resp.ok) {
+      const b = await resp.json().catch(() => ({}));
+      if (resp.status === 404) {
+        edToast(`Опубликованного ${label} пока нет. Сначала нажмите "Опубликовать".`, 'info');
+      } else {
+        edToast('Ошибка скачивания: ' + (b.detail || resp.status), 'error');
+      }
+      return;
+    }
+
+    const text = await resp.text();
+    const blob = new Blob([text], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    a.href = url;
+    a.download = `deskbook-floor-${ed.floorId}-semantic-${stamp}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    edToast(`${label} скачан`, 'success');
+  } catch (ex) {
+    edToast('Ошибка: ' + ex.message, 'error');
+  }
 }
 
 async function edDiscard() {
@@ -3967,6 +4884,465 @@ function bindImportListEvents() {
   itemsEl._importEventsBound = true;
 }
 
+function svgLocalName(node) {
+  return String(node?.localName || node?.tagName || '').split(':').pop().toLowerCase();
+}
+
+function parseSvgNumberList(value) {
+  return String(value || '')
+    .match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi)
+    ?.map((n) => Number(n))
+    .filter(Number.isFinite) || [];
+}
+
+function parseSvgViewBox(value, fallback = [0, 0, 1000, 1000]) {
+  const nums = parseSvgNumberList(value);
+  if (nums.length >= 4 && nums[2] > 0 && nums[3] > 0) return nums.slice(0, 4);
+  return fallback.slice();
+}
+
+function attrNum(node, name, fallback = 0) {
+  const value = Number(node?.getAttribute?.(name));
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function getLocalHrefId(node) {
+  const raw = String(node?.getAttribute?.('href') || node?.getAttribute?.('xlink:href') || '').trim();
+  if (!/^#[A-Za-z_][A-Za-z0-9_.:-]{0,119}$/.test(raw)) return null;
+  return raw.slice(1);
+}
+
+function extractSvgSourceFromText(text) {
+  const raw = String(text || '');
+  if (!raw.trim()) return null;
+  const parser = new DOMParser();
+  let doc = parser.parseFromString(raw, 'text/html');
+  let svg = doc.querySelector('svg');
+  if (!svg && /^\s*<svg[\s>]/i.test(raw)) {
+    doc = parser.parseFromString(raw, 'image/svg+xml');
+    if (!doc.querySelector('parsererror')) svg = doc.documentElement;
+  }
+  if (!svg || svgLocalName(svg) !== 'svg') return null;
+  const serializer = new XMLSerializer();
+  return { svg, svgText: serializer.serializeToString(svg) };
+}
+
+function inferComponentAssetType(id, fallback = 'asset') {
+  const raw = String(id || '').toLowerCase();
+  if (raw.includes('meeting') || raw.includes('conference')) return raw.includes('chair') ? 'chair' : 'meeting_table';
+  if (raw.includes('chair') || raw.includes('seat')) return 'chair';
+  if (raw.includes('desk') || raw.includes('table')) return 'desk';
+  if (raw.includes('workstation') || raw.includes('workplace') || raw.includes('furniture') || raw.includes('room')) return 'workplace';
+  return fallback;
+}
+
+function copyImportSafeAttrs(src, out, opts = {}) {
+  Array.from(src?.attributes || []).forEach((attr) => {
+    const name = String(attr.localName || attr.name || '').toLowerCase();
+    const value = String(attr.value || '').trim();
+    const lower = value.toLowerCase();
+    if (!SVG_RENDER_ATTRS.has(name)) return;
+    if (name.startsWith('on') || lower.includes('javascript:') || lower.includes('url(')) return;
+    if (/[\r\n\t]/.test(value)) return;
+    if ((name === 'href' || name === 'xlink:href') && !/^#[A-Za-z_][A-Za-z0-9_.:-]{0,119}$/.test(value)) return;
+    if (name === 'id' && opts.dropId) return;
+    out.setAttribute(name === 'xlink:href' ? 'href' : name, name === 'class' ? safeSvgClassList(value) : value);
+  });
+}
+
+function cloneImportSvgNode(node, symbolMap, depth = 0) {
+  const tag = svgLocalName(node);
+  if (!SVG_RENDER_TAGS.has(tag)) return null;
+
+  if (tag === 'use') {
+    const refId = getLocalHrefId(node);
+    const target = refId ? symbolMap.get(refId) : null;
+    if (target && depth < 8) {
+      const targetVb = parseSvgViewBox(target.getAttribute('viewBox'), [0, 0, attrNum(node, 'width', 100), attrNum(node, 'height', 60)]);
+      const [vx, vy, vw, vh] = targetVb;
+      const x = attrNum(node, 'x', 0);
+      const y = attrNum(node, 'y', 0);
+      const w = Math.max(1, attrNum(node, 'width', vw));
+      const h = Math.max(1, attrNum(node, 'height', vh));
+      const group = document.createElementNS(NS, 'g');
+      copyImportSafeAttrs(node, group, { dropId: true });
+      group.removeAttribute('href');
+      const transform = [
+        node.getAttribute('transform') || '',
+        `translate(${x} ${y}) scale(${w / vw} ${h / vh}) translate(${-vx} ${-vy})`,
+      ].filter(Boolean).join(' ');
+      group.setAttribute('transform', transform);
+      Array.from(target.children || []).forEach((child) => {
+        const clean = cloneImportSvgNode(child, symbolMap, depth + 1);
+        if (clean) group.appendChild(clean);
+      });
+      return group.childNodes.length ? group : null;
+    }
+  }
+
+  const out = document.createElementNS(NS, tag);
+  copyImportSafeAttrs(node, out);
+  if (tag === 'text') out.textContent = String(node.textContent || '').slice(0, 300);
+  Array.from(node.children || []).forEach((child) => {
+    const clean = cloneImportSvgNode(child, symbolMap, depth);
+    if (clean) out.appendChild(clean);
+  });
+  return out;
+}
+
+function serializeImportSvgChildren(children, symbolMap) {
+  const serializer = new XMLSerializer();
+  const out = [];
+  Array.from(children || []).forEach((child) => {
+    const clean = cloneImportSvgNode(child, symbolMap, 0);
+    if (clean) out.push(serializer.serializeToString(clean));
+  });
+  const markup = out.join('\n');
+  return isSafeSvgMarkup(markup) ? markup : '';
+}
+
+function parseImportTransform(value) {
+  const raw = String(value || '');
+  let tx = 0;
+  let ty = 0;
+  let sx = 1;
+  let sy = 1;
+  let r = 0;
+  for (const match of raw.matchAll(/translate\(\s*(-?\d*\.?\d+(?:e[-+]?\d+)?)(?:[,\s]+(-?\d*\.?\d+(?:e[-+]?\d+)?))?/ig)) {
+    tx += Number(match[1]) || 0;
+    ty += Number(match[2]) || 0;
+  }
+  for (const match of raw.matchAll(/scale\(\s*(-?\d*\.?\d+(?:e[-+]?\d+)?)(?:[,\s]+(-?\d*\.?\d+(?:e[-+]?\d+)?))?/ig)) {
+    const nextSx = Number(match[1]);
+    const nextSy = match[2] === undefined ? nextSx : Number(match[2]);
+    if (Number.isFinite(nextSx) && nextSx !== 0) sx *= nextSx;
+    if (Number.isFinite(nextSy) && nextSy !== 0) sy *= nextSy;
+  }
+  const rotations = [...raw.matchAll(/rotate\(\s*(-?\d*\.?\d+(?:e[-+]?\d+)?)/ig)];
+  if (rotations.length) r = Number(rotations[rotations.length - 1][1]) || 0;
+  return { tx, ty, sx, sy, r: normalizeDeskRotation(r) };
+}
+
+function mergeBounds(a, b) {
+  if (!b) return a;
+  if (!a) return { ...b };
+  const x1 = Math.min(a.x, b.x);
+  const y1 = Math.min(a.y, b.y);
+  const x2 = Math.max(a.x + a.w, b.x + b.w);
+  const y2 = Math.max(a.y + a.h, b.y + b.h);
+  return { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
+}
+
+function pointsBounds(points) {
+  const nums = parseSvgNumberList(points);
+  if (nums.length < 2) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < nums.length - 1; i += 2) {
+    const x = nums[i], y = nums[i + 1];
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  }
+  if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null;
+  return { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+}
+
+function approximateSvgNodeBounds(node, symbolMap) {
+  const tag = svgLocalName(node);
+  if (!SVG_RENDER_TAGS.has(tag)) return null;
+  if (tag === 'rect') {
+    return { x: attrNum(node, 'x', 0), y: attrNum(node, 'y', 0), w: Math.max(1, attrNum(node, 'width', 1)), h: Math.max(1, attrNum(node, 'height', 1)) };
+  }
+  if (tag === 'circle') {
+    const r = Math.max(0, attrNum(node, 'r', 0));
+    return { x: attrNum(node, 'cx', 0) - r, y: attrNum(node, 'cy', 0) - r, w: Math.max(1, r * 2), h: Math.max(1, r * 2) };
+  }
+  if (tag === 'ellipse') {
+    const rx = Math.max(0, attrNum(node, 'rx', 0));
+    const ry = Math.max(0, attrNum(node, 'ry', 0));
+    return { x: attrNum(node, 'cx', 0) - rx, y: attrNum(node, 'cy', 0) - ry, w: Math.max(1, rx * 2), h: Math.max(1, ry * 2) };
+  }
+  if (tag === 'line') {
+    const x1 = attrNum(node, 'x1', 0), y1 = attrNum(node, 'y1', 0), x2 = attrNum(node, 'x2', 0), y2 = attrNum(node, 'y2', 0);
+    return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.max(1, Math.abs(x2 - x1)), h: Math.max(1, Math.abs(y2 - y1)) };
+  }
+  if (tag === 'polyline' || tag === 'polygon') return pointsBounds(node.getAttribute('points'));
+  if (tag === 'path') return pointsBounds(node.getAttribute('d'));
+  if (tag === 'use') {
+    const refId = getLocalHrefId(node);
+    const target = refId ? symbolMap.get(refId) : null;
+    const targetVb = target ? parseSvgViewBox(target.getAttribute('viewBox'), [0, 0, 100, 60]) : [0, 0, 100, 60];
+    return {
+      x: attrNum(node, 'x', 0),
+      y: attrNum(node, 'y', 0),
+      w: Math.max(1, attrNum(node, 'width', targetVb[2])),
+      h: Math.max(1, attrNum(node, 'height', targetVb[3])),
+    };
+  }
+  let bounds = null;
+  Array.from(node.children || []).forEach((child) => {
+    bounds = mergeBounds(bounds, approximateSvgNodeBounds(child, symbolMap));
+  });
+  return bounds;
+}
+
+function firstDirectUse(node) {
+  return Array.from(node?.children || []).find((child) => svgLocalName(child) === 'use') || null;
+}
+
+function workplaceLocalBounds(wp, symbolMap, component) {
+  const use = firstDirectUse(wp);
+  if (use && component) {
+    const vb = Array.isArray(component.view_box) ? component.view_box : [0, 0, 100, 60];
+    return {
+      x: attrNum(use, 'x', 0),
+      y: attrNum(use, 'y', 0),
+      w: Math.max(1, attrNum(use, 'width', component.default_w || vb[2] || 100)),
+      h: Math.max(1, attrNum(use, 'height', component.default_h || vb[3] || 60)),
+    };
+  }
+  const hit = wp.querySelector('.workplace-hit');
+  if (hit && svgLocalName(hit) === 'rect') {
+    return {
+      x: attrNum(hit, 'x', 0),
+      y: attrNum(hit, 'y', 0),
+      w: Math.max(1, attrNum(hit, 'width', 1)),
+      h: Math.max(1, attrNum(hit, 'height', 1)),
+    };
+  }
+  return approximateSvgNodeBounds(wp, symbolMap) || { x: 0, y: 0, w: 100, h: 60 };
+}
+
+function normalizeImportStatus(value) {
+  const raw = String(value || '').toLowerCase();
+  if (raw === 'disabled') return 'disabled';
+  if (raw === 'occupied' || raw === 'booked' || raw === 'reserved') return 'occupied';
+  return 'available';
+}
+
+function buildComponentizedLayoutImport(text) {
+  const source = extractSvgSourceFromText(text);
+  if (!source) return null;
+  const { svg } = source;
+  const workplaces = Array.from(svg.querySelectorAll('.workplace, [data-workplace-id]'))
+    .filter((node) => svgLocalName(node) === 'g');
+  if (!workplaces.length) return null;
+
+  const vb = parseSvgViewBox(
+    svg.getAttribute('viewBox'),
+    [0, 0, Math.max(1, attrNum(svg, 'width', 1000)), Math.max(1, attrNum(svg, 'height', 1000))],
+  );
+  const symbolMap = new Map();
+  svg.querySelectorAll('defs symbol[id]').forEach((symbol) => {
+    const id = safeComponentId(symbol.getAttribute('id'));
+    if (id && !symbolMap.has(id)) symbolMap.set(id, symbol);
+  });
+
+  const components = [];
+  const componentById = new Map();
+  const addComponent = (component) => {
+    const normalized = normalizeComponentRecord(component);
+    if (!normalized || normalized.source !== 'custom') return null;
+    if (BUILTIN_COMPONENT_IDS.has(normalized.id) || componentById.has(normalized.id)) return componentById.get(normalized.id) || null;
+    if (!normalized.svg_markup || !isSafeSvgMarkup(normalized.svg_markup)) return null;
+    components.push(normalized);
+    componentById.set(normalized.id, normalized);
+    return normalized;
+  };
+
+  symbolMap.forEach((symbol, id) => {
+    const viewBox = parseSvgViewBox(symbol.getAttribute('viewBox'), [0, 0, 100, 60]);
+    addComponent({
+      id,
+      label: id.replace(/^component-/, '').replace(/[-_]+/g, ' '),
+      asset_type: inferComponentAssetType(id),
+      source: 'custom',
+      view_box: viewBox,
+      default_w: viewBox[2],
+      default_h: viewBox[3],
+      svg_markup: serializeImportSvgChildren(symbol.children, symbolMap),
+    });
+  });
+
+  const desks = [];
+  const usedWorkplaceIds = new Set();
+  let firstBuilding = null;
+  let firstStorey = null;
+  let firstZone = null;
+
+  workplaces.forEach((wp, idx) => {
+    const use = firstDirectUse(wp);
+    const useRef = getLocalHrefId(use);
+    const rawComponentId = safeComponentId(wp.getAttribute('data-component'));
+    let componentId = rawComponentId && componentById.has(rawComponentId) ? rawComponentId : (useRef || rawComponentId);
+    if (!safeComponentId(componentId)) {
+      componentId = componentCandidateId(wp.getAttribute('data-workplace-id') || wp.id || `imported-workplace-${idx + 1}`);
+    }
+
+    let component = componentById.get(componentId);
+    if (!component) {
+      const localBounds = workplaceLocalBounds(wp, symbolMap, null);
+      const markup = serializeImportSvgChildren(wp.children, symbolMap);
+      component = addComponent({
+        id: componentId,
+        label: componentId.replace(/^component-/, '').replace(/[-_]+/g, ' '),
+        asset_type: 'workplace',
+        source: 'custom',
+        view_box: [localBounds.x, localBounds.y, localBounds.w, localBounds.h],
+        default_w: localBounds.w,
+        default_h: localBounds.h,
+        svg_markup: markup,
+      });
+    }
+    if (!component) return;
+
+    const transform = parseImportTransform(wp.getAttribute('transform'));
+    const bounds = workplaceLocalBounds(wp, symbolMap, component);
+    const workplaceId = normalizeEntityId(wp.getAttribute('data-workplace-id') || wp.id || `wp-${idx + 1}`, `wp-${idx + 1}`);
+    const buildingId = normalizeEntityId(wp.getAttribute('data-building-id') || wp.getAttribute('data-building'), null);
+    const storeyId = normalizeEntityId(wp.getAttribute('data-storey-id') || wp.getAttribute('data-storey'), null);
+    const zoneId = normalizeEntityId(wp.getAttribute('data-zone-id') || wp.getAttribute('data-zone'), null);
+    if (!firstBuilding && buildingId) firstBuilding = buildingId;
+    if (!firstStorey && storeyId) firstStorey = storeyId;
+    if (!firstZone && zoneId) firstZone = zoneId;
+
+    let uniqueWorkplaceId = workplaceId;
+    let suffix = 2;
+    while (usedWorkplaceIds.has(uniqueWorkplaceId)) {
+      uniqueWorkplaceId = `${workplaceId}-${suffix}`;
+      suffix += 1;
+    }
+    usedWorkplaceIds.add(uniqueWorkplaceId);
+
+    desks.push({
+      id: normalizeEntityId(wp.id, `imported-${uniqueWorkplaceId}`),
+      label: String(wp.getAttribute('data-room-name') || uniqueWorkplaceId).slice(0, 40) || `WP ${idx + 1}`,
+      name: normalizeEntityId(wp.getAttribute('data-room-name'), null),
+      building_id: buildingId,
+      storey_id: storeyId,
+      zone_id: zoneId,
+      workplace_id: uniqueWorkplaceId,
+      component_id: component.id,
+      symbol_id: component.id,
+      asset_type: 'workplace',
+      bookable: true,
+      fixed: false,
+      assigned_to: null,
+      status: normalizeImportStatus(wp.getAttribute('data-status')),
+      x: snapV(transform.tx + bounds.x * transform.sx),
+      y: snapV(transform.ty + bounds.y * transform.sy),
+      w: Math.max(1, Math.abs(bounds.w * transform.sx)),
+      h: Math.max(1, Math.abs(bounds.h * transform.sy)),
+      r: transform.r,
+      locked: false,
+    });
+  });
+
+  if (!desks.length) return null;
+  return {
+    svg,
+    vb,
+    components,
+    desks,
+    building_id: firstBuilding,
+    storey_id: firstStorey,
+    zone_id: firstZone,
+    stats: {
+      symbols: symbolMap.size,
+      components: components.length,
+      workplaces: desks.length,
+    },
+  };
+}
+
+function uniqueImportedDeskId(rawId, existing) {
+  const base = normalizeEntityId(rawId, uid());
+  if (!existing.has(base)) {
+    existing.add(base);
+    return base;
+  }
+  let idx = 2;
+  while (existing.has(`${base}-${idx}`)) idx += 1;
+  const out = `${base}-${idx}`;
+  existing.add(out);
+  return out;
+}
+
+function sanitizeBackgroundSvgClone(svg) {
+  const clone = svg.cloneNode(true);
+  clone.querySelectorAll('#interactive-layer, .interactive-layer, .workplace, script, foreignObject').forEach((node) => node.remove());
+  clone.querySelectorAll('*').forEach((node) => {
+    Array.from(node.attributes || []).forEach((attr) => {
+      const name = String(attr.name || '').toLowerCase();
+      const value = String(attr.value || '').toLowerCase();
+      if (name.startsWith('on') || value.includes('javascript:')) node.removeAttribute(attr.name);
+    });
+  });
+  if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', NS);
+  return clone;
+}
+
+async function uploadComponentizedImportBackground(result, file) {
+  if (!result?.svg || !ed.floorId) return null;
+  const clone = sanitizeBackgroundSvgClone(result.svg);
+  const svgText = new XMLSerializer().serializeToString(clone);
+  const baseName = String(file?.name || 'componentized-layout').replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '-').slice(0, 80) || 'componentized-layout';
+  const blob = new Blob([svgText], { type: 'image/svg+xml' });
+  const fd = new FormData();
+  fd.append('file', blob, `${baseName}-background.svg`);
+  const resp = await fetch(`${API}/floors/${ed.floorId}/plan`, {
+    method: 'POST',
+    headers: ah(),
+    body: fd,
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || `background upload failed: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+async function applyComponentizedLayoutImport(result, file) {
+  if (!result || !ld) return false;
+  const hadGeometry = _layoutHasGeometry(ld);
+  const existingIds = new Set((ld.desks || []).map((desk) => desk.id));
+  const importedDesks = result.desks.map((desk) => ({
+    ...desk,
+    id: uniqueImportedDeskId(desk.id, existingIds),
+  }));
+
+  ld.components = normalizeLayoutComponents([...(ld.components || []), ...result.components]);
+  if (!Array.isArray(ld.desks)) ld.desks = [];
+  ld.desks.push(...importedDesks);
+  if (!hadGeometry && Array.isArray(result.vb)) {
+    ld.vb = result.vb.slice();
+  }
+  if (!ld.building_id && result.building_id) ld.building_id = result.building_id;
+  if (!ld.storey_id && result.storey_id) ld.storey_id = result.storey_id;
+  if (!ld.zone_id && result.zone_id) ld.zone_id = result.zone_id;
+
+  try {
+    const floor = await uploadComponentizedImportBackground(result, file);
+    if (floor?.plan_url) {
+      ld.bg_url = floor.plan_url;
+      const [x, y, w, h] = result.vb;
+      ld.bg_transform = { x, y, w, h };
+    }
+  } catch (ex) {
+    edToast(`Компоненты импортированы, но фон не загружен: ${ex.message}`, 'error');
+  }
+
+  ensureLayoutArrays(ld);
+  markDirty();
+  closeImportModal();
+  if (!hadGeometry) fitToScreen();
+  renderAll();
+  edToast(
+    `Импортировано как компоненты: ${result.stats.workplaces} workplace, ${result.stats.components} symbols. Линии сохранены фоном.`,
+    'success',
+  );
+  return true;
+}
+
 async function handleImportFile(file) {
   if (!ed.floorId) { edToast('Сначала выберите этаж', 'error'); return; }
 
@@ -3988,7 +5364,7 @@ async function handleImportFile(file) {
       });
       if (!resp.ok) { const b = await resp.json().catch(()=>({})); edToast('Ошибка: '+(b.detail||resp.status),'error'); return; }
       const data = await resp.json();
-      if (!ld) ld = { v:2, vb:[0,0,1000,1000], bg_url:null, bg_transform:null, walls:[], boundaries:[], partitions:[], doors:[], desks:[] };
+      if (!ld) ld = ensureLayoutArrays({ v:2, vb:[0,0,1000,1000], bg_url:null, bg_transform:null, walls:[], boundaries:[], partitions:[], doors:[], desks:[] });
       const canAdaptVb = !_layoutHasGeometry(ld);
       ld.bg_url = data.plan_url || null;
       if (canAdaptVb && rasterDims && rasterDims.w > 0 && rasterDims.h > 0) {
@@ -4007,13 +5383,40 @@ async function handleImportFile(file) {
     return;
   }
 
-  // SVG — send to classifier
+  // Componentized HTML/SVG — keep symbols/workplaces instead of flattening into lines.
   try {
     const text = await file.text();
+    const componentized = buildComponentizedLayoutImport(text);
+    if (componentized) {
+      if (!ld) {
+        ld = ensureLayoutArrays({
+          v: 2,
+          vb: componentized.vb,
+          bg_url: null,
+          bg_transform: null,
+          components: [],
+          walls: [],
+          boundaries: [],
+          partitions: [],
+          doors: [],
+          desks: [],
+        });
+      }
+      await applyComponentizedLayoutImport(componentized, file);
+      return;
+    }
+    if (!isSvg) {
+      edToast('Поддерживаются PNG/SVG, либо HTML с componentized SVG и .workplace', 'error');
+      return;
+    }
+    const source = extractSvgSourceFromText(text);
+    const body = source?.svgText || text;
+
+    // Plain SVG — send to structure classifier.
     const resp = await fetch(`${API}/floors/${ed.floorId}/layout/import`, {
       method: 'POST',
       headers: { ...ah(), 'Content-Type': 'image/svg+xml' },
-      body: text,
+      body,
     });
     if (!resp.ok) { const b = await resp.json().catch(()=>({})); edToast('SVG ошибка: '+(b.detail||resp.status),'error'); return; }
     _importResult = await resp.json();
@@ -4197,10 +5600,11 @@ function updateEditorUI() {
   const badge   = $el('ed-status-badge');
   const saveBtn = $el('ed-save-btn');
   const pubBtn  = $el('ed-publish-btn');
+  const downloadSvgBtn = $el('ed-download-svg-btn');
+  const downloadHtmlBtn = $el('ed-download-html-btn');
   const discBtn = $el('ed-discard-btn');
   const bgAdjustBtn = $el('ed-bg-adjust-btn');
   const clearBgBtn = $el('ed-clear-bg-btn');
-  const syncDesksBtn = $el('ed-sync-desks-btn');
 
   if (badge) {
     badge.className = 'ed-status-badge';
@@ -4218,10 +5622,11 @@ function updateEditorUI() {
   const hasFloor = !!ed.floorId;
   if (saveBtn) saveBtn.disabled = !hasFloor;
   if (pubBtn)  pubBtn.disabled  = !hasFloor;
+  if (downloadSvgBtn) downloadSvgBtn.disabled = !hasFloor;
+  if (downloadHtmlBtn) downloadHtmlBtn.disabled = !hasFloor;
   if (discBtn) discBtn.disabled = !hasFloor || ed.status !== 'draft';
   if (bgAdjustBtn) bgAdjustBtn.disabled = !hasFloor || !ld?.bg_url;
   if (clearBgBtn) clearBgBtn.disabled = !hasFloor || !ld?.bg_url;
-  if (syncDesksBtn) syncDesksBtn.disabled = !hasFloor;
   bgAdjustBtn?.classList.toggle('active', !!ed.bgAdjust.active);
 
   if ((!hasFloor || !ld?.bg_url) && ed.bgAdjust.active) {
@@ -4287,6 +5692,7 @@ function initEditorKeyboard() {
       case 'p': case 'P': setMode('partition'); break;
       case 'o': case 'O': setMode('door');      break;
       case 'd': case 'D': setMode('desk');      break;
+      case 'c': case 'C': setMode('component'); break;
       case 'f': case 'F': fitToScreen();         break;
       case 'q': case 'Q':
         if (rotateDeskSelectionBy(e.shiftKey ? -1 : -5)) e.preventDefault();
@@ -4469,7 +5875,53 @@ function populateEdFloorSelect(floors, offices) {
   if (cur) sel.value = cur;
 }
 
+function syncFloorSelects() {
+  const value = ed.floorId ? String(ed.floorId) : '';
+  const editorSelect = $el('ed-floor-select');
+  if (editorSelect && editorSelect.value !== value) editorSelect.value = value;
+}
+
+function switchAdminTab(tabName) {
+  const btn = document.querySelector(`.nav-item[data-tab="${tabName}"]`);
+  if (btn) btn.click();
+}
+
+function selectedStructRecords() {
+  if (!ld) return [];
+  const keys = new Set(ed.multiStructKeys || []);
+  if (isStructType(ed.selType) && ed.selId) keys.add(structSelKey(ed.selType, ed.selId));
+  const out = [];
+  keys.forEach((key) => {
+    const parsed = parseStructSelKey(key);
+    if (!parsed) return;
+    const item = getStructByTypeId(parsed.type, parsed.id);
+    if (item) out.push({ type: parsed.type, item });
+  });
+  return out;
+}
+
+function svgNum(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '0';
+  if (Math.abs(n - Math.round(n)) < 1e-6) return String(Math.round(n));
+  return n.toFixed(4).replace(/0+$/g, '').replace(/\.$/, '');
+}
+
+function componentCandidateId(label) {
+  const baseId = slugifyComponentId(label || 'custom-component');
+  const existing = new Set((ld?.components || []).map((component) => component.id));
+  let candidate = baseId;
+  let idx = 2;
+  while (existing.has(candidate) || BUILTIN_COMPONENT_IDS.has(candidate)) {
+    candidate = `${baseId}-${idx}`;
+    idx += 1;
+  }
+  return candidate;
+}
+
 function initDeskBulkControls() {
+  initComponentLibrary();
+
   const apply = () => {
     const nextPlaceMode = $el('ed-desk-place-mode')?.value === 'block' ? 'block' : 'single';
     const wasBlock = ed.deskTool.placeMode === 'block';
@@ -4480,6 +5932,8 @@ function initDeskBulkControls() {
     ed.deskTool.placeMode = nextPlaceMode;
     ed.deskTool.pattern = $el('ed-desk-block-pattern')?.value === 'double' ? 'double' : 'rows';
     ed.deskTool.axis = $el('ed-desk-block-axis')?.value === 'vertical' ? 'vertical' : 'horizontal';
+    const preset = $el('ed-desk-size-preset')?.value || ed.deskTool.sizePreset || 'normal';
+    ed.deskTool.sizePreset = DESK_SIZE_PRESETS[preset] ? preset : 'normal';
     ed.deskTool.deskW = clampNum($el('ed-desk-width')?.value, 4, maxW, ed.deskTool.deskW ?? baseSize.w);
     ed.deskTool.deskH = clampNum($el('ed-desk-height')?.value, 4, maxH, ed.deskTool.deskH ?? baseSize.h);
     ed.deskTool.seatsPerRow = clampInt($el('ed-desk-seats-per-row')?.value, 1, 100, ed.deskTool.seatsPerRow || 6);
@@ -4496,6 +5950,13 @@ function initDeskBulkControls() {
     updateStatusBar();
     renderDrawing();
   };
+
+  $el('ed-desk-size-preset')?.addEventListener('change', () => {
+    setDeskSizePreset($el('ed-desk-size-preset')?.value || 'normal');
+    syncDeskBulkControls();
+    updateStatusBar();
+    renderDrawing();
+  });
 
   ['ed-desk-place-mode', 'ed-desk-block-pattern', 'ed-desk-block-axis', 'ed-desk-width', 'ed-desk-height', 'ed-desk-seats-per-row', 'ed-desk-row-count', 'ed-desk-pair-count']
     .forEach(id => {
@@ -4530,7 +5991,14 @@ function initFloorEditor() {
   $el('ed-sync-bg-btn')?.addEventListener('click', syncCanvasToBackground);
   $el('ed-bg-adjust-btn')?.addEventListener('click', toggleBackgroundAdjustMode);
   $el('ed-clear-bg-btn')?.addEventListener('click', clearBackground);
-  $el('ed-sync-desks-btn')?.addEventListener('click', syncDesksFromLayout);
+  $el('ed-open-components-tab-btn')?.addEventListener('click', () => {
+    const componentId = ed?.componentTool?.componentId || $el('ed-component-place-select')?.value;
+    switchAdminTab('components');
+    if (componentId && typeof loadComponentIntoEditor === 'function') {
+      loadComponentIntoEditor(componentId);
+      if (typeof selectComponentForPlacement === 'function') selectComponentForPlacement(componentId, { toast: false });
+    }
+  });
   $el('ed-grid-btn')?.addEventListener('click', () => {
     ed.snapGrid = !ed.snapGrid;
     document.getElementById('ed-grid-rect')?.style.setProperty('display', ed.snapGrid ? '' : 'none');
@@ -4542,6 +6010,8 @@ function initFloorEditor() {
   });
   $el('ed-save-btn')?.addEventListener('click', edSaveDraft);
   $el('ed-publish-btn')?.addEventListener('click', edPublish);
+  $el('ed-download-svg-btn')?.addEventListener('click', edDownloadSemanticSvg);
+  $el('ed-download-html-btn')?.addEventListener('click', edDownloadSemanticHtml);
   $el('ed-discard-btn')?.addEventListener('click', edDiscard);
   $el('ed-import-btn')?.addEventListener('click', () => $el('ed-import-overlay')?.classList.remove('ed-hidden'));
   $el('ed-history-btn')?.addEventListener('click', edShowHistory);
@@ -4620,5 +6090,7 @@ function initFloorEditor() {
   updateEditorUI();
   updateStatusBar();
   updateEditorKpis();
+  syncInventoryFilters();
+  syncComponentPlaceControls();
   updateLockUI();
 }

@@ -11,20 +11,10 @@
       <div class="login-card checkin-card">
         <div>
           <h2 id="checkin-title">Отметка о посещении</h2>
-          <p class="subtitle" id="checkin-subtitle">Введите ваш логин, чтобы подтвердить занятие места.</p>
+          <p class="subtitle" id="checkin-subtitle">Подтвердите занятие места из вашей текущей сессии.</p>
         </div>
 
         <div id="checkin-form-wrap" class="stack">
-          <label class="field">
-            <span>Ваш логин</span>
-            <input
-              id="checkin-username"
-              type="text"
-              placeholder="ivan.ivanov"
-              autocomplete="username"
-              autocapitalize="none"
-            />
-          </label>
           <div id="checkin-error" class="message error hidden"></div>
           <button id="checkin-submit" class="button">Отметиться</button>
         </div>
@@ -60,9 +50,9 @@
       const formWrap       = document.getElementById("checkin-form-wrap");
       const errorEl        = document.getElementById("checkin-error");
       const submitBtn      = document.getElementById("checkin-submit");
-      const usernameInput  = document.getElementById("checkin-username");
       const successSection = document.getElementById("checkin-success");
       const invalidSection = document.getElementById("checkin-invalid");
+      const token          = localStorage.getItem("user_token");
 
       if (!qrToken) {
         formWrap.classList.add("hidden");
@@ -82,10 +72,9 @@
 
       async function doCheckin() {
         hideError();
-        const username = usernameInput.value.trim();
-        if (!username) {
-          showError("Введите ваш логин.");
-          usernameInput.focus();
+        if (!token) {
+          showError("Сначала войдите в систему в этом браузере.");
+          subtitleEl.textContent = "Откройте страницу входа и авторизуйтесь, затем повторите check-in.";
           return;
         }
 
@@ -93,8 +82,11 @@
         submitBtn.textContent = "Отправка...";
 
         try {
-          const url = `${API_BASE}/checkin/${encodeURIComponent(qrToken)}?user_id=${encodeURIComponent(username)}`;
-          const resp = await fetch(url, { method: "POST" });
+          const url = `${API_BASE}/checkin/${encodeURIComponent(qrToken)}`;
+          const resp = await fetch(url, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          });
 
           if (resp.ok) {
             formWrap.classList.add("hidden");
@@ -109,6 +101,11 @@
               invalidSection.classList.remove("hidden");
               titleEl.textContent = "QR-код не найден";
               subtitleEl.textContent = detail;
+            } else if (resp.status === 401) {
+              showError("Сессия недействительна. Войдите снова и повторите.");
+              subtitleEl.textContent = "Требуется авторизация.";
+              submitBtn.disabled = false;
+              submitBtn.textContent = "Отметиться";
             } else {
               showError(detail);
               submitBtn.disabled = false;
@@ -123,15 +120,6 @@
       }
 
       submitBtn.addEventListener("click", doCheckin);
-      usernameInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") doCheckin();
-      });
-
-      // Pre-fill from localStorage if user is already logged in on the main app
-      const storedUsername = localStorage.getItem("user_username");
-      if (storedUsername) {
-        usernameInput.value = storedUsername;
-      }
     </script>
   </body>
 </html>

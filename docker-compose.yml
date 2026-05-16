@@ -17,33 +17,54 @@ services:
       timeout: 5s
       retries: 5
 
-  backend:
-    build: ./backend
-    restart: unless-stopped
+  # Run migrations before API starts
+  migrate:
+    image: postgres:16-alpine
     env_file: .env
-    ports:
-      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      - ./backend/static:/app/static
+      - ./backend-go/migrations:/migrations:ro
+    entrypoint: >
+      sh -c "PGPASSWORD=$$POSTGRES_PASSWORD psql -h postgres -U $$POSTGRES_USER -d $$POSTGRES_DB -f /migrations/001_schema.sql"
+    restart: "no"
 
-  client:
-    build: ./frontend/client
+  # Go API — single backend for all endpoints
+  api:
+    build: ./backend-go
     restart: unless-stopped
+    env_file: .env
     ports:
-      - "5173:80"
+      - "8000:8080"
     depends_on:
-      - backend
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - api_static:/app/static
 
+  # Vanilla JS admin — editor + component library (still active until React parity)
   admin:
     build: ./frontend/admin
     restart: unless-stopped
     ports:
       - "5174:80"
     depends_on:
-      - backend
+      - api
+    volumes:
+      - ./frontend/admin:/usr/share/nginx/html
+
+  # React admin — editor + components (in development)
+  admin-react:
+    build: ./frontend/admin-react
+    restart: unless-stopped
+    ports:
+      - "5175:80"
+    depends_on:
+      - api
 
 volumes:
   postgres_data:
+  api_static:

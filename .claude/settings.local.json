@@ -6,7 +6,20 @@
       "Bash(docker exec:*)",
       "Bash(node:*)",
       "Bash(curl -s \"http://localhost:8000/api/floors\" | python3 -m json.tool 2>&1 | head -30)",
-      "Bash(curl -s \"http://localhost:8000/offices\" | python3 -m json.tool 2>&1 | head -20)"
+      "Bash(curl -s \"http://localhost:8000/offices\" | python3 -m json.tool 2>&1 | head -20)",
+      "Bash(go build *)",
+      "Read(//usr/local/go/bin/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//usr/local/**)",
+      "Bash(npx vite *)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(python3 -m json.tool)",
+      "Bash(xargs kill)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/app/main.py'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('backend/app/main.py'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('backend/app/crud.py'\\).read\\(\\)\\); print\\('crud.py OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('backend/app/main.py'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
+      "Bash(grep -E \"\\\\.go$\")"
     ]
   }
 }

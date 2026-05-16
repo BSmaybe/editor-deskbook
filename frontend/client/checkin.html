@@ -21,19 +21,9 @@
       </div>
     </div>
     <h2 class="auth-heading" id="checkin-title">Отметка о посещении</h2>
-    <p class="auth-sub" id="checkin-subtitle">Введите ваш логин, чтобы подтвердить занятие места.</p>
+    <p class="auth-sub" id="checkin-subtitle">Подтвердите занятие места из вашей текущей сессии.</p>
 
     <div id="checkin-form-wrap" class="stack">
-      <div class="field">
-        <label for="checkin-username">Ваш логин</label>
-        <input
-          id="checkin-username"
-          type="text"
-          placeholder="ivan.ivanov"
-          autocomplete="username"
-          autocapitalize="none"
-        >
-      </div>
       <div id="checkin-error" class="error-msg hidden"></div>
       <button id="checkin-submit" class="btn btn-primary btn-block" style="height:42px;font-size:15px">
         <i data-lucide="check-circle" style="width:16px;height:16px"></i>
@@ -45,7 +35,7 @@
       <div class="success-msg" style="text-align:center;font-size:15px;padding:20px 16px">
         Вы отмечены! Место забронировано.
       </div>
-      <a href="./index.html" class="btn btn-secondary btn-block" style="margin-top:12px;text-align:center">
+      <a href="./app.html" class="btn btn-secondary btn-block" style="margin-top:12px;text-align:center">
         На главную
       </a>
     </div>
@@ -54,7 +44,7 @@
       <div class="error-msg" style="text-align:center;font-size:15px;padding:20px 16px">
         Ссылка недействительна или QR-код не найден.
       </div>
-      <a href="./index.html" class="btn btn-secondary btn-block" style="margin-top:12px;text-align:center">
+      <a href="./app.html" class="btn btn-secondary btn-block" style="margin-top:12px;text-align:center">
         На главную
       </a>
     </div>
@@ -71,14 +61,9 @@
   const formWrap       = document.getElementById("checkin-form-wrap");
   const errorEl        = document.getElementById("checkin-error");
   const submitBtn      = document.getElementById("checkin-submit");
-  const usernameInput  = document.getElementById("checkin-username");
   const successSection = document.getElementById("checkin-success");
   const invalidSection = document.getElementById("checkin-invalid");
-
-  const storedUsername = localStorage.getItem("user_username");
-  if (storedUsername) {
-    usernameInput.value = storedUsername;
-  }
+  const token          = localStorage.getItem("user_token");
 
   if (!qrToken) {
     formWrap.classList.add("hidden");
@@ -98,10 +83,9 @@
 
   async function doCheckin() {
     hideError();
-    const username = usernameInput.value.trim();
-    if (!username) {
-      showError("Введите ваш логин.");
-      usernameInput.focus();
+    if (!token) {
+      showError("Сначала войдите в систему в этом браузере.");
+      subtitleEl.textContent = "Откройте страницу входа и авторизуйтесь, затем повторите check-in.";
       return;
     }
 
@@ -109,8 +93,11 @@
     submitBtn.textContent = "Отправка...";
 
     try {
-      const url = `${API_BASE}/checkin/${encodeURIComponent(qrToken)}?user_id=${encodeURIComponent(username)}`;
-      const resp = await fetch(url, { method: "POST" });
+      const url = `${API_BASE}/checkin/${encodeURIComponent(qrToken)}`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
       if (resp.ok) {
         formWrap.classList.add("hidden");
@@ -125,6 +112,11 @@
           invalidSection.classList.remove("hidden");
           titleEl.textContent = "QR-код не найден";
           subtitleEl.textContent = detail;
+        } else if (resp.status === 401) {
+          showError("Сессия недействительна. Войдите снова и повторите.");
+          subtitleEl.textContent = "Требуется авторизация.";
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Отметиться";
         } else {
           showError(detail);
           submitBtn.disabled = false;
@@ -139,9 +131,6 @@
   }
 
   submitBtn.addEventListener("click", doCheckin);
-  usernameInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") doCheckin();
-  });
 
   if (window.lucide) lucide.createIcons();
   </script>

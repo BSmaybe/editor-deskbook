@@ -1,21 +1,71 @@
 const API_BASE = "/api";
 
+function decodeJwtPayload(token) {
+  try {
+    const part = String(token || "").split(".")[1];
+    if (!part) return null;
+    const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
+function resolveAdminUrl() {
+  const configured = typeof window.__DESKBOOK_ADMIN_URL === "string"
+    ? window.__DESKBOOK_ADMIN_URL.trim()
+    : "";
+  if (configured) return configured;
+  try {
+    const url = new URL(window.location.href);
+    url.port = "5174";
+    url.pathname = "/";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "http://localhost:5174/";
+  }
+}
+
 // JWT expiry check
 function isTokenExpired(token) {
-  try {
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return payload.exp * 1000 < Date.now();
-  } catch { return true; }
+  const payload = decodeJwtPayload(token);
+  if (!payload || typeof payload.exp !== "number") return true;
+  return payload.exp * 1000 < Date.now();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // Auth guard
 const _token = localStorage.getItem("user_token");
 const _username = localStorage.getItem("user_username");
+let _authRedirectTarget = "";
 if (!_token || !_username || isTokenExpired(_token)) {
   localStorage.removeItem("user_token");
   localStorage.removeItem("user_username");
-  window.location.href = "./login.html";
+  _authRedirectTarget = "./login.html";
 }
+const _payload = decodeJwtPayload(_token);
+if (!_authRedirectTarget && String(_payload && _payload.role || "").toLowerCase() === "admin") {
+  const adminUsername = (_payload && typeof _payload.sub === "string" && _payload.sub.trim())
+    ? _payload.sub.trim()
+    : _username;
+  localStorage.setItem("admin_token", _token);
+  if (adminUsername) localStorage.setItem("admin_username", adminUsername);
+  _authRedirectTarget = resolveAdminUrl();
+}
+if (_authRedirectTarget) {
+  window.location.replace(_authRedirectTarget);
+} else {
 
 // DOM refs
 const officeSelect        = document.getElementById("office-select");
@@ -451,10 +501,12 @@ function _notifRenderDrawer() {
     const n   = _notifHistory[i];
     const el  = document.createElement("div");
     el.className = `notif-item notif-item-${n.type}${n.read ? " is-read" : ""}`;
+    const notifTextEsc = escapeHtml(n.text || "");
+    const relTimeEsc = escapeHtml(_relTime(n.ts));
     el.innerHTML = `
       <span class="notif-item-dot"></span>
-      <span class="notif-item-text">${n.text}</span>
-      <span class="notif-item-time">${_relTime(n.ts)}</span>`;
+      <span class="notif-item-text">${notifTextEsc}</span>
+      <span class="notif-item-time">${relTimeEsc}</span>`;
     body.append(el);
   }
 }
@@ -804,10 +856,11 @@ async function reserveBatch(deskId, dates, startTime, endTime) {
 function renderPolicies() {
   policyList.innerHTML = "";
   for (const p of state.policies) {
+    const policyNameEsc = escapeHtml(p.name || "");
     const card = document.createElement("div");
     card.className = "policy-card";
     card.innerHTML = `
-      <h3>${p.name}</h3>
+      <h3>${policyNameEsc}</h3>
       <div class="policy-details">
         <div>Заранее: ${p.min_days_ahead}–${p.max_days_ahead} дней</div>
         <div>Длительность: ${p.min_duration_minutes ?? "—"}–${p.max_duration_minutes ?? "—"} мин</div>
@@ -1431,6 +1484,107 @@ async function renderFloorPlan(floor) {
   renderPlanMarkersFiltered();
 }
 
+function _asFiniteLayoutNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function _layoutGeometryBounds(layout) {
+  const bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  const pushPoint = (x, y) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    bounds.minX = Math.min(bounds.minX, x);
+    bounds.minY = Math.min(bounds.minY, y);
+    bounds.maxX = Math.max(bounds.maxX, x);
+    bounds.maxY = Math.max(bounds.maxY, y);
+  };
+
+  const groups = ["boundaries", "walls", "partitions", "doors"];
+  for (const groupName of groups) {
+    for (const el of (layout?.[groupName] || [])) {
+      for (const rawPt of (el?.pts || [])) {
+        if (!Array.isArray(rawPt) || rawPt.length < 2) continue;
+        const px = _asFiniteLayoutNumber(rawPt[0]);
+        const py = _asFiniteLayoutNumber(rawPt[1]);
+        if (px == null || py == null) continue;
+        pushPoint(px, py);
+      }
+    }
+  }
+
+  for (const desk of (layout?.desks || [])) {
+    const x = _asFiniteLayoutNumber(desk?.x);
+    const y = _asFiniteLayoutNumber(desk?.y);
+    const w = _asFiniteLayoutNumber(desk?.w);
+    const h = _asFiniteLayoutNumber(desk?.h);
+    if (x == null || y == null) continue;
+    if (w != null && h != null && w > 0 && h > 0) {
+      pushPoint(x, y);
+      pushPoint(x + w, y + h);
+    } else {
+      pushPoint(x, y);
+    }
+  }
+
+  if (layout?.bg_transform) {
+    const tx = _asFiniteLayoutNumber(layout.bg_transform.x);
+    const ty = _asFiniteLayoutNumber(layout.bg_transform.y);
+    const tw = _asFiniteLayoutNumber(layout.bg_transform.w);
+    const th = _asFiniteLayoutNumber(layout.bg_transform.h);
+    if (tx != null && ty != null && tw != null && th != null && tw > 0 && th > 0) {
+      pushPoint(tx, ty);
+      pushPoint(tx + tw, ty + th);
+    }
+  }
+
+  if (!Number.isFinite(bounds.minX) || !Number.isFinite(bounds.maxX)) return null;
+  return {
+    minX: bounds.minX,
+    minY: bounds.minY,
+    maxX: bounds.maxX,
+    maxY: bounds.maxY,
+    w: Math.max(1, bounds.maxX - bounds.minX),
+    h: Math.max(1, bounds.maxY - bounds.minY),
+  };
+}
+
+function _resolveLayoutViewBox(layout) {
+  const rawVb = Array.isArray(layout?.vb) && layout.vb.length >= 4
+    ? layout.vb.slice(0, 4).map((v) => Number(v))
+    : null;
+  const hasValidRawVb = !!rawVb && rawVb.every(Number.isFinite) && rawVb[2] > 0 && rawVb[3] > 0;
+  const geom = _layoutGeometryBounds(layout);
+
+  if (!hasValidRawVb) {
+    if (geom) {
+      const pad = Math.max(10, Math.min(260, Math.max(geom.w, geom.h) * 0.06));
+      return [geom.minX - pad, geom.minY - pad, geom.w + pad * 2, geom.h + pad * 2];
+    }
+    return [0, 0, 1000, 1000];
+  }
+
+  if (!geom) return rawVb;
+
+  const [vx, vy, vw, vh] = rawVb;
+  const overflowPadX = Math.max(16, vw * 0.12);
+  const overflowPadY = Math.max(16, vh * 0.12);
+  const overflowed =
+    geom.minX < vx - overflowPadX ||
+    geom.maxX > vx + vw + overflowPadX ||
+    geom.minY < vy - overflowPadY ||
+    geom.maxY > vy + vh + overflowPadY;
+  const placeholderVb =
+    Math.abs(vx) < 1e-6 &&
+    Math.abs(vy) < 1e-6 &&
+    Math.abs(vw - 1000) < 1e-6 &&
+    Math.abs(vh - 1000) < 1e-6;
+
+  if (!overflowed && !placeholderVb) return rawVb;
+
+  const pad = Math.max(10, Math.min(260, Math.max(geom.w, geom.h) * 0.06));
+  return [geom.minX - pad, geom.minY - pad, geom.w + pad * 2, geom.h + pad * 2];
+}
+
 function _renderInlineLayoutFloor(layout, imageFrame) {
   _currentLayout = layout;
   if (imageFrame) imageFrame.style.display = "none";
@@ -1445,7 +1599,7 @@ function _renderInlineLayoutFloor(layout, imageFrame) {
     mapZoomWrapper.appendChild(svgWrap);
   }
 
-  const vb = Array.isArray(layout.vb) && layout.vb.length >= 4 ? layout.vb : [0, 0, 1000, 1000];
+  const vb = _resolveLayoutViewBox(layout);
   const [vx, vy, vw, vh] = vb.map(Number);
 
   const bgImage = layout.bg_url
@@ -1520,6 +1674,12 @@ function _renderInlineLayoutFloor(layout, imageFrame) {
       : "";
     const label = _escSvgText(d.label || "");
     const id = _escAttr(d.id || d.label || "");
+    const workplaceId = _escAttr(d.workplace_id || d.id || d.label || "");
+    const buildingId = _escAttr(d.building_id || layout.building_id || "");
+    const storeyId = _escAttr(d.storey_id || layout.storey_id || "");
+    const zoneId = _escAttr(d.zone_id || layout.zone_id || "");
+    const symbolId = _escAttr(d.symbol_id || "desk-short");
+    const assetType = _escAttr(d.asset_type || "workplace");
     const visual = _deskVisualState(String(d.id || ""), d.label || "");
     const resolvedSpaceType =
       d.space_type ||
@@ -1553,7 +1713,7 @@ function _renderInlineLayoutFloor(layout, imageFrame) {
       stroke = "#64748b";
       textColor = "#334155";
     }
-    return `<g class="desk-tile client-marker st-${_escAttr(resolvedSpaceType)} ${stateClass}" data-desk-id="${id}" data-desk-label="${_escAttr(d.label || "")}" cursor="pointer"${transformAttr}>` +
+    return `<g class="desk-tile client-marker workplace st-${_escAttr(resolvedSpaceType)} ${stateClass}" data-desk-id="${id}" data-desk-label="${_escAttr(d.label || "")}" data-workplace-id="${workplaceId}" data-building="${buildingId}" data-storey="${storeyId}" data-zone="${zoneId}" data-symbol="${symbolId}" data-asset-type="${assetType}" cursor="pointer"${transformAttr}>` +
       `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${Math.max(1, h * 0.1)}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>` +
       `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" fill="${textColor}" font-size="${Math.max(7, Math.min(h * 0.45, w * 0.22))}" pointer-events="none">${label}</text>` +
       `</g>`;
@@ -2031,12 +2191,15 @@ function showSidePanel(marker, desk) {
 
   let bookedHtml = "";
   if (booked && !myResv) {
+    const bookedUserId = String(booked.user_id || "");
+    const bookedUserIdEsc = escapeHtml(bookedUserId);
+    const bookedUserIdEnc = encodeURIComponent(bookedUserId);
     bookedHtml = `<div class="side-panel-meta">
       <i data-lucide="user" style="width:12px;height:12px"></i>
-      ${booked.user_id} · ${booked.start_time?.slice(0, 5) ?? "?"} – ${booked.end_time?.slice(0, 5) ?? "?"}
+      ${bookedUserIdEsc} · ${booked.start_time?.slice(0, 5) ?? "?"} – ${booked.end_time?.slice(0, 5) ?? "?"}
     </div>
     <div style="display:flex;gap:6px;margin-top:10px">
-      <button class="btn btn-secondary btn-sm" id="_sp_profile" data-username="${booked.user_id}" style="width:100%">
+      <button class="btn btn-secondary btn-sm" id="_sp_profile" data-username="${bookedUserIdEnc}" style="width:100%">
         <i data-lucide="user-circle" style="width:12px;height:12px"></i> Профиль
       </button>
     </div>`;
@@ -2053,7 +2216,7 @@ function showSidePanel(marker, desk) {
   if (visual.kind === "blocked" && visual.reason) {
     blockedReasonHtml = `<div class="side-panel-meta" style="margin-top:8px">
       <i data-lucide="info" style="width:12px;height:12px"></i>
-      ${visual.reason}
+      ${escapeHtml(visual.reason)}
     </div>`;
   }
 
@@ -2065,11 +2228,15 @@ function showSidePanel(marker, desk) {
     Просмотр: ${_timeWindowText()}
   </div>`;
 
+  const deskLabelEsc = escapeHtml(desk.label);
+  const spaceLabelEsc = escapeHtml(spaceLabel);
+  const typeLabelEsc = escapeHtml(typeLabel);
+
   mapSidePanel.innerHTML = `
     <div class="side-panel-header">
       <div>
-        <div class="side-panel-title">${desk.label}</div>
-        <div class="side-panel-type">${spaceLabel} · ${typeLabel}</div>
+        <div class="side-panel-title">${deskLabelEsc}</div>
+        <div class="side-panel-type">${spaceLabelEsc} · ${typeLabelEsc}</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px">${statusHtml}${favBtnHtml}</div>
     </div>
@@ -2114,7 +2281,8 @@ function showSidePanel(marker, desk) {
   });
 
   mapSidePanel.querySelector("#_sp_profile")?.addEventListener("click", (e) => {
-    openProfileModal(e.currentTarget.dataset.username);
+    const encoded = e.currentTarget.dataset.username || "";
+    openProfileModal(decodeURIComponent(encoded));
   });
 
   if (booked && booked.user_id !== _username) {
@@ -2311,6 +2479,12 @@ function renderProfileModal(profile, username) {
   const sub         = [profile?.department, profile?.position].filter(Boolean).join(" · ") || username;
   const statusLabel = profile?.user_status ? STATUS_LABELS[profile.user_status] : null;
   const statusClass = profile?.user_status ? STATUS_CLASSES[profile.user_status] : "";
+  const displayNameEsc = escapeHtml(displayName);
+  const initialsEsc = escapeHtml(initials);
+  const subEsc = escapeHtml(sub);
+  const phoneRaw = profile?.phone ? String(profile.phone) : "";
+  const phoneEsc = escapeHtml(phoneRaw);
+  const phoneHref = phoneRaw ? `tel:${encodeURIComponent(phoneRaw)}` : "";
 
   container.innerHTML = `
     <div class="profile-modal-header">
@@ -2321,16 +2495,16 @@ function renderProfileModal(profile, username) {
     </div>
     <div class="profile-modal-body">
       <div class="profile-modal-hero">
-        <div class="profile-modal-avatar">${initials}</div>
+        <div class="profile-modal-avatar">${initialsEsc}</div>
         <div>
-          <div class="profile-modal-name">${displayName}</div>
-          <div class="profile-modal-sub">${sub}</div>
+          <div class="profile-modal-name">${displayNameEsc}</div>
+          <div class="profile-modal-sub">${subEsc}</div>
           ${statusLabel ? `<span class="status-badge ${statusClass}" style="margin-top:6px;display:inline-block">${statusLabel}</span>` : ""}
         </div>
       </div>
       ${profile?.phone ? `<div class="profile-modal-row">
         <i data-lucide="phone" style="width:14px;height:14px;color:var(--text-3)"></i>
-        <a href="tel:${profile.phone}">${profile.phone}</a>
+        <a href="${phoneHref}">${phoneEsc}</a>
       </div>` : ""}
     </div>`;
 
@@ -2595,12 +2769,13 @@ function renderLegend(desks) {
   const types = [...new Set(desks.map(d => d.space_type || "desk"))];
   if (types.length <= 1) { el.style.display = "none"; return; }
   el.style.display = "";
-  el.innerHTML = types.map(t =>
-    `<span class="legend-item">
+  el.innerHTML = types.map((t) => {
+    const labelEsc = escapeHtml(_LEGEND_LABELS[t] || t);
+    return `<span class="legend-item">
        <span class="legend-dot" style="background:${_LEGEND_COLORS[t] || "#888"}"></span>
-       ${_LEGEND_LABELS[t] || t}
-     </span>`
-  ).join("");
+       ${labelEsc}
+     </span>`;
+  }).join("");
 }
 
 // ── Colleagues ──────────────────────────────────────────────────────────────
@@ -2665,13 +2840,16 @@ function renderFloorPlacesList() {
     if (visual.kind === "occupied" && visual.occupied?.user_id) {
       metaBits.push(`занято: ${visual.occupied.user_id}`);
     }
+    const placeTitleEsc = escapeHtml(baseDeskLabel);
+    const placeMetaEsc = escapeHtml(metaBits.join(" · "));
+    const placeStatusEsc = escapeHtml(statusLabel[visual.kind] || statusLabel.unknown);
 
     item.innerHTML = `
       <div class="floor-place-main">
-        <div class="floor-place-title">${baseDeskLabel}</div>
-        <div class="floor-place-meta">${metaBits.join(" · ")}</div>
+        <div class="floor-place-title">${placeTitleEsc}</div>
+        <div class="floor-place-meta">${placeMetaEsc}</div>
       </div>
-      <div class="place-status-badge ${visual.kind}">${statusLabel[visual.kind] || statusLabel.unknown}</div>`;
+      <div class="place-status-badge ${visual.kind}">${placeStatusEsc}</div>`;
 
     item.addEventListener("click", () => {
       if (_highlightedDeskId === desk.id) {
@@ -2744,14 +2922,18 @@ function renderColleagues() {
     const time      = `${r.start_time?.slice(0, 5) ?? "?"} – ${r.end_time?.slice(0, 5) ?? "?"}`;
     const meTag     = isMe ? `<span class="colleague-me-tag">вы</span>` : "";
     const teamTag   = !isMe && isTeam ? `<span class="colleague-team-tag">команда</span>` : "";
+    const initialsEsc = escapeHtml(initials);
+    const userIdEsc = escapeHtml(r.user_id);
+    const deskLabelEsc = escapeHtml(deskLabel);
+    const timeEsc = escapeHtml(time);
 
     item.innerHTML = `
-      <div class="colleague-avatar">${initials}</div>
+      <div class="colleague-avatar">${initialsEsc}</div>
       <div class="colleague-info">
-        <div class="colleague-name">${r.user_id}${meTag}${teamTag}</div>
-        <div class="colleague-desk">${deskLabel}</div>
+        <div class="colleague-name">${userIdEsc}${meTag}${teamTag}</div>
+        <div class="colleague-desk">${deskLabelEsc}</div>
       </div>
-      <div class="colleague-time">${time}</div>`;
+      <div class="colleague-time">${timeEsc}</div>`;
 
     if (desk) {
       item.style.cursor = "pointer";
@@ -3202,15 +3384,19 @@ async function navigateToDesk(officeId, floorId, deskId, opts = {}) {
       const onOtherFloor = loc && String(loc.floor_id) !== String(floorSelect.value);
       const isTeamMember = state.team.has(u.username);
       const teamBadge    = isTeamMember ? `<span class="search-team-badge">Моя команда</span>` : "";
+      const displayNameEsc = escapeHtml(displayName);
+      const initialsEsc = escapeHtml(initials);
+      const subEsc = escapeHtml(sub);
+      const locLineEsc = escapeHtml(locLine);
 
       const item = document.createElement("div");
       item.className = "search-result-item";
       item.innerHTML = `
-        <div class="search-result-avatar${isTeamMember ? " is-team" : ""}">${initials}</div>
+        <div class="search-result-avatar${isTeamMember ? " is-team" : ""}">${initialsEsc}</div>
         <div class="search-result-info">
-          <div class="search-result-name">${displayName}${teamBadge}</div>
-          <div class="search-result-sub">${sub}</div>
-          ${locLine ? `<div class="search-result-loc${loc ? "" : " search-result-loc--empty"}">${locLine}</div>` : ""}
+          <div class="search-result-name">${displayNameEsc}${teamBadge}</div>
+          <div class="search-result-sub">${subEsc}</div>
+          ${locLine ? `<div class="search-result-loc${loc ? "" : " search-result-loc--empty"}">${locLineEsc}</div>` : ""}
         </div>
         ${onOtherFloor ? `<button class="search-goto-btn" data-desk="${loc.desk_id}" data-floor="${loc.floor_id}" data-office="${loc.office_id}">Перейти →</button>` : ""}`;
 
@@ -3316,6 +3502,7 @@ function initResponsiveUiState() {
 }
 
 async function init() {
+  if (_authRedirectTarget) return;
   if (window.lucide) lucide.createIcons();
   bindMapControlsOnce();
   initParamsSheetInteractions();
@@ -3380,3 +3567,4 @@ async function init() {
 }
 
 init();
+}

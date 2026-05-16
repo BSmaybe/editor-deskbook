@@ -49,7 +49,7 @@
   const errorMsg = document.getElementById("error-msg");
 
   if (localStorage.getItem("user_token")) {
-    window.location.href = "./index.html";
+    window.location.href = "./app.html";
   }
 
   form.addEventListener("submit", async (e) => {
@@ -79,7 +79,7 @@
       const { access_token } = await loginResp.json();
       localStorage.setItem("user_token", access_token);
       localStorage.setItem("user_username", username);
-      window.location.href = "./index.html";
+      window.location.href = "./app.html";
     } catch (e) {
       errorMsg.textContent = e.message;
       errorMsg.classList.remove("hidden");

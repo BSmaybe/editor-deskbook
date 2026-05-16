@@ -3,217 +3,315 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>DeskBook — Бронирование мест</title>
+  <title>DeskBook — Бронирование рабочих мест</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-  <link rel="stylesheet" href="./styles.css">
-  <style>
-    @media (min-width: 769px) { html, body { overflow: hidden; height: 100%; } }
-  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@500;600;700;800&family=Archivo:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./landing.css">
 </head>
-<body>
-  <header class="app-header">
-    <div class="header-brand">
-      <div class="header-brand-icon">
-        <i data-lucide="calendar-days" style="width:16px;height:16px"></i>
-      </div>
-      <h1>DeskBook</h1>
-    </div>
-    <div class="header-user">
-      <a href="./profile.html" class="user-profile-link" title="Профиль">
-        <div class="user-avatar" id="user-avatar"></div>
-        <span class="user-name" id="logged-as"></span>
-      </a>
-      <button class="notif-bell" id="notif-bell" aria-label="Уведомления" title="Уведомления">
-        <i data-lucide="bell" style="width:17px;height:17px"></i>
-        <span class="notif-badge" id="notif-badge" style="display:none">0</span>
-      </button>
-      <button id="logout-btn" class="btn btn-secondary btn-sm">Выйти</button>
-    </div>
+<body class="landing-body">
+  <div class="landing-ambient" aria-hidden="true">
+    <div class="ambient-orb orb-a"></div>
+    <div class="ambient-orb orb-b"></div>
+    <div class="ambient-grid"></div>
+  </div>
+
+  <header class="landing-header shell">
+    <a class="landing-brand" href="./index.html">
+      <span class="brand-badge" aria-hidden="true">DB</span>
+      <span>DeskBook</span>
+    </a>
+    <nav class="landing-nav">
+      <a href="#entry-router">Режимы входа</a>
+      <a href="#how-it-works">Как это работает</a>
+      <a href="./login.html">Войти</a>
+      <a class="landing-nav-btn" href="./register.html">Регистрация</a>
+    </nav>
   </header>
 
-  <div class="app-layout">
-
-    <!-- Compact booking params (1 row) -->
-    <div class="params-bar">
-      <div class="params-mobile-summary" id="params-mobile-summary">
-        <div class="params-mobile-summary-text" id="params-summary-text">Интервал брони: —</div>
-        <button id="params-edit-btn" class="btn btn-secondary btn-sm" aria-label="Изменить параметры бронирования">Изменить</button>
-      </div>
-      <div class="params-row" id="params-row">
-        <div class="param-field param-office">
-          <label for="office-select">Офис</label>
-          <select id="office-select"><option value="">Выберите офис</option></select>
+  <main class="landing-main shell">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="hero-kicker">Платформа бронирования для гибридных офисов</p>
+        <h1>Лэндинг сразу направляет в нужный режим: User, Admin или Demo</h1>
+        <p class="hero-text">
+          DeskBook объединяет карту офиса, слоты времени, QR check-in и политику no-show.
+          Вход в систему занимает секунды и всегда ведет в правильный интерфейс.
+        </p>
+        <div class="hero-actions">
+          <a class="btn-primary" href="#entry-router">Выбрать режим входа</a>
+          <button class="btn-ghost" id="demo-start-btn" type="button">Попробовать демо</button>
         </div>
-        <div class="param-field param-floor">
-          <label for="floor-select">Этаж</label>
-          <select id="floor-select" disabled><option value="">—</option></select>
-        </div>
-        <div class="param-field param-date">
-          <label for="reservation-date">Дата</label>
-          <input id="reservation-date" type="date">
-        </div>
-        <div class="param-field param-time">
-          <label for="start-time">Начало</label>
-          <input id="start-time" type="time" value="09:00">
-        </div>
-        <div class="param-field param-time">
-          <label for="end-time">Конец</label>
-          <input id="end-time" type="time" value="18:00">
-        </div>
-        <div class="param-field param-quick">
-          <label>Быстро</label>
-          <div class="quick-date-chips" id="quick-date-chips">
-            <button type="button" class="quick-date-chip active" id="quick-date-today">Сегодня</button>
-            <button type="button" class="quick-date-chip" id="quick-date-tomorrow">Завтра</button>
-            <button type="button" class="quick-date-chip" id="quick-date-custom">Дата</button>
-          </div>
-        </div>
-        <input id="user-id" type="hidden">
-        <div class="params-actions">
-          <button id="policies-toggle" class="btn btn-secondary btn-sm">Правила ▾</button>
+        <p class="hero-note" id="demo-note"></p>
+        <div class="hero-metrics">
+          <article>
+            <strong>3</strong>
+            <span>Сценария входа из одной точки</span>
+          </article>
+          <article>
+            <strong>1</strong>
+            <span>Прозрачный путь до брони места</span>
+          </article>
+          <article>
+            <strong>24/7</strong>
+            <span>Работа из браузера без установки</span>
+          </article>
         </div>
       </div>
-      <div class="params-mobile-actions" id="params-mobile-actions">
-        <button id="params-cancel-btn" class="btn btn-secondary btn-sm" aria-label="Закрыть параметры без применения">Отмена</button>
-        <button id="params-apply-btn" class="btn btn-primary btn-sm" aria-label="Применить параметры бронирования">Применить</button>
+      <aside class="hero-panel" aria-label="Быстрый обзор возможностей">
+        <p class="panel-kicker">Router Preview</p>
+        <h2>Умный вход по активной сессии</h2>
+        <ul class="panel-list">
+          <li><span>Admin token</span><strong>Приоритетный редирект в админку</strong></li>
+          <li><span>User token</span><strong>Мгновенный вход в клиентский app</strong></li>
+          <li><span>Просрочено</span><strong>Очистка токена и возврат на лэндинг</strong></li>
+        </ul>
+        <a class="panel-link" href="#how-it-works">Смотреть сценарий работы</a>
+      </aside>
+    </section>
+
+    <section class="priority-strip reveal" aria-label="Ключевые правила входа">
+      <p class="priority-item"><strong>Приоритет:</strong> при двух валидных токенах переход всегда в Admin.</p>
+      <p class="priority-item"><strong>Админ URL:</strong> сначала window.__DESKBOOK_ADMIN_URL, иначе fallback на порт 5174.</p>
+      <p class="priority-item"><strong>Demo:</strong> отдельная сессия в пользовательском режиме без админских прав.</p>
+    </section>
+
+    <section class="entry-router reveal" id="entry-router">
+      <div class="entry-head">
+        <h2>Выберите режим входа</h2>
+        <p>Один экран для входа пользователя, администратора и демо-сценария.</p>
+        <p class="entry-highlight">Важно: автосессия Admin всегда имеет приоритет над User.</p>
       </div>
-    </div>
-    <div id="params-mobile-backdrop" class="params-mobile-backdrop" aria-hidden="true"></div>
-
-    <!-- Policies (accordion, hidden by default) -->
-    <div id="policies-accordion">
-      <div class="card" id="policies-card" style="flex-shrink:0;padding:12px 16px;margin-bottom:0">
-        <div class="card-header" style="margin-bottom:10px">
-          <h2 class="card-title"><i data-lucide="shield-check" style="width:16px;height:16px"></i> Правила бронирования</h2>
-        </div>
-        <div id="policy-list"></div>
+      <div class="entry-grid">
+        <article class="entry-card">
+          <span class="entry-tag">User</span>
+          <h3>Пользователь</h3>
+          <p>Бронирование, карта офиса, check-in, управление личным профилем.</p>
+          <ul class="entry-focus">
+            <li>Автовход по валидному user_token</li>
+            <li>Полный пользовательский рабочий поток</li>
+          </ul>
+          <a class="btn-primary entry-btn" href="./login.html">Войти как пользователь</a>
+        </article>
+        <article class="entry-card is-priority">
+          <span class="entry-tag">Admin</span>
+          <h3>Администратор</h3>
+          <p>Редактор схем, политики, аналитика no-show и контроль доступов.</p>
+          <ul class="entry-focus">
+            <li>Приоритетный редирект по admin_token</li>
+            <li>Управление офисами, схемами и политиками</li>
+          </ul>
+          <button class="btn-ghost entry-btn" id="admin-open-btn" type="button">Войти как админ</button>
+        </article>
+        <article class="entry-card is-safe">
+          <span class="entry-tag">Demo</span>
+          <h3>Демо</h3>
+          <p>Тестовая пользовательская сессия без корпоративного аккаунта.</p>
+          <ul class="entry-focus">
+            <li>Вход без регистрации за 1 клик</li>
+            <li>Без админских операций и прав</li>
+          </ul>
+          <button class="btn-primary entry-btn" id="demo-start-btn-card" type="button">Попробовать демо</button>
+        </article>
       </div>
-    </div>
+      <p class="entry-note" id="entry-note"></p>
+    </section>
 
-    <!-- Main two-column layout -->
-    <div class="main-layout">
-
-      <!-- Left: Map (70%) -->
-      <div class="map-column">
-        <div class="card" id="floor-plan-card">
-          <div class="card-header">
-            <h2 class="card-title"><i data-lucide="map" style="width:16px;height:16px"></i> План этажа</h2>
-          </div>
-          <div id="map-legend" class="map-legend" style="display:none"></div>
-          <div class="map-status-legend">
-            <span class="legend-item"><span class="legend-dot status-available"></span>Свободно</span>
-            <span class="legend-item"><span class="legend-dot status-mine"></span>Моё</span>
-            <span class="legend-item"><span class="legend-dot status-occupied"></span>Занято</span>
-            <span class="legend-item"><span class="legend-dot status-blocked"></span>Недоступно</span>
-          </div>
-          <div id="time-window-indicator" class="time-window-indicator">Просмотр: —</div>
-          <div id="space-filter-bar" class="filter-chip-row" style="display:none"></div>
-          <div class="search-bar" id="colleague-search-bar">
-            <div class="search-input-wrap">
-              <i data-lucide="search" style="width:14px;height:14px;color:var(--text-3)"></i>
-              <input id="colleague-search" type="text" placeholder="Найти коллегу..." autocomplete="off">
-              <button id="colleague-search-clear" class="search-clear-btn" style="display:none" title="Очистить">✕</button>
-            </div>
-            <div id="search-dropdown" class="search-dropdown" style="display:none"></div>
-          </div>
-          <div class="map-zoom-wrapper" id="map-zoom-wrapper">
-            <div class="map-controls" id="map-controls" style="display:none">
-              <button class="map-ctrl-btn" id="zoom-in-btn" title="Увеличить" aria-label="Увеличить карту">+</button>
-              <button class="map-ctrl-btn" id="zoom-out-btn" title="Уменьшить" aria-label="Уменьшить карту">−</button>
-              <button class="map-ctrl-btn" id="focus-my-desk-btn" title="Моё место" aria-label="Показать моё место" style="font-size:14px;line-height:1">◎</button>
-              <button class="map-ctrl-btn" id="fit-reset-btn" title="Вписать целиком" aria-label="Вписать карту целиком">FIT</button>
-              <button class="map-ctrl-btn" id="fit-height-btn" title="По высоте" aria-label="Подогнать карту по высоте">H</button>
-              <span class="zoom-indicator" id="zoom-indicator">100%</span>
-            </div>
-            <div class="map-zoom-content" id="map-zoom-content">
-              <div id="map-image-frame">
-                <img id="floor-plan-image" alt="План этажа">
-                <svg id="desk-svg-overlay" class="plan-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"></svg>
-              </div>
-            </div>
-          </div>
-        </div>
+    <section class="how reveal" id="how-it-works">
+      <div class="how-head">
+        <h2>Как это работает</h2>
+        <p>Путь пользователя от выбора дня до подтверждения присутствия.</p>
       </div>
-
-      <!-- Right: Panel (30%) -->
-      <div class="panel-column" id="panel-column" data-sheet-state="collapsed">
-        <div class="sheet-handle" aria-hidden="true"></div>
-        <div class="sheet-mini-summary" id="sheet-mini-summary">Панель бронирования</div>
-
-        <!-- Desk detail (shown when desk is selected) -->
-        <div class="card desk-detail-card" id="desk-detail-card">
-          <div id="desk-detail-empty" class="desk-detail-empty">Выберите место на карте или найдите коллегу</div>
-          <div id="desk-detail-content"></div>
-        </div>
-
-        <!-- Tabs: На этаже / Мои брони -->
-        <div class="panel-card">
-          <div class="panel-tabs">
-            <button class="panel-tab-btn active" data-tab="floor">
-              <i data-lucide="users" style="width:13px;height:13px"></i>
-              На этаже
-              <span id="colleagues-count" class="badge" style="background:var(--bg-2);color:var(--text-2);border:1px solid var(--border)"></span>
-            </button>
-            <button class="panel-tab-btn" data-tab="bookings">
-              <i data-lucide="bookmark" style="width:13px;height:13px"></i>
-              Мои брони
-            </button>
-          </div>
-          <div id="colleagues-section" class="panel-tab-content">
-            <div id="colleagues-list">
-              <p class="empty" style="padding:20px 16px;font-size:12px">Выберите этаж для отображения</p>
-            </div>
-          </div>
-          <div class="panel-tab-content" id="panel-bookings-tab" style="display:none">
-            <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-              <button id="refresh-bookings" class="btn btn-secondary btn-sm">Обновить</button>
-            </div>
-            <div id="my-bookings"><p class="empty">Нет активных бронирований</p></div>
-          </div>
-        </div>
-
+      <div class="how-grid">
+        <article class="how-step">
+          <span>01</span>
+          <h3>Выберите офис, этаж и дату</h3>
+          <p>Система сразу подгружает доступные зоны и статус мест на карте.</p>
+        </article>
+        <article class="how-step">
+          <span>02</span>
+          <h3>Найдите место на интерактивной схеме</h3>
+          <p>Фильтруйте по зонам, типам столов и занятости в реальном времени.</p>
+        </article>
+        <article class="how-step">
+          <span>03</span>
+          <h3>Подтвердите бронь в 1-2 клика</h3>
+          <p>Слот сохраняется мгновенно, конфликтующие пересечения блокируются.</p>
+        </article>
+        <article class="how-step">
+          <span>04</span>
+          <h3>Сделайте QR check-in</h3>
+          <p>Подтверждение присутствия снижает no-show и улучшает точность данных.</p>
+        </article>
       </div>
-    </div>
-
-  </div>
-
-  <!-- Toast notifications (fixed, outside layout flow) -->
-  <div id="messages" class="messages-toast"></div>
-
-  <!-- Mobile: open panel sheet -->
-  <button class="sheet-toggle-btn" id="sheet-toggle-btn" aria-label="Открыть панель" aria-expanded="false">
-    <i data-lucide="layout-panel-right" style="width:20px;height:20px"></i>
-  </button>
-
-  <!-- Notification drawer -->
-  <div class="notif-backdrop" id="notif-backdrop"></div>
-  <aside class="notif-drawer" id="notif-drawer" aria-label="Уведомления">
-    <div class="notif-drawer-header">
-      <span class="notif-drawer-title">
-        <i data-lucide="bell" style="width:15px;height:15px"></i>
-        Уведомления
-      </span>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-secondary btn-sm" id="notif-clear-btn">Очистить всё</button>
-        <button class="notif-close-btn" id="notif-drawer-close" aria-label="Закрыть">
-          <i data-lucide="x" style="width:15px;height:15px"></i>
-        </button>
+      <div class="how-important">
+        <strong>Ключевой эффект:</strong> единый сценарий снижает no-show и убирает ручную координацию через чаты.
       </div>
-    </div>
-    <div class="notif-drawer-body" id="notif-drawer-body">
-      <p class="empty" style="padding:40px 16px">Нет уведомлений</p>
-    </div>
-  </aside>
+      <div class="how-actions">
+        <a class="btn-ghost" href="#entry-router">Перейти к выбору режима</a>
+      </div>
+    </section>
 
-  <!-- Profile modal -->
-  <div class="profile-modal-overlay" id="profile-modal-overlay" style="display:none">
-    <div class="profile-modal" id="profile-modal"></div>
-  </div>
+    <section class="demo-strip reveal">
+      <div>
+        <h2>Нужно быстро показать продукт команде?</h2>
+        <p class="demo-badge">Demo ограничен пользовательским режимом</p>
+        <p>
+          Запускайте демо во вкладке за один клик: тестовая сессия изолирована и не дает админских прав.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <button class="btn-primary" id="demo-start-btn-bottom" type="button">Запустить демо</button>
+        <a class="btn-ghost" href="./login.html">Войти в рабочий аккаунт</a>
+      </div>
+    </section>
+  </main>
 
-  <script type="module" src="./app.js"></script>
-  <script>if (window.lucide) lucide.createIcons();</script>
+  <script>
+  function decodeJwtPayload(token) {
+    try {
+      const part = String(token || "").split(".")[1];
+      if (!part) return null;
+      const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+      return JSON.parse(atob(padded));
+    } catch {
+      return null;
+    }
+  }
+
+  const demoButtons = [
+    document.getElementById("demo-start-btn"),
+    document.getElementById("demo-start-btn-bottom"),
+    document.getElementById("demo-start-btn-card"),
+  ].filter(Boolean);
+  const demoButtonLabels = new Map([
+    [document.getElementById("demo-start-btn"), "Попробовать демо"],
+    [document.getElementById("demo-start-btn-bottom"), "Запустить демо"],
+    [document.getElementById("demo-start-btn-card"), "Попробовать демо"],
+  ]);
+  const demoNote = document.getElementById("demo-note");
+  const entryNote = document.getElementById("entry-note");
+  const adminOpenBtn = document.getElementById("admin-open-btn");
+
+  function isTokenExpired(token) {
+    const payload = decodeJwtPayload(token);
+    if (!payload || typeof payload.exp !== "number") return true;
+    return payload.exp * 1000 < Date.now();
+  }
+
+  function resolveAdminUrl() {
+    const configured = typeof window.__DESKBOOK_ADMIN_URL === "string"
+      ? window.__DESKBOOK_ADMIN_URL.trim()
+      : "";
+    if (configured) return configured;
+    try {
+      const url = new URL(window.location.href);
+      url.port = "5174";
+      url.pathname = "/";
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    } catch {
+      return "http://localhost:5174/";
+    }
+  }
+
+  function setLandingNote(message) {
+    const text = String(message || "");
+    if (demoNote) demoNote.textContent = text;
+    if (entryNote) entryNote.textContent = text;
+  }
+
+  function clearUserSession() {
+    localStorage.removeItem("user_token");
+    localStorage.removeItem("user_username");
+  }
+
+  function clearAdminSession() {
+    localStorage.removeItem("admin_token");
+    localStorage.removeItem("admin_username");
+  }
+
+  function redirectToAdmin() {
+    window.location.href = resolveAdminUrl();
+  }
+
+  function routeExistingSession() {
+    const adminToken = localStorage.getItem("admin_token");
+    if (adminToken) {
+      if (isTokenExpired(adminToken)) {
+        clearAdminSession();
+      } else {
+        const adminPayload = decodeJwtPayload(adminToken);
+        const adminUsername =
+          localStorage.getItem("admin_username")
+          || (adminPayload && typeof adminPayload.sub === "string" ? adminPayload.sub : "");
+        if (adminUsername) localStorage.setItem("admin_username", adminUsername);
+        redirectToAdmin();
+        return true;
+      }
+    }
+
+    const userToken = localStorage.getItem("user_token");
+    const userUsername = localStorage.getItem("user_username");
+    if (userToken) {
+      if (isTokenExpired(userToken) || !userUsername) {
+        clearUserSession();
+      } else {
+        const userPayload = decodeJwtPayload(userToken);
+        if (String(userPayload && userPayload.role || "").toLowerCase() === "admin") {
+          const adminUsername = (userPayload && typeof userPayload.sub === "string")
+            ? userPayload.sub
+            : userUsername;
+          localStorage.setItem("admin_token", userToken);
+          if (adminUsername) localStorage.setItem("admin_username", adminUsername);
+          clearUserSession();
+          redirectToAdmin();
+          return true;
+        }
+        window.location.href = "./app.html";
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  const redirected = routeExistingSession();
+  if (!redirected) {
+    setLandingNote("");
+  }
+
+  async function startDemo() {
+    demoButtons.forEach((b) => { b.disabled = true; b.textContent = "Запуск..."; });
+    setLandingNote("");
+    try {
+      const resp = await fetch("/api/auth/demo", { method: "POST" });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.detail || "Демо режим временно недоступен");
+      }
+      const data = await resp.json();
+      clearAdminSession();
+      localStorage.setItem("user_token", data.access_token);
+      localStorage.setItem("user_username", data.username || "demo_user");
+      if (data.office_id) localStorage.setItem("dk_office", String(data.office_id));
+      if (data.floor_id) localStorage.setItem("dk_floor", String(data.floor_id));
+      window.location.href = "./app.html";
+    } catch (e) {
+      setLandingNote(e.message || "Не удалось запустить демо");
+      demoButtons.forEach((b) => {
+        b.disabled = false;
+        b.textContent = demoButtonLabels.get(b) || "Попробовать демо";
+      });
+    }
+  }
+
+  if (adminOpenBtn) {
+    adminOpenBtn.addEventListener("click", redirectToAdmin);
+  }
+  demoButtons.forEach((btn) => btn.addEventListener("click", startDemo));
+  </script>
 </body>
 </html>

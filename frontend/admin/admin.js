@@ -4,6 +4,22 @@ const API_BASE = "/api";
 var _pages = {};
 var PAGE_SIZE = 15;
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function safeHref(value) {
+  var href = String(value || "").trim();
+  if (!href) return "";
+  if (/^(https?:\/\/|\/)/i.test(href)) return href;
+  return "";
+}
+
 function _getPage(tableId) { return _pages[tableId] || 1; }
 function _setPage(tableId, p) { _pages[tableId] = p; }
 
@@ -308,15 +324,21 @@ async function loadAnalytics() {
       occupancyEl.innerHTML = '<p class="empty">Нет данных</p>';
     } else {
       data.occupancy_by_office.forEach(function (o) {
+        var officeNameEsc = escapeHtml(o.office_name || "");
+        var bookedToday = Number(o.booked_today) || 0;
+        var totalDesks = Number(o.total_desks) || 0;
+        var occupancyPct = Number(o.occupancy_pct);
+        if (!Number.isFinite(occupancyPct)) occupancyPct = 0;
+        occupancyPct = Math.max(0, Math.min(100, occupancyPct));
         const row = document.createElement("div");
         row.style.cssText = "margin-bottom:12px";
         row.innerHTML = (
           '<div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:13px">' +
-            '<span style="font-weight:500">' + o.office_name + '</span>' +
-            '<span style="color:var(--text-2)">' + o.booked_today + ' / ' + o.total_desks + ' мест (' + o.occupancy_pct + '%)</span>' +
+            '<span style="font-weight:500">' + officeNameEsc + '</span>' +
+            '<span style="color:var(--text-2)">' + bookedToday + ' / ' + totalDesks + ' мест (' + occupancyPct + '%)</span>' +
           '</div>' +
           '<div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden">' +
-            '<div style="height:100%;background:var(--accent);border-radius:4px;width:' + o.occupancy_pct + '%;transition:width .4s"></div>' +
+            '<div style="height:100%;background:var(--accent);border-radius:4px;width:' + occupancyPct + '%;transition:width .4s"></div>' +
           '</div>'
         );
         occupancyEl.append(row);
@@ -326,31 +348,37 @@ async function loadAnalytics() {
     const topDesksBody = document.getElementById("top-desks-body");
     topDesksBody.innerHTML = (data.top_desks && data.top_desks.length)
       ? data.top_desks.map(function (d) {
-          return "<tr><td>" + d.label + "</td><td>" + d.floor_name + "</td><td>" + d.office_name + "</td><td><strong>" + d.total + "</strong></td></tr>";
+          var labelEsc = escapeHtml(d.label || "");
+          var floorEsc = escapeHtml(d.floor_name || "");
+          var officeEsc = escapeHtml(d.office_name || "");
+          var total = Number(d.total) || 0;
+          return "<tr><td>" + labelEsc + "</td><td>" + floorEsc + "</td><td>" + officeEsc + "</td><td><strong>" + total + "</strong></td></tr>";
         }).join("")
       : '<tr><td colspan="4" class="empty">Нет данных</td></tr>';
 
     const topUsersBody = document.getElementById("top-users-body");
     topUsersBody.innerHTML = (data.top_users && data.top_users.length)
       ? data.top_users.map(function (u) {
-          return "<tr><td>" + u.user_id + "</td><td><strong>" + u.total + "</strong></td></tr>";
+          return "<tr><td>" + escapeHtml(u.user_id) + "</td><td><strong>" + u.total + "</strong></td></tr>";
         }).join("")
       : '<tr><td colspan="2" class="empty">Нет данных</td></tr>';
 
     var chartEl = document.getElementById("desks-chart");
     if (chartEl && data.top_desks && data.top_desks.length) {
-      var maxVal = data.top_desks[0].total || 1;
+      var maxVal = Number(data.top_desks[0].total) || 1;
       chartEl.innerHTML = data.top_desks.slice(0, 10).map(function (d) {
-        var pct = Math.round(d.total / maxVal * 100);
+        var total = Number(d.total) || 0;
+        var pct = Math.max(0, Math.min(100, Math.round(total / maxVal * 100)));
+        var labelEsc = escapeHtml(d.label || "");
         return (
           '<div style="display:flex;align-items:center;gap:10px;font-size:13px">' +
-            '<span style="width:120px;text-align:right;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + d.label + '">' + d.label + '</span>' +
+            '<span style="width:120px;text-align:right;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + labelEsc + '">' + labelEsc + '</span>' +
             '<div style="flex:1;background:var(--border);border-radius:4px;height:20px;overflow:hidden">' +
               '<div style="height:100%;background:var(--accent);border-radius:4px;width:' + pct + '%;transition:width .4s;display:flex;align-items:center;padding-left:6px">' +
-                '<span style="font-size:11px;font-weight:600;color:white;white-space:nowrap">' + (pct > 15 ? d.total : '') + '</span>' +
+                '<span style="font-size:11px;font-weight:600;color:white;white-space:nowrap">' + (pct > 15 ? total : '') + '</span>' +
               '</div>' +
             '</div>' +
-            '<span style="width:24px;font-weight:600">' + d.total + '</span>' +
+            '<span style="width:24px;font-weight:600">' + total + '</span>' +
           '</div>'
         );
       }).join('');
@@ -391,8 +419,10 @@ function renderOfficesTable() {
   }
   var slice = pageSlice(state.offices, 'offices');
   slice.forEach(function (o) {
+    var officeNameEsc = escapeHtml(o.name || "");
+    var officeAddressEsc = escapeHtml(o.address || "—");
     var tr = document.createElement("tr");
-    tr.innerHTML = "<td>" + o.id + "</td><td>" + o.name + "</td><td>" + (o.address || "—") + "</td><td></td>";
+    tr.innerHTML = "<td>" + o.id + "</td><td>" + officeNameEsc + "</td><td>" + officeAddressEsc + "</td><td></td>";
     tr.querySelector("td:last-child").append(
       makeDeleteBtn("Удалить", async function () {
         if (!confirm("Удалить офис «" + o.name + "»?")) return;
@@ -419,11 +449,14 @@ function renderFloorsTable() {
   }
   var slice = pageSlice(state.floors, 'floors');
   slice.forEach(function (f) {
+    var floorNameEsc = escapeHtml(f.name || "");
+    var officeNameEsc = escapeHtml(getOfficeName(f.office_id));
+    var planHref = safeHref(f.plan_url);
     var tr = document.createElement("tr");
-    var planCell = f.plan_url
-      ? '<a href="' + f.plan_url + '" target="_blank" rel="noopener">Посмотреть</a>'
+    var planCell = planHref
+      ? '<a href="' + escapeHtml(planHref) + '" target="_blank" rel="noopener">Посмотреть</a>'
       : "Нет";
-    tr.innerHTML = "<td>" + f.id + "</td><td>" + getOfficeName(f.office_id) + "</td><td>" + f.name + "</td><td>" + planCell + "</td><td></td>";
+    tr.innerHTML = "<td>" + f.id + "</td><td>" + officeNameEsc + "</td><td>" + floorNameEsc + "</td><td>" + planCell + "</td><td></td>";
     tr.querySelector("td:last-child").append(
       makeDeleteBtn("Удалить", async function () {
         if (!confirm("Удалить этаж «" + f.name + "»?")) return;
@@ -449,14 +482,18 @@ function renderDesksTable() {
     return;
   }
   state.desks.forEach(function (d) {
+    var floorNameEsc = escapeHtml(getFloorName(d.floor_id));
+    var deskLabelEsc = escapeHtml(d.label || "");
+    var spaceLabelEsc = escapeHtml(SPACE_LABELS[d.space_type] || d.space_type || "—");
+    var assignedToEsc = escapeHtml(d.assigned_to || "—");
     var tr = document.createElement("tr");
     tr.innerHTML = (
       "<td>" + d.id + "</td>" +
-      "<td>" + getFloorName(d.floor_id) + "</td>" +
-      "<td>" + d.label + "</td>" +
+      "<td>" + floorNameEsc + "</td>" +
+      "<td>" + deskLabelEsc + "</td>" +
       "<td>" + (d.type === "fixed" ? "Закреплённое" : "Гибкое") + "</td>" +
-      "<td>" + (SPACE_LABELS[d.space_type] || d.space_type || "—") + "</td>" +
-      "<td>" + (d.assigned_to || "—") + "</td>" +
+      "<td>" + spaceLabelEsc + "</td>" +
+      "<td>" + assignedToEsc + "</td>" +
       "<td></td>"
     );
     var actionCell = tr.querySelector("td:last-child");
@@ -511,11 +548,13 @@ function renderPoliciesTable() {
   }
   var slice = pageSlice(state.policies, 'policies');
   slice.forEach(function (p) {
+    var policyOfficeEsc = escapeHtml(getOfficeName(p.office_id));
+    var policyNameEsc = escapeHtml(p.name || "");
     var tr = document.createElement("tr");
     tr.innerHTML = (
       "<td>" + p.id + "</td>" +
-      "<td>" + getOfficeName(p.office_id) + "</td>" +
-      "<td>" + p.name + "</td>" +
+      "<td>" + policyOfficeEsc + "</td>" +
+      "<td>" + policyNameEsc + "</td>" +
       "<td>" + p.min_days_ahead + "–" + p.max_days_ahead + "</td>" +
       "<td>" + p.min_duration_minutes + "–" + p.max_duration_minutes + "</td>" +
       "<td>" + p.no_show_timeout_minutes + "</td>" +
@@ -549,16 +588,16 @@ function renderReservationsTable() {
   var slice = pageSlice(state.reservations, 'reservations');
   slice.forEach(function (r) {
     var tr = document.createElement("tr");
-    var checkinText = r.checked_in_at ? r.checked_in_at.slice(11, 16) : "—";
+    var checkinText = escapeHtml(r.checked_in_at ? r.checked_in_at.slice(11, 16) : "—");
     var statusClass = r.status === "active" ? "active" : "cancelled";
     var statusText  = r.status === "active" ? "Активно" : "Отменено";
     tr.innerHTML = (
       "<td>" + r.id + "</td>" +
-      "<td>" + r.desk_id + "</td>" +
-      "<td>" + r.user_id + "</td>" +
-      "<td>" + r.reservation_date + "</td>" +
-      "<td>" + (r.start_time ? r.start_time.slice(0, 5) : "—") + "</td>" +
-      "<td>" + (r.end_time ? r.end_time.slice(0, 5) : "—") + "</td>" +
+      "<td>" + escapeHtml(r.desk_id) + "</td>" +
+      "<td>" + escapeHtml(r.user_id) + "</td>" +
+      "<td>" + escapeHtml(r.reservation_date) + "</td>" +
+      "<td>" + escapeHtml(r.start_time ? r.start_time.slice(0, 5) : "—") + "</td>" +
+      "<td>" + escapeHtml(r.end_time ? r.end_time.slice(0, 5) : "—") + "</td>" +
       "<td>" + checkinText + "</td>" +
       "<td><span class=\"badge " + statusClass + "\">" + statusText + "</span></td>" +
       "<td></td>"
@@ -674,7 +713,7 @@ function isBlockType(spaceType) {
 }
 
 function escHtml(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return escapeHtml(s);
 }
 
 // ── Desk anchor (small dot, center = position_x + w/2, position_y + h/2) ────
@@ -1414,6 +1453,9 @@ document.querySelectorAll(".nav-item[data-tab]").forEach(function (btn) {
     if (btn.dataset.tab === "editor" && typeof populateEdFloorSelect === "function") {
       populateEdFloorSelect(state.floors, state.offices);
     }
+    if (btn.dataset.tab === "components" && typeof renderComponentLibrary === "function") {
+      renderComponentLibrary();
+    }
   });
 });
 
@@ -1615,27 +1657,34 @@ function renderUsers() {
   if (!tbody) return;
   var slice = pageSlice(filtered, 'users');
   tbody.innerHTML = slice.map(function(u) {
+    var uname = String(u.username || "");
+    var unameEsc = escapeHtml(uname);
+    var unameEnc = encodeURIComponent(uname);
+    var emailEsc = escapeHtml(u.email || "—");
+    var fullNameEsc = escapeHtml(u.full_name || "—");
+    var deptEsc = escapeHtml(u.department || "—");
+    var statusEsc = escapeHtml(u.user_status || "available");
     return (
       '<tr style="opacity:' + (u.is_active === false ? '0.5' : '1') + '">' +
         '<td>' + u.id + '</td>' +
-        '<td><strong>' + u.username + '</strong></td>' +
-        '<td style="font-size:12px;color:var(--text-2)">' + (u.email || '—') + '</td>' +
-        '<td>' + (u.full_name || '—') + '</td>' +
-        '<td>' + (u.department || '—') + '</td>' +
+        '<td><strong>' + unameEsc + '</strong></td>' +
+        '<td style="font-size:12px;color:var(--text-2)">' + emailEsc + '</td>' +
+        '<td>' + fullNameEsc + '</td>' +
+        '<td>' + deptEsc + '</td>' +
         '<td>' +
-          '<select class="desk-select" style="font-size:12px;padding:2px 6px" onchange="adminSetRole(\'' + u.username + '\',this.value)">' +
+          '<select class="desk-select" style="font-size:12px;padding:2px 6px" onchange="adminSetRole(decodeURIComponent(\'' + unameEnc + '\'),this.value)">' +
             '<option value="user"' + (u.role === 'user' ? ' selected' : '') + '>user</option>' +
             '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>admin</option>' +
           '</select>' +
         '</td>' +
-        '<td><span style="font-size:11px;background:var(--bg-2);padding:2px 6px;border-radius:4px">' + (u.user_status || 'available') + '</span></td>' +
+        '<td><span style="font-size:11px;background:var(--bg-2);padding:2px 6px;border-radius:4px">' + statusEsc + '</span></td>' +
         '<td style="text-align:center">' +
-          '<button onclick="adminToggleActive(\'' + u.username + '\',' + !!u.is_active + ')" ' +
+          '<button onclick="adminToggleActive(decodeURIComponent(\'' + unameEnc + '\'),' + !!u.is_active + ')" ' +
           'class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px">' +
           (u.is_active === false ? '&#10003; Активировать' : '&#8856; Заблокировать') + '</button>' +
         '</td>' +
         '<td>' +
-          '<button onclick="adminDeleteUser(\'' + u.username + '\')" class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 6px;color:#dc2626">Удалить</button>' +
+          '<button onclick="adminDeleteUser(decodeURIComponent(\'' + unameEnc + '\'))" class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 6px;color:#dc2626">Удалить</button>' +
         '</td>' +
       '</tr>'
     );
@@ -1645,7 +1694,7 @@ function renderUsers() {
 
 async function adminSetRole(username, role) {
   try {
-    await apiRequest('/admin/users/' + username, { method: 'PATCH', body: JSON.stringify({ role: role }) });
+    await apiRequest('/admin/users/' + encodeURIComponent(username), { method: 'PATCH', body: JSON.stringify({ role: role }) });
     var u = _allUsers.find(function(x) { return x.username === username; });
     if (u) u.role = role;
     showToast('Роль обновлена.', 'success');
@@ -1654,7 +1703,7 @@ async function adminSetRole(username, role) {
 
 async function adminToggleActive(username, currentlyActive) {
   try {
-    await apiRequest('/admin/users/' + username, { method: 'PATCH', body: JSON.stringify({ is_active: !currentlyActive }) });
+    await apiRequest('/admin/users/' + encodeURIComponent(username), { method: 'PATCH', body: JSON.stringify({ is_active: !currentlyActive }) });
     var u = _allUsers.find(function(x) { return x.username === username; });
     if (u) u.is_active = !currentlyActive;
     renderUsers();
@@ -1665,7 +1714,7 @@ async function adminToggleActive(username, currentlyActive) {
 async function adminDeleteUser(username) {
   if (!confirm('Удалить пользователя ' + username + '? Это действие нельзя отменить.')) return;
   try {
-    await apiRequest('/admin/users/' + username, { method: 'DELETE' });
+    await apiRequest('/admin/users/' + encodeURIComponent(username), { method: 'DELETE' });
     _allUsers = _allUsers.filter(function(u) { return u.username !== username; });
     renderUsers();
     showToast('Пользователь удалён.', 'success');
@@ -1733,7 +1782,7 @@ document.getElementById("add-dept-btn")?.addEventListener("click", async () => {
     await loadDepartments();
     setTimeout(() => { if (msgEl) msgEl.innerHTML = ""; }, 3000);
   } catch (e) {
-    if (msgEl) msgEl.innerHTML = '<span class="error-msg">' + e.message + '</span>';
+    if (msgEl) msgEl.innerHTML = '<span class="error-msg">' + escapeHtml(e.message) + '</span>';
   }
 });
 

@@ -1,0 +1,532 @@
+/* ComponentEditor — visual SVG draw/code editor */
+
+/* ─── Root layout ──────────────────────────────────────────────────────────── */
+
+.ce-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #f8fafc;
+  font-size: 13px;
+  color: #1e293b;
+}
+
+/* ─── Header ───────────────────────────────────────────────────────────────── */
+
+.ce-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.ce-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.ce-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ─── Error banner ─────────────────────────────────────────────────────────── */
+
+.ce-error-banner {
+  padding: 8px 20px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 12.5px;
+  border-bottom: 1px solid #fca5a5;
+  flex-shrink: 0;
+}
+
+/* ─── Three-column layout ──────────────────────────────────────────────────── */
+
+.ce-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr 200px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── Sidebar (left) ───────────────────────────────────────────────────────── */
+
+.ce-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  border-right: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+.ce-section {
+  padding: 12px 14px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.ce-section:last-child {
+  border-bottom: none;
+  flex: 1;
+}
+
+.ce-section-title {
+  margin: 0 0 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+/* ─── Form fields ──────────────────────────────────────────────────────────── */
+
+.ce-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+}
+
+.ce-field:last-child {
+  margin-bottom: 0;
+}
+
+.ce-field label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.ce-field input,
+.ce-field select {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  font-size: 12.5px;
+  background: #fff;
+  color: #1e293b;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.ce-field input:focus,
+.ce-field select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.ce-field input:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.ce-field-hint {
+  font-size: 10.5px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.ce-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ce-field-full {
+  grid-column: span 2;
+}
+
+/* ─── Tool palette ─────────────────────────────────────────────────────────── */
+
+.ce-tool-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ce-tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #475569;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.ce-tool-btn:hover {
+  background: #e0e7ff;
+  border-color: #818cf8;
+  color: #3730a3;
+}
+
+.ce-tool-btn.active {
+  background: #3b82f6;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+/* ─── Style controls ───────────────────────────────────────────────────────── */
+
+.ce-style-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ce-color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ce-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid #cbd5e1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.1s;
+}
+
+.ce-swatch:hover {
+  transform: scale(1.1);
+}
+
+.ce-color-hidden {
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  position: absolute;
+}
+
+.ce-color-val {
+  font-size: 11px;
+  font-family: monospace;
+  color: #475569;
+}
+
+.ce-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ce-slider-row input[type="range"] {
+  flex: 1;
+  accent-color: #3b82f6;
+  height: 4px;
+  border: none;
+  padding: 0;
+  background: transparent;
+}
+
+.ce-slider-val {
+  font-size: 11px;
+  font-family: monospace;
+  color: #475569;
+  min-width: 24px;
+  text-align: right;
+}
+
+/* ─── Shape props ──────────────────────────────────────────────────────────── */
+
+.ce-props-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ce-empty-hint {
+  font-size: 11.5px;
+  color: #94a3b8;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ce-shape-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+/* ─── Main canvas area ─────────────────────────────────────────────────────── */
+
+.ce-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.ce-mode-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.ce-tab {
+  padding: 8px 20px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.ce-tab:hover {
+  color: #3b82f6;
+}
+
+.ce-tab.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+}
+
+/* ─── SVG canvas ───────────────────────────────────────────────────────────── */
+
+.ce-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: auto;
+  background: #f1f5f9;
+  user-select: none;
+}
+
+.ce-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 300px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  margin: 12px;
+  width: calc(100% - 24px);
+  height: calc(100% - 24px);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+.ce-shape-selected {
+  outline: 1.5px dashed #1476d6;
+  outline-offset: 1px;
+}
+
+.ce-canvas-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12.5px;
+  color: #94a3b8;
+  pointer-events: none;
+  text-align: center;
+}
+
+/* ─── Code pane ────────────────────────────────────────────────────────────── */
+
+.ce-code-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 12px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.ce-code-area {
+  width: 100%;
+  font-family: 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  resize: vertical;
+  background: #0f172a;
+  color: #e2e8f0;
+  outline: none;
+  transition: border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.ce-code-area:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.15);
+}
+
+.ce-code-error {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: #ef4444;
+}
+
+.ce-code-preview {
+  margin-top: 12px;
+  flex: 1;
+}
+
+.ce-preview-label {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+/* ─── Right preview panel ──────────────────────────────────────────────────── */
+
+.ce-right-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-left: 1px solid #e2e8f0;
+  background: #fff;
+  overflow-y: auto;
+}
+
+.ce-preview-box {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fbff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  min-height: 120px;
+  width: 100%;
+}
+
+.ce-preview-box svg {
+  max-width: 100%;
+  max-height: 180px;
+}
+
+.ce-preview-empty {
+  font-size: 11.5px;
+  color: #94a3b8;
+  text-align: center;
+  min-height: 80px;
+}
+
+.ce-viewbox-display {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.ce-viewbox-display span {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.ce-viewbox-display code {
+  font-size: 11px;
+  font-family: monospace;
+  background: #f1f5f9;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: #334155;
+  word-break: break-all;
+}
+
+/* ─── Buttons ──────────────────────────────────────────────────────────────── */
+
+.ce-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+
+.ce-btn:hover {
+  background: #f1f5f9;
+}
+
+.ce-btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: #64748b;
+}
+
+.ce-btn-ghost:hover {
+  background: #f1f5f9;
+  color: #374151;
+}
+
+.ce-btn-primary {
+  background: #2563eb;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
+.ce-btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.ce-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ce-btn-danger {
+  border-color: #fca5a5;
+  color: #dc2626;
+  background: #fff;
+}
+
+.ce-btn-danger:hover {
+  background: #fee2e2;
+}
+
+.ce-btn-sm {
+  padding: 4px 9px;
+  font-size: 11.5px;
+}

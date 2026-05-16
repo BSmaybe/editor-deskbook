@@ -44,16 +44,81 @@
   const form = document.getElementById("login-form");
   const errorMsg = document.getElementById("error-msg");
 
-  function isTokenExpired(token) {
+  function decodeJwtPayload(token) {
     try {
-      const payload = JSON.parse(atob(token.split(".")[1]));
-      return payload.exp * 1000 < Date.now();
-    } catch { return true; }
+      const part = String(token || "").split(".")[1];
+      if (!part) return null;
+      const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+      return JSON.parse(atob(padded));
+    } catch {
+      return null;
+    }
   }
+
+  function isTokenExpired(token) {
+    const payload = decodeJwtPayload(token);
+    if (!payload || typeof payload.exp !== "number") return true;
+    return payload.exp * 1000 < Date.now();
+  }
+
+  function resolveAdminUrl() {
+    const configured = typeof window.__DESKBOOK_ADMIN_URL === "string"
+      ? window.__DESKBOOK_ADMIN_URL.trim()
+      : "";
+    if (configured) return configured;
+    try {
+      const url = new URL(window.location.href);
+      url.port = "5174";
+      url.pathname = "/";
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    } catch {
+      return "http://localhost:5174/";
+    }
+  }
+
+  function redirectToAdmin() {
+    window.location.href = resolveAdminUrl();
+  }
+
+  let hasRedirected = false;
+  const _adminToken = localStorage.getItem("admin_token");
+  if (_adminToken) {
+    if (isTokenExpired(_adminToken)) {
+      localStorage.removeItem("admin_token");
+      localStorage.removeItem("admin_username");
+    } else {
+      const adminPayload = decodeJwtPayload(_adminToken);
+      const adminUsername =
+        localStorage.getItem("admin_username")
+        || (adminPayload && typeof adminPayload.sub === "string" ? adminPayload.sub : "");
+      if (adminUsername) localStorage.setItem("admin_username", adminUsername);
+      hasRedirected = true;
+      redirectToAdmin();
+    }
+  }
+
   const _t = localStorage.getItem("user_token");
-  if (_t && !isTokenExpired(_t) && localStorage.getItem("user_username")) {
-    window.location.href = "./index.html";
-  } else {
+  const _u = localStorage.getItem("user_username");
+  if (!hasRedirected && _t && _u && !isTokenExpired(_t)) {
+    const userPayload = decodeJwtPayload(_t);
+    if (String(userPayload && userPayload.role || "").toLowerCase() === "admin") {
+      const adminUsername = (userPayload && typeof userPayload.sub === "string")
+        ? userPayload.sub
+        : _u;
+      localStorage.setItem("admin_token", _t);
+      if (adminUsername) localStorage.setItem("admin_username", adminUsername);
+      localStorage.removeItem("user_token");
+      localStorage.removeItem("user_username");
+      hasRedirected = true;
+      redirectToAdmin();
+    } else {
+      hasRedirected = true;
+      window.location.href = "./app.html";
+    }
+  } else if (!hasRedirected) {
     localStorage.removeItem("user_token");
     localStorage.removeItem("user_username");
   }
@@ -74,9 +139,26 @@
         throw new Error(body.detail || `Ошибка ${resp.status}`);
       }
       const { access_token } = await resp.json();
+      const payload = decodeJwtPayload(access_token);
+      const role = String(payload && payload.role || "user").toLowerCase();
+      const tokenUsername = (payload && typeof payload.sub === "string" && payload.sub.trim())
+        ? payload.sub.trim()
+        : username;
+
+      if (role === "admin") {
+        localStorage.removeItem("user_token");
+        localStorage.removeItem("user_username");
+        localStorage.setItem("admin_token", access_token);
+        localStorage.setItem("admin_username", tokenUsername);
+        redirectToAdmin();
+        return;
+      }
+
+      localStorage.removeItem("admin_token");
+      localStorage.removeItem("admin_username");
       localStorage.setItem("user_token", access_token);
-      localStorage.setItem("user_username", username);
-      window.location.href = "./index.html";
+      localStorage.setItem("user_username", tokenUsername);
+      window.location.href = "./app.html";
     } catch (e) {
       errorMsg.textContent = e.message;
       errorMsg.classList.remove("hidden");

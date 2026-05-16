@@ -14,6 +14,14 @@ cp .env.example .env
 # Отредактируйте .env при необходимости (по умолчанию все значения готовы к локальной разработке)
 ```
 
+Для production:
+- `APP_ENV=production`
+- задайте сильный `SECRET_KEY` (минимум 32 символа)
+- укажите явные `ALLOWED_ORIGINS` (не `*`)
+
+Для публичного ознакомления:
+- включите `DEMO_MODE=true`, чтобы на лендинге работала кнопка «Попробовать демо».
+
 ### 2. Запустить все сервисы
 ```bash
 docker compose up --build -d
@@ -23,13 +31,46 @@ docker compose up --build -d
 |--------|-----|
 | Клиентский интерфейс | http://localhost:5173 |
 | Административная панель | http://localhost:5174 |
+| React admin preview | http://localhost:5175 |
 | REST API | http://localhost:8000 |
 | Swagger UI | http://localhost:8000/docs |
+
+### Маршрутизация на лэндинге (User/Admin/Demo)
+- Лэндинг на `http://localhost:5173` работает как точка входа с тремя сценариями: пользователь, админ, демо.
+- Авто-редирект сессий:
+  - если есть валидный `admin_token`, переход в админку;
+  - иначе если есть валидный `user_token`, переход в клиентское приложение;
+  - просроченные токены очищаются и остается экран выбора режима.
+- Кнопка «Войти как админ» использует:
+  1. `window.__DESKBOOK_ADMIN_URL` (если задана);
+  2. fallback на текущий хост с портом `5174`.
+
+Если админка опубликована на отдельном домене, можно задать URL перед основным скриптом лэндинга в `frontend/client/index.html`:
+
+```html
+<script>
+  window.__DESKBOOK_ADMIN_URL = "https://admin.example.com/";
+</script>
+```
+
+### Hybrid SVG/XML map editor
+- Основной формат редактирования карты: `layout_json` в ревизии этажа.
+- При публикации backend генерирует `semantic_svg`: валидный SVG/XML с `<defs>/<symbol>`, иерархией `building -> storey -> zone -> workplace` и `data-*` атрибутами.
+- Опубликованный SVG доступен как `GET /floors/{floor_id}/layout/published.svg` и возвращает `image/svg+xml` для внешних потребителей карты.
+- Админский editor поддерживает базовые symbols: `desk-short`, `desk-long`, `chair`, `meeting-table`; source of truth остается JSON, SVG является опубликованным артефактом.
+- Миграция на Go находится в `backend-go`: standalone/HTTP renderer `layout_json -> semantic SVG/HTML`, CRUD компонентов и layout draft/publish/export API с тем же контрактом.
+- Первый React shell для editor-only админки находится в `frontend/admin-react`; он подключен отдельным compose-сервисом `admin-react` и не заменяет текущую статическую админку.
+- Go editor API запускается вместе со стеком: `docker compose up -d --build renderer-go`.
+- Чтобы FastAPI начал использовать Go renderer при публикации карт, задайте `GO_RENDERER_URL=http://renderer-go:8080` в `.env`; при недоступности сервиса backend откатится на Python renderer, если `GO_RENDERER_REQUIRED=false`.
+- План миграции на Go backend + React editor-only UI: [docs/GO_REACT_EDITOR_MIGRATION.md](docs/GO_REACT_EDITOR_MIGRATION.md).
 
 ### 3. Проверить работоспособность (smoke-тест)
 ```bash
 # Убедитесь, что ADMIN_REGISTER_SECRET задан в .env, если нужна регистрация администратора
 bash tests/smoke_test.sh
+bash tests/go_renderer_contract.sh
+bash tests/go_components_contract.sh
+bash tests/go_layout_contract.sh
 ```
 
 Smoke-тест последовательно:
@@ -145,6 +186,11 @@ docker compose down -v
 2. **Фаза 2 — QR и anti-no-show**: check-in, автоматическая отмена, QR-генерация.
 3. **Фаза 3 — Админка**: управление планами, политиками, аналитика.
 4. **Фаза 4 — Интеграции**: Teams/Outlook, email, BI-экспорт.
+
+## Передача внешней команде
+Для встречи передачи (tech lead handoff) используйте готовый Q&A пакет:
+
+- [docs/TECH_LEAD_HANDOFF_QA.md](docs/TECH_LEAD_HANDOFF_QA.md)
 
 ## Следующие шаги
 1. Согласование требований и правил бронирования.

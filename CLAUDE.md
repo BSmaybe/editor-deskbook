@@ -4,75 +4,79 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A corporate desk booking system (система бронирования рабочих мест) for office workspace reservation. Phase 1 MVP with in-memory storage — no database yet.
+DeskBook — a map editor product for office floor plans. The system focuses on an admin editor for creating and publishing interactive floor layouts, with a component library and SVG/HTML export.
+
+Booking, reservations, policies, analytics, and client app are **frozen** (501 placeholders) during the editor migration.
 
 ## Running the Project
 
-**Backend (FastAPI):**
+**Via Docker Compose (recommended):**
 ```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+docker compose up --build
 ```
-API runs at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+- Go API: `http://localhost:8000`
+- Admin (vanilla JS): `http://localhost:5174`
+- Admin React (in dev): `http://localhost:5175`
+- PostgreSQL: `localhost:5432`
 
-**Frontend (static files):**
+**React admin dev server (with hot reload):**
 ```bash
-python -m http.server 5173
+cd frontend/admin-react
+npm install
+npm run dev
 ```
-Access at `http://localhost:5173/frontend/`.
-
-No formal test suite or linter configured yet.
+Proxies `/api` to `http://localhost:8000`.
 
 ## Architecture
 
 ```
-backend/app/
-  main.py      — FastAPI route handlers, CORS config, static file serving
-  schemas.py   — Pydantic models for request/response validation
-  storage.py   — In-memory data store with threading.Lock for concurrency
+backend-go/
+  cmd/server/     — Go HTTP server (all API endpoints)
+  internal/       — exporter (SVG/HTML render), svgimport
+  migrations/     — SQL schema (run by docker-compose migrate service)
 
 frontend/
-  index.html   — SPA shell
-  app.js       — All frontend logic (~600 lines), hardcoded API base URL (http://localhost:8000)
-  styles.css   — Styling
+  admin/          — Vanilla JS admin (editor, components) served via nginx
+  admin-react/    — React admin app (Vite, in development)
+  client/         — Client booking UI (frozen, placeholder)
 ```
 
-The frontend and backend are fully decoupled — the frontend communicates with the backend exclusively via REST API using `fetch()`.
+Single Go binary serves ALL API routes. Nginx frontends proxy `/api/` → Go.
 
 ## Key Design Decisions
 
-**Role-based access:** Admin vs. user roles are distinguished by the `X-Role: admin` HTTP header. No authentication system exists yet — the frontend has an "admin toggle" checkbox that sets this header.
+**Auth:** JWT tokens issued by `POST /auth/login`. Admin endpoints require `role: admin` in the token. Token validation uses HMAC-SHA256 (same secret as Python used).
 
-**In-memory storage:** All data lives in `storage.py` dictionaries and is lost on restart. `threading.Lock` prevents concurrent write conflicts (e.g., double-bookings).
+**Database:** PostgreSQL. Schema in `backend-go/migrations/001_schema.sql`. Tables created by the `migrate` compose service on startup.
 
-**Desk types:** Desks are either `flex` (bookable by anyone) or `fixed` (assigned to a specific user via `assigned_to`).
+**Desk types:** `flex` (bookable) or `fixed` (assigned via `assigned_to`).
 
-**Availability check:** `/availability` endpoint validates time overlap against existing reservations before a booking is created.
+**Floor plans:** PNG uploaded via `POST /floors/{floor_id}/plan`, stored in `/app/static/`.
 
-**Floor plans:** PNG images uploaded via `POST /floors/{floor_id}/plan` are stored in `backend/static/` and served at `/static/{filename}`. UUIDs prevent filename collisions.
+**Layout editor:** Full draft/publish workflow with revisions, floor locks, semantic SVG export.
 
-## Core Data Models (`schemas.py`)
-
-- `Office` — office location
-- `Floor` — belongs to an office, has optional `plan_url`
-- `Desk` — belongs to a floor, has `type` (flex/fixed), `zone`, `position_x/y`, optional `assigned_to`
-- `Reservation` — links user + desk + date + time range, `status` is active/cancelled
-- `Policy` — per-office booking rules (min/max days ahead, min/max duration, no-show timeout)
+**Components:** Global component library (CRUD at `/components`), used by the layout editor.
 
 ## API Conventions
 
-- Admin-only endpoints check for `X-Role: admin` header and return `403` if absent.
-- Conflict responses use `409`. Missing resources use `404`.
-- Error bodies follow `{"detail": "..."}` format (FastAPI default).
-- CORS allows all origins (dev config — restrict for production).
+- Auth: Bearer token in `Authorization` header.
+- Admin-only endpoints return `403` if token role != admin.
+- Frozen modules return `501 Not Implemented`.
+- Conflict: `409`. Not found: `404`.
+- Error bodies: `{"detail": "..."}`.
+- CORS: all origins allowed in dev.
 
-## Roadmap Context (`docs/`)
+## Contract Tests
 
-- **Phase 2:** QR code check-in, no-show auto-cancellation
-- **Phase 3:** Interactive floor plan editor, analytics dashboard
-- **Phase 4:** Microsoft Teams/Outlook integrations, BI export
+```bash
+bash tests/go_renderer_contract.sh
+bash tests/go_components_contract.sh
+bash tests/go_layout_contract.sh
+bash tests/smoke_test.sh
+```
 
-When implementing new features, check `docs/ROADMAP.md` and `docs/NEXT_STEPS.md` for planned scope.
+All tests target `http://localhost:8000` by default.
+
+## Roadmap Context
+
+See `docs/GO_REACT_EDITOR_MIGRATION.md` for the active migration plan.
