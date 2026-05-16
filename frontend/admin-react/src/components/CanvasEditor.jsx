@@ -155,6 +155,10 @@ export default function CanvasEditor({
   /* ── selected structure element { type, id } or null ── */
   const [selectedStruct, setSelectedStruct] = useState(null);
 
+  /* ── draw mode helpers (must be before keyboard effect) ── */
+  const isDrawMode = tool.startsWith('draw_');
+  const drawStructType = isDrawMode ? tool.replace('draw_', '') : null;
+
   /* ── local data state ── */
   const [desks, setDesks] = useState([]);
   const [walls, setWalls] = useState([]);
@@ -329,11 +333,6 @@ export default function CanvasEditor({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel.selectedIds, desks, drawPoints, isDrawMode, tool, selectedStruct]);
-
-  /* ── draw mode helpers ── */
-
-  const isDrawMode = tool.startsWith('draw_');
-  const drawStructType = isDrawMode ? tool.replace('draw_', '') : null;
 
   function finishDraw() {
     if (drawPoints.length < 2) {
