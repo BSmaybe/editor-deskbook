@@ -815,3 +815,166 @@ textarea.code-area.full {
     flex-direction: column;
   }
 }
+
+/* ── Modals ───────────────────────────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: #fff;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.modal-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-loading,
+.modal-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: #64748b;
+}
+
+/* ── Import Modal ─────────────────────────────────────────────────────────── */
+
+.import-drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 20px;
+  margin: 20px;
+  border: 2px dashed #cbd5e1;
+  border-radius: 8px;
+  color: #64748b;
+  text-align: center;
+}
+
+.import-drop-zone:hover {
+  border-color: #2563eb;
+  background: #f0f9ff;
+}
+
+.import-results {
+  padding: 20px;
+}
+
+.import-results h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.import-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.import-type-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.import-type-row.total {
+  border-top: 1px solid #e2e8f0;
+  background: transparent;
+  margin-top: 6px;
+  padding-top: 12px;
+}
+
+.import-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #e2e8f0;
+}
+
+.import-badge.workplace,
+.import-badge.desk { background: #dbeafe; color: #1d4ed8; }
+.import-badge.wall { background: #f1f5f9; color: #334155; }
+.import-badge.boundary { background: #ede9fe; color: #6d28d9; }
+.import-badge.door { background: #e0f2fe; color: #0369a1; }
+
+.import-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ��─ History Modal ────────────────────────────────────────────────────────── */
+
+.revision-list {
+  padding: 12px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.revision-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.revision-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.revision-status {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #f1f5f9;
+}
+
+.revision-status.published { background: #dcfce7; color: #166534; }
+.revision-status.draft { background: #fef3c7; color: #92400e; }
+.revision-status.archived { background: #f1f5f9; color: #475569; }
+
+.revision-date {
+  font-size: 11px;
+  color: #94a3b8;
+}

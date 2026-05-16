@@ -1,0 +1,222 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import { RotateCcw, Trash2 } from 'lucide-react';
+
+const DESK_TYPES = ['flex', 'fixed'];
+const SPACE_TYPES = ['desk', 'meeting_room', 'call_room', 'open_space', 'lounge'];
+
+export default function PropertiesPanel({
+  desks,
+  selectedIds,
+  components,
+  onUpdate,
+  onDelete,
+}) {
+  const selected = desks.filter((d) => selectedIds.has(d.id));
+
+  if (!selected.length) {
+    return (
+      <div className="properties-panel empty">
+        <p className="muted">Select a desk to edit properties</p>
+      </div>
+    );
+  }
+
+  if (selected.length > 1) {
+    return (
+      <MultiSelectPanel
+        count={selected.length}
+        components={components}
+        onBulkUpdate={(patch) => {
+          for (const desk of selected) onUpdate(desk.id, patch);
+        }}
+        onDelete={onDelete}
+      />
+    );
+  }
+
+  return (
+    <SingleDeskPanel
+      desk={selected[0]}
+      components={components}
+      onUpdate={onUpdate}
+      onDelete={onDelete}
+    />
+  );
+}
+
+function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
+  const [label, setLabel] = useState(desk.label || '');
+  const [deskType, setDeskType] = useState(desk.type || 'flex');
+  const [spaceType, setSpaceType] = useState(desk.space_type || desk.asset_type || 'desk');
+  const [componentId, setComponentId] = useState(desk.component_id || '');
+  const [rotation, setRotation] = useState(desk.rotation || 0);
+  const [w, setW] = useState(desk.w || 100);
+  const [h, setH] = useState(desk.h || 60);
+  const [x, setX] = useState(Math.round(desk.x || 0));
+  const [y, setY] = useState(Math.round(desk.y || 0));
+
+  useEffect(() => {
+    setLabel(desk.label || '');
+    setDeskType(desk.type || 'flex');
+    setSpaceType(desk.space_type || desk.asset_type || 'desk');
+    setComponentId(desk.component_id || '');
+    setRotation(desk.rotation || 0);
+    setW(desk.w || 100);
+    setH(desk.h || 60);
+    setX(Math.round(desk.x || 0));
+    setY(Math.round(desk.y || 0));
+  }, [desk]);
+
+  const commit = useCallback(
+    (patch) => onUpdate(desk.id, patch),
+    [desk.id, onUpdate],
+  );
+
+  return (
+    <div className="properties-panel">
+      <div className="prop-header">
+        <h3>Properties</h3>
+        <button
+          className="icon-button danger"
+          onClick={() => onDelete([desk.id])}
+          title="Delete"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+
+      <div className="prop-group">
+        <label>Label</label>
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          onBlur={() => commit({ label })}
+          onKeyDown={(e) => e.key === 'Enter' && commit({ label })}
+        />
+      </div>
+
+      <div className="prop-row">
+        <div className="prop-group half">
+          <label>X</label>
+          <input
+            type="number"
+            value={x}
+            onChange={(e) => setX(Number(e.target.value))}
+            onBlur={() => commit({ x })}
+          />
+        </div>
+        <div className="prop-group half">
+          <label>Y</label>
+          <input
+            type="number"
+            value={y}
+            onChange={(e) => setY(Number(e.target.value))}
+            onBlur={() => commit({ y })}
+          />
+        </div>
+      </div>
+
+      <div className="prop-row">
+        <div className="prop-group half">
+          <label>Width</label>
+          <input
+            type="number"
+            value={w}
+            min={10}
+            onChange={(e) => setW(Number(e.target.value))}
+            onBlur={() => commit({ w })}
+          />
+        </div>
+        <div className="prop-group half">
+          <label>Height</label>
+          <input
+            type="number"
+            value={h}
+            min={10}
+            onChange={(e) => setH(Number(e.target.value))}
+            onBlur={() => commit({ h })}
+          />
+        </div>
+      </div>
+
+      <div className="prop-group">
+        <label>Rotation</label>
+        <div className="prop-row">
+          <input
+            type="number"
+            value={rotation}
+            step={15}
+            onChange={(e) => {
+              const v = Number(e.target.value) % 360;
+              setRotation(v);
+              commit({ rotation: v });
+            }}
+          />
+          <button
+            className="icon-button"
+            onClick={() => { setRotation(0); commit({ rotation: 0 }); }}
+            title="Reset rotation"
+          >
+            <RotateCcw size={14} />
+          </button>
+        </div>
+      </div>
+
+      <div className="prop-group">
+        <label>Desk type</label>
+        <select value={deskType} onChange={(e) => { setDeskType(e.target.value); commit({ type: e.target.value }); }}>
+          {DESK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+
+      <div className="prop-group">
+        <label>Space type</label>
+        <select value={spaceType} onChange={(e) => { setSpaceType(e.target.value); commit({ space_type: e.target.value, asset_type: e.target.value }); }}>
+          {SPACE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+
+      <div className="prop-group">
+        <label>Component</label>
+        <select value={componentId} onChange={(e) => { setComponentId(e.target.value); commit({ component_id: e.target.value }); }}>
+          <option value="">— default —</option>
+          {(components || []).map((c) => (
+            <option key={c.id} value={c.id}>{c.label || c.id}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function MultiSelectPanel({ count, components, onBulkUpdate, onDelete }) {
+  return (
+    <div className="properties-panel">
+      <div className="prop-header">
+        <h3>{count} selected</h3>
+        <button className="icon-button danger" onClick={onDelete} title="Delete all">
+          <Trash2 size={16} />
+        </button>
+      </div>
+
+      <div className="prop-group">
+        <label>Desk type</label>
+        <select defaultValue="" onChange={(e) => { if (e.target.value) onBulkUpdate({ type: e.target.value }); }}>
+          <option value="">— no change —</option>
+          {DESK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+
+      <div className="prop-group">
+        <label>Component</label>
+        <select defaultValue="" onChange={(e) => { if (e.target.value) onBulkUpdate({ component_id: e.target.value }); }}>
+          <option value="">— no change —</option>
+          {(components || []).map((c) => (
+            <option key={c.id} value={c.id}>{c.label || c.id}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}

@@ -45,19 +45,8 @@ services:
     volumes:
       - api_static:/app/static
 
-  # Vanilla JS admin — editor + component library (still active until React parity)
+  # React admin — editor + components
   admin:
-    build: ./frontend/admin
-    restart: unless-stopped
-    ports:
-      - "5174:80"
-    depends_on:
-      - api
-    volumes:
-      - ./frontend/admin:/usr/share/nginx/html
-
-  # React admin — editor + components (in development)
-  admin-react:
     build: ./frontend/admin-react
     restart: unless-stopped
     ports:

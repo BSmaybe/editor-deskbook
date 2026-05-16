@@ -15,8 +15,7 @@ Booking, reservations, policies, analytics, and client app are **frozen** (501 p
 docker compose up --build
 ```
 - Go API: `http://localhost:8000`
-- Admin (vanilla JS): `http://localhost:5174`
-- Admin React (in dev): `http://localhost:5175`
+- Admin (React): `http://localhost:5175`
 - PostgreSQL: `localhost:5432`
 
 **React admin dev server (with hot reload):**
@@ -36,12 +35,12 @@ backend-go/
   migrations/     — SQL schema (run by docker-compose migrate service)
 
 frontend/
-  admin/          — Vanilla JS admin (editor, components) served via nginx
-  admin-react/    — React admin app (Vite, in development)
+  admin-react/    — React admin app (Vite)
+  admin/          — Legacy vanilla JS admin (kept as reference, not deployed)
   client/         — Client booking UI (frozen, placeholder)
 ```
 
-Single Go binary serves ALL API routes. Nginx frontends proxy `/api/` → Go.
+Single Go binary serves ALL API routes. Nginx frontend proxies `/api/` → Go.
 
 ## Key Design Decisions
 

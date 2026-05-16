@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Clock,
   Download,
   Eye,
   FileJson,
+  FileUp,
   Move,
   Rocket,
   Save,
@@ -11,6 +13,8 @@ import {
 import { apiFetch } from '../lib/api.js';
 import { EmptyState, Metric } from './ui.jsx';
 import CanvasEditor from './CanvasEditor.jsx';
+import ImportModal from './ImportModal.jsx';
+import HistoryModal from './HistoryModal.jsx';
 
 /* ───────────── helpers ───────────── */
 
@@ -55,6 +59,8 @@ export default function LayoutPanel({
   onError,
 }) {
   const [mode, setMode] = useState('preview');
+  const [importOpen, setImportOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   return (
     <div className="layout-grid">
@@ -72,10 +78,16 @@ export default function LayoutPanel({
             </button>
           </div>
           <div className="toolbar">
-            <button className="icon-button" onClick={onDownload} disabled={!svgPreview} title="Скачать SVG">
+            <button className="icon-button" onClick={() => setImportOpen(true)} title="Import SVG">
+              <FileUp size={18} />
+            </button>
+            <button className="icon-button" onClick={() => setHistoryOpen(true)} title="History">
+              <Clock size={18} />
+            </button>
+            <button className="icon-button" onClick={onDownload} disabled={!svgPreview} title="Download SVG">
               <Download size={18} />
             </button>
-            <button className="tool-button" onClick={onPublish} disabled={busy || !layout} title="Опубликовать">
+            <button className="tool-button" onClick={onPublish} disabled={busy || !layout} title="Publish">
               <Rocket size={18} />
               <span>Publish</span>
             </button>
@@ -98,6 +110,21 @@ export default function LayoutPanel({
       </section>
 
       <LayoutInspector layout={layout} busy={busy} onSync={onSync} />
+
+      <ImportModal
+        floorId={floorId}
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => { onLayoutChange(); onNotice('SVG imported as draft'); }}
+        onError={onError}
+      />
+      <HistoryModal
+        floorId={floorId}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onRestored={() => { onLayoutChange(); onNotice('Revision restored'); }}
+        onError={onError}
+      />
     </div>
   );
 }

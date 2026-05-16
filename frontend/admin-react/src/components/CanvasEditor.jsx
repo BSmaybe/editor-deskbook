@@ -13,9 +13,8 @@
  *  - marquee rubber band
  *  - toolbar and status bar
  *
- * Drawing tools for walls/desks are intentionally out of scope here and
- * will be added in a later phase. The canvas wires up all the hooks and
- * exposes a clean, minimal API to the parent (LayoutPanel).
+ * Drawing tools for walls/boundaries/partitions/doors allow click-to-add-point
+ * polyline creation with live preview. Double-click or Enter finishes, Escape cancels.
  *
  * Props:
  *  layout          {object}   — layout document: { desks, walls, boundaries, ... }
@@ -36,11 +35,14 @@ import React, {
 import {
   Grid3X3,
   Maximize,
+  Minus,
   Move,
   MousePointer,
+  Pencil,
   Redo2,
   RotateCcw,
   Save,
+  Square,
   Trash2,
   Undo2,
   ZoomIn,
@@ -52,6 +54,7 @@ import { useGrid } from '../lib/canvas/useGrid.js';
 import { useSelection } from '../lib/canvas/useSelection.js';
 import { useUndoRedo } from '../lib/canvas/useUndoRedo.js';
 import { findObjectAtPoint } from '../lib/canvas/hitTest.js';
+import PropertiesPanel from './PropertiesPanel.jsx';
 import './CanvasEditor.css';
 
 /* ── constants ── */
@@ -141,18 +144,24 @@ export default function CanvasEditor({
   const viewport = useViewport({ contentW: canvasW, contentH: canvasH });
   const grid = useGrid({ defaultSize: 10, defaultSnap: false, defaultVisible: true });
 
-  /* ── tool mode: 'select' | 'pan' ── */
+  /* ── tool mode: 'select' | 'pan' | 'place' | 'draw_wall' | 'draw_boundary' | 'draw_partition' | 'draw_door' ── */
   const [tool, setTool] = useState('select');
+  const [placeComponentId, setPlaceComponentId] = useState('');
+
+  /* ── drawing state for structure polylines ── */
+  const [drawPoints, setDrawPoints] = useState([]);
+  const [drawPreviewPt, setDrawPreviewPt] = useState(null);
+
+  /* ── selected structure element { type, id } or null ── */
+  const [selectedStruct, setSelectedStruct] = useState(null);
 
   /* ── local data state ── */
   const [desks, setDesks] = useState([]);
+  const [walls, setWalls] = useState([]);
+  const [boundaries, setBoundaries] = useState([]);
+  const [partitions, setPartitions] = useState([]);
+  const [doors, setDoors] = useState([]);
   const [dirty, setDirty] = useState(false);
-
-  // Derived structure arrays from layout
-  const walls      = useMemo(() => layout?.layout?.walls      || [], [layout]);
-  const boundaries = useMemo(() => layout?.layout?.boundaries || [], [layout]);
-  const partitions = useMemo(() => layout?.layout?.partitions || [], [layout]);
-  const doors      = useMemo(() => layout?.layout?.doors      || [], [layout]);
 
   /* ── selection ── */
   const sel = useSelection();
@@ -162,6 +171,10 @@ export default function CanvasEditor({
     enabled: true,
     onRestore: useCallback((snapshot) => {
       setDesks(snapshot.desks);
+      if (snapshot.walls) setWalls(snapshot.walls);
+      if (snapshot.boundaries) setBoundaries(snapshot.boundaries);
+      if (snapshot.partitions) setPartitions(snapshot.partitions);
+      if (snapshot.doors) setDoors(snapshot.doors);
       sel.clearSelection();
       setDirty(true);
     }, [sel]),
@@ -196,10 +209,16 @@ export default function CanvasEditor({
   /* ── sync layout → local state ── */
   useEffect(() => {
     setDesks(layout?.layout?.desks || []);
+    setWalls(layout?.layout?.walls || []);
+    setBoundaries(layout?.layout?.boundaries || []);
+    setPartitions(layout?.layout?.partitions || []);
+    setDoors(layout?.layout?.doors || []);
     sel.clearSelection();
     setDirty(false);
+    setDrawPoints([]);
+    setDrawPreviewPt(null);
+    setSelectedStruct(null);
     undoRedo.clear();
-    // Fit the viewport to the content on load
     setTimeout(() => viewport.zoomToFit({ x: 0, y: 0, w: canvasW, h: canvasH }, 60), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout]);
@@ -228,15 +247,37 @@ export default function CanvasEditor({
       const inInput = tag === 'input' || tag === 'textarea' || tag === 'select';
 
       if (e.key === 'Escape') {
+        if (drawPoints.length > 0) { cancelDraw(); return; }
         sel.clearSelection();
+        setSelectedStruct(null);
         dragRef.current = null;
+        if (tool === 'place' || isDrawMode) setTool('select');
         return;
       }
 
-      if ((e.key === 'Delete' || e.key === 'Backspace') && sel.selectedIds.size && !inInput) {
+      if (e.key === 'Enter' && drawPoints.length >= 2) {
         e.preventDefault();
-        deleteSelected();
+        finishDraw();
         return;
+      }
+
+      if (e.key === 'v' && !inInput && !meta) { cancelDraw(); setTool('select'); return; }
+      if (e.key === 'p' && !inInput && !meta) { cancelDraw(); setTool('place'); return; }
+      if (e.key === 'w' && !inInput && !meta) { cancelDraw(); setTool('draw_wall'); return; }
+      if (e.key === 'b' && !inInput && !meta) { cancelDraw(); setTool('draw_boundary'); return; }
+      if (e.key === 'f' && !inInput && !meta) { handleZoomToFit(); return; }
+
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !inInput) {
+        if (sel.selectedIds.size) {
+          e.preventDefault();
+          deleteSelected();
+          return;
+        }
+        if (selectedStruct) {
+          e.preventDefault();
+          deleteSelectedStruct();
+          return;
+        }
       }
 
       if (meta && e.key === 'z' && !e.shiftKey && !inInput) {
@@ -283,12 +324,41 @@ export default function CanvasEditor({
       window.removeEventListener('keyup', onKeyUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.selectedIds, desks]);
+  }, [sel.selectedIds, desks, drawPoints, isDrawMode, tool, selectedStruct]);
+
+  /* ── draw mode helpers ── */
+
+  const isDrawMode = tool.startsWith('draw_');
+  const drawStructType = isDrawMode ? tool.replace('draw_', '') : null;
+
+  function finishDraw() {
+    if (drawPoints.length < 2) {
+      setDrawPoints([]);
+      setDrawPreviewPt(null);
+      return;
+    }
+    const newStruct = { id: uid(drawStructType), pts: drawPoints.map((p) => [p.x, p.y]) };
+    undoRedo.push({ desks, walls, boundaries, partitions, doors });
+    switch (drawStructType) {
+      case 'wall':      setWalls((prev) => [...prev, newStruct]); break;
+      case 'boundary':  setBoundaries((prev) => [...prev, newStruct]); break;
+      case 'partition': setPartitions((prev) => [...prev, newStruct]); break;
+      case 'door':      setDoors((prev) => [...prev, newStruct]); break;
+    }
+    setDirty(true);
+    setDrawPoints([]);
+    setDrawPreviewPt(null);
+  }
+
+  function cancelDraw() {
+    setDrawPoints([]);
+    setDrawPreviewPt(null);
+  }
 
   /* ── data mutations ── */
 
   function modifyDesks(updater) {
-    undoRedo.push({ desks });
+    undoRedo.push({ desks, walls, boundaries, partitions, doors });
     setDesks(updater);
     setDirty(true);
   }
@@ -297,6 +367,45 @@ export default function CanvasEditor({
     if (!sel.selectedIds.size) return;
     modifyDesks((prev) => prev.filter((d) => !sel.selectedIds.has(d.id)));
     sel.clearSelection();
+  }
+
+  function deleteSelectedStruct() {
+    if (!selectedStruct) return;
+    undoRedo.push({ desks, walls, boundaries, partitions, doors });
+    const { type, id } = selectedStruct;
+    switch (type) {
+      case 'wall':      setWalls((prev) => prev.filter((s) => s.id !== id)); break;
+      case 'boundary':  setBoundaries((prev) => prev.filter((s) => s.id !== id)); break;
+      case 'partition': setPartitions((prev) => prev.filter((s) => s.id !== id)); break;
+      case 'door':      setDoors((prev) => prev.filter((s) => s.id !== id)); break;
+    }
+    setSelectedStruct(null);
+    setDirty(true);
+  }
+
+  function updateDesk(id, patch) {
+    modifyDesks((prev) => prev.map((d) => d.id === id ? { ...d, ...patch } : d));
+  }
+
+  function addDeskAt(svgPt) {
+    const comp = placeComponentId ? compMap.get(placeComponentId) : null;
+    const dw = comp?.default_w || 100;
+    const dh = comp?.default_h || 60;
+    const px = grid.snapOn ? Math.round(svgPt.x / grid.gridSize) * grid.gridSize : Math.round(svgPt.x);
+    const py = grid.snapOn ? Math.round(svgPt.y / grid.gridSize) * grid.gridSize : Math.round(svgPt.y);
+    const usedLabels = new Set(desks.map((d) => d.label));
+    let num = desks.length + 1;
+    while (usedLabels.has(`D${num}`)) num++;
+    const newDesk = {
+      id: uid('desk'),
+      label: `D${num}`,
+      x: px, y: py, w: dw, h: dh,
+      type: 'flex',
+      asset_type: 'desk',
+      component_id: placeComponentId || undefined,
+    };
+    modifyDesks((prev) => [...prev, newDesk]);
+    sel.selectIds(new Set([newDesk.id]));
   }
 
   /* ── pointer handlers ── */
@@ -326,18 +435,30 @@ export default function CanvasEditor({
       return;
     }
 
+    // Place tool — add desk at click
+    if (tool === 'place') {
+      addDeskAt(pt);
+      return;
+    }
+
+    // Draw mode — add point to polyline
+    if (isDrawMode) {
+      const snapped = { x: grid.snap(pt.x), y: grid.snap(pt.y) };
+      setDrawPoints((prev) => [...prev, snapped]);
+      return;
+    }
+
     // Select tool — hit test
     const layout = buildLayoutForHitTest();
     const hit = findObjectAtPoint(pt, layout, viewport.worldUnitsForPx(14));
 
     if (hit?.type === 'desk') {
-      // Desk click
+      setSelectedStruct(null);
       if (e.shiftKey) {
         sel.toggleId(hit.id);
       } else if (!sel.selectedIds.has(hit.id)) {
         sel.selectOne(hit.id);
       }
-      // Begin drag
       const ids = e.shiftKey ? sel.selectedIds : (sel.selectedIds.has(hit.id) ? sel.selectedIds : new Set([hit.id]));
       const origins = new Map();
       for (const id of ids) {
@@ -349,15 +470,28 @@ export default function CanvasEditor({
       return;
     }
 
+    // Structure click — select it
+    if (hit && hit.type !== 'desk') {
+      sel.clearSelection();
+      setSelectedStruct(hit);
+      return;
+    }
+
     // Click on empty space → start marquee
     if (!e.shiftKey) sel.clearSelection();
+    setSelectedStruct(null);
     sel.startMarquee(pt, { append: e.shiftKey });
     svgEl.setPointerCapture(e.pointerId);
-  }, [tool, viewport, sel, desks]);
+  }, [tool, viewport, sel, desks, isDrawMode, grid]);
 
   const onSvgPointerMove = useCallback((e) => {
     const pt = viewport.screenToSvg(e);
     setCursorSvgPt(pt);
+
+    // Draw preview
+    if (isDrawMode && drawPoints.length > 0) {
+      setDrawPreviewPt({ x: grid.snap(pt.x), y: grid.snap(pt.y) });
+    }
 
     // Pan
     if (isPanningRef.current) {
@@ -393,7 +527,15 @@ export default function CanvasEditor({
     if (sel.marquee) {
       sel.updateMarquee(pt);
     }
-  }, [viewport, sel, grid]);
+  }, [viewport, sel, grid, isDrawMode, drawPoints]);
+
+  const onSvgDoubleClick = useCallback((e) => {
+    if (isDrawMode && drawPoints.length >= 2) {
+      e.preventDefault();
+      finishDraw();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDrawMode, drawPoints, drawStructType]);
 
   const onSvgPointerUp = useCallback((e) => {
     const svgEl = viewport.svgRef.current;
@@ -442,7 +584,7 @@ export default function CanvasEditor({
     setSaving(true);
     onError('');
     try {
-      const doc = { ...(layout?.layout || {}), desks };
+      const doc = { ...(layout?.layout || {}), desks, walls, boundaries, partitions, doors };
       await apiFetch(`/floors/${floorId}/layout/draft`, {
         method: 'PUT',
         body: JSON.stringify({ version: layout?.version || 0, layout: doc }),
@@ -459,7 +601,13 @@ export default function CanvasEditor({
 
   function resetChanges() {
     setDesks(layout?.layout?.desks || []);
+    setWalls(layout?.layout?.walls || []);
+    setBoundaries(layout?.layout?.boundaries || []);
+    setPartitions(layout?.layout?.partitions || []);
+    setDoors(layout?.layout?.doors || []);
     sel.clearSelection();
+    setDrawPoints([]);
+    setDrawPreviewPt(null);
     setDirty(false);
     undoRedo.clear();
   }
@@ -479,7 +627,9 @@ export default function CanvasEditor({
     ? 'cursor-panning'
     : (tool === 'pan' || spaceRef.current)
       ? 'cursor-pan'
-      : 'cursor-default';
+      : isDrawMode
+        ? 'cursor-crosshair'
+        : 'cursor-default';
 
   /* ── grid lines ── */
   const gridLines = useMemo(() => {
@@ -508,6 +658,58 @@ export default function CanvasEditor({
           onClick={() => setTool('pan')}
         >
           <Move size={14} />
+        </button>
+        <button
+          className={`ce-tool-btn ${tool === 'place' ? 'active' : ''}`}
+          title="Place desk (P)"
+          onClick={() => setTool(tool === 'place' ? 'select' : 'place')}
+          style={{ fontSize: 11 }}
+        >
+          + Desk
+        </button>
+        {tool === 'place' && (
+          <select
+            className="ce-place-select"
+            value={placeComponentId}
+            onChange={(e) => setPlaceComponentId(e.target.value)}
+            title="Component to place"
+          >
+            <option value="">Default desk</option>
+            {(components || []).map((c) => (
+              <option key={c.id} value={c.id}>{c.label || c.id}</option>
+            ))}
+          </select>
+        )}
+
+        <div className="ce-toolbar-sep" />
+
+        <button
+          className={`ce-tool-btn ${tool === 'draw_wall' ? 'active' : ''}`}
+          title="Draw wall (W)"
+          onClick={() => { cancelDraw(); setTool(tool === 'draw_wall' ? 'select' : 'draw_wall'); }}
+        >
+          <Minus size={14} /> Wall
+        </button>
+        <button
+          className={`ce-tool-btn ${tool === 'draw_boundary' ? 'active' : ''}`}
+          title="Draw boundary (B)"
+          onClick={() => { cancelDraw(); setTool(tool === 'draw_boundary' ? 'select' : 'draw_boundary'); }}
+        >
+          <Square size={14} /> Boundary
+        </button>
+        <button
+          className={`ce-tool-btn ${tool === 'draw_partition' ? 'active' : ''}`}
+          title="Draw partition"
+          onClick={() => { cancelDraw(); setTool(tool === 'draw_partition' ? 'select' : 'draw_partition'); }}
+        >
+          <Minus size={14} />
+        </button>
+        <button
+          className={`ce-tool-btn ${tool === 'draw_door' ? 'active' : ''}`}
+          title="Draw door"
+          onClick={() => { cancelDraw(); setTool(tool === 'draw_door' ? 'select' : 'draw_door'); }}
+        >
+          <Pencil size={14} /> Door
         </button>
 
         <div className="ce-toolbar-sep" />
@@ -542,10 +744,14 @@ export default function CanvasEditor({
         </button>
 
         {/* Selection actions */}
-        {sel.selectedIds.size > 0 && (
+        {(sel.selectedIds.size > 0 || selectedStruct) && (
           <>
             <div className="ce-toolbar-sep" />
-            <button className="ce-tool-btn danger" title="Delete selected (Del)" onClick={deleteSelected}>
+            <button
+              className="ce-tool-btn danger"
+              title="Delete selected (Del)"
+              onClick={selectedStruct ? deleteSelectedStruct : deleteSelected}
+            >
               <Trash2 size={14} />
             </button>
           </>
@@ -590,6 +796,15 @@ export default function CanvasEditor({
         )}
       </div>
 
+      {/* ── Hint bar ── */}
+      {isDrawMode && (
+        <div className="ce-hint-bar">
+          Drawing <strong>{drawStructType}</strong> — click to add points
+          {drawPoints.length >= 2 && ', double-click or Enter to finish'}
+          {drawPoints.length > 0 && ', Escape to cancel'}
+        </div>
+      )}
+
       {/* ── SVG viewport ── */}
       <div className={`ce-viewport ${cursorClass}`}>
         <svg
@@ -601,6 +816,7 @@ export default function CanvasEditor({
           onPointerMove={onSvgPointerMove}
           onPointerUp={onSvgPointerUp}
           onPointerLeave={onSvgPointerUp}
+          onDoubleClick={onSvgDoubleClick}
         >
           {/* Canvas background */}
           <rect className="ce-bg" width={canvasW} height={canvasH} />
@@ -631,66 +847,79 @@ export default function CanvasEditor({
           <g className="ce-structure">
             {boundaries.map((b, i) => {
               const pts = (b.pts || b.points || []).map(ptFromArr);
+              const isSel = selectedStruct?.type === 'boundary' && selectedStruct?.id === b.id;
               return (
                 <polygon
                   key={`b${i}`}
+                  className="ce-structure-selectable"
                   points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
                   fill={STRUCT_COLORS.boundary}
                   fillOpacity={STRUCT_OPACITY.boundary}
-                  stroke={STRUCT_COLORS.boundary}
-                  strokeWidth={1.5}
+                  stroke={isSel ? '#2563eb' : STRUCT_COLORS.boundary}
+                  strokeWidth={isSel ? 3 : 1.5}
+                  strokeDasharray={isSel ? '6 3' : 'none'}
                 />
               );
             })}
             {partitions.map((p, i) => {
               const pts = (p.pts || []).map(ptFromArr);
+              const isSel = selectedStruct?.type === 'partition' && selectedStruct?.id === p.id;
               return (
                 <polyline
                   key={`p${i}`}
+                  className="ce-structure-selectable"
                   points={pts.map((pt) => `${pt.x},${pt.y}`).join(' ')}
                   fill="none"
-                  stroke={STRUCT_COLORS.partition}
-                  strokeOpacity={STRUCT_OPACITY.partition}
-                  strokeWidth={p.thick || 3}
+                  stroke={isSel ? '#2563eb' : STRUCT_COLORS.partition}
+                  strokeOpacity={isSel ? 1 : STRUCT_OPACITY.partition}
+                  strokeWidth={isSel ? (p.thick || 3) + 2 : (p.thick || 3)}
                   strokeLinecap="round"
+                  strokeDasharray={isSel ? '6 3' : 'none'}
                 />
               );
             })}
             {walls.map((w, i) => {
               const pts = (w.pts || []).map(ptFromArr);
+              const isSel = selectedStruct?.type === 'wall' && selectedStruct?.id === w.id;
               if (pts.length >= 2) {
                 return (
                   <polyline
                     key={`w${i}`}
+                    className="ce-structure-selectable"
                     points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
                     fill="none"
-                    stroke={STRUCT_COLORS.wall}
-                    strokeWidth={w.thick || 4}
+                    stroke={isSel ? '#2563eb' : STRUCT_COLORS.wall}
+                    strokeWidth={isSel ? (w.thick || 4) + 2 : (w.thick || 4)}
                     strokeLinecap="square"
+                    strokeDasharray={isSel ? '6 3' : 'none'}
                   />
                 );
               }
               return (
                 <line
                   key={`w${i}`}
+                  className="ce-structure-selectable"
                   x1={w.x1 || 0} y1={w.y1 || 0}
                   x2={w.x2 || 0} y2={w.y2 || 0}
-                  stroke={STRUCT_COLORS.wall}
-                  strokeWidth={w.thick || 4}
+                  stroke={isSel ? '#2563eb' : STRUCT_COLORS.wall}
+                  strokeWidth={isSel ? (w.thick || 4) + 2 : (w.thick || 4)}
+                  strokeDasharray={isSel ? '6 3' : 'none'}
                 />
               );
             })}
             {doors.map((d, i) => {
               const pts = (d.pts || []).map(ptFromArr);
+              const isSel = selectedStruct?.type === 'door' && selectedStruct?.id === d.id;
               if (pts.length >= 2) {
                 return (
                   <polyline
                     key={`d${i}`}
+                    className="ce-structure-selectable"
                     points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
                     fill="none"
-                    stroke={STRUCT_COLORS.door}
-                    strokeWidth={d.thick || 2.5}
-                    strokeDasharray="6 3"
+                    stroke={isSel ? '#2563eb' : STRUCT_COLORS.door}
+                    strokeWidth={isSel ? (d.thick || 2.5) + 2 : (d.thick || 2.5)}
+                    strokeDasharray={isSel ? '6 3' : '6 3'}
                     strokeLinecap="round"
                   />
                 );
@@ -698,15 +927,44 @@ export default function CanvasEditor({
               return (
                 <line
                   key={`d${i}`}
+                  className="ce-structure-selectable"
                   x1={d.x1 || 0} y1={d.y1 || 0}
                   x2={d.x2 || 0} y2={d.y2 || 0}
-                  stroke={STRUCT_COLORS.door}
-                  strokeWidth={2.5}
+                  stroke={isSel ? '#2563eb' : STRUCT_COLORS.door}
+                  strokeWidth={isSel ? 4.5 : 2.5}
                   strokeDasharray="6 3"
                 />
               );
             })}
           </g>
+
+          {/* Draw preview polyline */}
+          {isDrawMode && drawPoints.length > 0 && (() => {
+            const allPts = drawPreviewPt
+              ? [...drawPoints, drawPreviewPt]
+              : drawPoints;
+            const color = STRUCT_COLORS[drawStructType] || '#2563eb';
+            return (
+              <g className="ce-draw-preview">
+                <polyline
+                  points={allPts.map((p) => `${p.x},${p.y}`).join(' ')}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={drawStructType === 'wall' ? 4 : drawStructType === 'door' ? 2.5 : 3}
+                  strokeDasharray={drawPreviewPt ? '6 4' : 'none'}
+                  strokeLinecap="round"
+                  opacity={0.7}
+                />
+                {drawPoints.map((p, i) => (
+                  <circle
+                    key={i}
+                    cx={p.x} cy={p.y} r={4}
+                    fill="#fff" stroke={color} strokeWidth={1.5}
+                  />
+                ))}
+              </g>
+            );
+          })()}
 
           {/* Desks layer */}
           {desks.map((desk) => {
@@ -837,6 +1095,19 @@ export default function CanvasEditor({
         </svg>
       </div>
 
+      {/* ── Properties sidebar ── */}
+      <PropertiesPanel
+        desks={desks}
+        selectedIds={sel.selectedIds}
+        components={components}
+        onUpdate={updateDesk}
+        onDelete={(ids) => {
+          const idSet = Array.isArray(ids) ? new Set(ids) : sel.selectedIds;
+          modifyDesks((prev) => prev.filter((d) => !idSet.has(d.id)));
+          sel.clearSelection();
+        }}
+      />
+
       {/* ── Status bar ── */}
       <div className="ce-statusbar">
         <span className="ce-statusbar-item">
@@ -849,12 +1120,22 @@ export default function CanvasEditor({
         <span className="ce-statusbar-sep">·</span>
         <span className="ce-statusbar-item">
           {desks.length} desk{desks.length !== 1 ? 's' : ''}
+          {(walls.length + boundaries.length + partitions.length + doors.length) > 0 &&
+            ` · ${walls.length + boundaries.length + partitions.length + doors.length} struct`}
         </span>
         {sel.selectedIds.size > 0 && (
           <>
             <span className="ce-statusbar-sep">·</span>
             <span className="ce-statusbar-item" style={{ color: '#2563eb' }}>
               {sel.selectedIds.size} selected
+            </span>
+          </>
+        )}
+        {selectedStruct && (
+          <>
+            <span className="ce-statusbar-sep">·</span>
+            <span className="ce-statusbar-item" style={{ color: '#2563eb' }}>
+              {selectedStruct.type}
             </span>
           </>
         )}
