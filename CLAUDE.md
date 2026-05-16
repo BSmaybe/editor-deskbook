@@ -35,9 +35,7 @@ backend-go/
   migrations/     — SQL schema (run by docker-compose migrate service)
 
 frontend/
-  admin-react/    — React admin app (Vite)
-  admin/          — Legacy vanilla JS admin (kept as reference, not deployed)
-  client/         — Client booking UI (frozen, placeholder)
+  admin-react/    — React admin app (Vite, sole frontend)
 ```
 
 Single Go binary serves ALL API routes. Nginx frontend proxies `/api/` → Go.
