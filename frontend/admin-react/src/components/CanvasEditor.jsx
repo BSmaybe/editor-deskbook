@@ -184,6 +184,10 @@ export default function CanvasEditor({
   const dragRef = useRef(null);
   // { startSvgPt, origins: Map<id, {x,y}>, moved: boolean }
 
+  /* ── resize drag state ── */
+  const resizeRef = useRef(null);
+  // { deskId, corner: 0-3, startPt, origX, origY, origW, origH }
+
   /* ── space-key panning ── */
   const spaceRef = useRef(false);
   const isPanningRef = useRef(false);
@@ -499,6 +503,26 @@ export default function CanvasEditor({
       return;
     }
 
+    // Resize drag
+    if (resizeRef.current) {
+      const { deskId, corner, startPt, origX, origY, origW, origH } = resizeRef.current;
+      const dx = pt.x - startPt.x;
+      const dy = pt.y - startPt.y;
+      let nx = origX, ny = origY, nw = origW, nh = origH;
+      // corner: 0=TL, 1=TR, 2=BL, 3=BR
+      if (corner === 0) { nx = origX + dx; ny = origY + dy; nw = origW - dx; nh = origH - dy; }
+      if (corner === 1) { ny = origY + dy; nw = origW + dx; nh = origH - dy; }
+      if (corner === 2) { nx = origX + dx; nw = origW - dx; nh = origH + dy; }
+      if (corner === 3) { nw = origW + dx; nh = origH + dy; }
+      if (nw < 20) { nw = 20; if (corner === 0 || corner === 2) nx = origX + origW - 20; }
+      if (nh < 20) { nh = 20; if (corner === 0 || corner === 1) ny = origY + origH - 20; }
+      nx = grid.snap(nx); ny = grid.snap(ny);
+      nw = grid.snap(nw); nh = grid.snap(nh);
+      setDesks((prev) => prev.map((d) => d.id === deskId ? { ...d, x: nx, y: ny, w: nw, h: nh } : d));
+      setDirty(true);
+      return;
+    }
+
     // Desk drag
     if (dragRef.current) {
       const { startSvgPt, origins } = dragRef.current;
@@ -544,6 +568,13 @@ export default function CanvasEditor({
     if (isPanningRef.current) {
       isPanningRef.current = false;
       viewport.endPan();
+      try { svgEl?.releasePointerCapture(e.pointerId); } catch {}
+      return;
+    }
+
+    // Resize end
+    if (resizeRef.current) {
+      resizeRef.current = null;
       try { svgEl?.releasePointerCapture(e.pointerId); } catch {}
       return;
     }
@@ -1051,11 +1082,22 @@ export default function CanvasEditor({
                 ? ` rotate(${selectedDesk.r} ${x + w / 2} ${y + h / 2})`
                 : '';
               const handles = [
-                [x,     y    ],
-                [x + w, y    ],
-                [x,     y + h],
-                [x + w, y + h],
+                [x,     y,     'nwse-resize'],
+                [x + w, y,     'nesw-resize'],
+                [x,     y + h, 'nesw-resize'],
+                [x + w, y + h, 'nwse-resize'],
               ];
+              function onHandleDown(corner, e) {
+                e.stopPropagation();
+                undoRedo.push({ desks, walls, boundaries, partitions, doors });
+                resizeRef.current = {
+                  deskId: selectedDesk.id,
+                  corner,
+                  startPt: viewport.screenToSvg(e),
+                  origX: x, origY: y, origW: w, origH: h,
+                };
+                viewport.svgRef.current?.setPointerCapture(e.pointerId);
+              }
               return (
                 <g transform={rotate || undefined}>
                   <rect
@@ -1068,13 +1110,15 @@ export default function CanvasEditor({
                     rx={5}
                     pointerEvents="none"
                   />
-                  {handles.map(([hx, hy], i) => (
+                  {handles.map(([hx, hy, cursor], i) => (
                     <rect
                       key={i}
                       className="ce-sel-handle"
                       x={hx - 4} y={hy - 4}
                       width={8} height={8}
                       rx={2}
+                      style={{ cursor }}
+                      onPointerDown={(e) => onHandleDown(i, e)}
                     />
                   ))}
                 </g>
