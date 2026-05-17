@@ -41,6 +41,8 @@ type appServer struct {
 	offices    *officeStore
 	floors     *floorStore
 	desks      *deskStore
+	templates  *templateStore
+	blocks     *blockStore
 }
 
 type componentStore struct {
@@ -151,6 +153,11 @@ func (a *appServer) createComponentHandler(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
+	// Creating a new component with a built-in ID is not allowed — use PUT to override.
+	if builtinComponentIDs[body.ID] {
+		writeError(w, http.StatusConflict, errors.New("component with this ID already exists"))
+		return
+	}
 	if a.components == nil {
 		writeError(w, http.StatusServiceUnavailable, errors.New("component store is not configured"))
 		return
@@ -198,18 +205,17 @@ func (a *appServer) updateComponentHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// UPSERT: built-in components do not exist in the DB yet; this creates the
+	// override row on the first save so subsequent PUTs work as plain updates.
 	row := a.components.pool.QueryRow(r.Context(), `
-		UPDATE global_components
-		SET label=$2, asset_type=$3, view_box=$4, default_w=$5, default_h=$6, svg_markup=$7, updated_at=now()
-		WHERE id=$1
+		INSERT INTO global_components (id, label, asset_type, view_box, default_w, default_h, svg_markup)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (id) DO UPDATE
+		  SET label=$2, asset_type=$3, view_box=$4, default_w=$5, default_h=$6, svg_markup=$7, updated_at=now()
 		RETURNING id, label, asset_type, view_box, default_w, default_h, svg_markup, created_at, updated_at
 	`, body.ID, body.Label, body.AssetType, viewBoxString(body.ViewBox), body.DefaultW, body.DefaultH, body.SVGMarkup)
 	component, err := scanComponent(row)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("component not found"))
-			return
-		}
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -257,9 +263,6 @@ func decodeComponentPayload(r *http.Request) (componentPayload, error) {
 func validateComponentPayload(body componentPayload) error {
 	if !componentIDRE.MatchString(body.ID) {
 		return errors.New("invalid component id")
-	}
-	if builtinComponentIDs[body.ID] {
-		return errors.New("cannot override built-in component")
 	}
 	if strings.TrimSpace(body.Label) == "" || len(body.Label) > 120 {
 		return errors.New("label is required and must be at most 120 characters")

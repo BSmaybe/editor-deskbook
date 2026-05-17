@@ -26,6 +26,8 @@ export const STRUCTURE_LABELS = {
   partitions: 'Перегородки',
   door: 'Дверь',
   doors: 'Двери',
+  zone: 'Зона',
+  zones: 'Зоны',
   uncertain: 'Не распознано',
   skipped: 'Пропущено',
   unknown: 'Неизвестно',

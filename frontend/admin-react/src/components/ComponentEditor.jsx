@@ -629,7 +629,13 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
   }
 
   /* ─── viewBox display string ──────────────────────────────────────────────── */
-  const canvasViewBox = meta.view_box.join(' ');
+  // Add padding around the component's native viewBox so shapes appear at a
+  // reasonable size in the editing canvas (≈ 25-30% of canvas area).
+  const canvasViewBox = (() => {
+    const [vx, vy, vw, vh] = meta.view_box;
+    const pad = Math.max(vw, vh) * 1.5;
+    return `${vx - pad} ${vy - pad} ${vw + pad * 2} ${vh + pad * 2}`;
+  })();
 
   /* ─── Render ─────────────────────────────────────────────────────────────── */
   return (
@@ -926,7 +932,7 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
           )}
           <div className="ce-viewbox-display">
             <span>viewBox</span>
-            <code>{canvasViewBox}</code>
+            <code>{meta.view_box.join(' ')}</code>
           </div>
         </aside>
       </div>

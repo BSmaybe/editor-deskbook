@@ -15,6 +15,17 @@ type LayoutDocument struct {
 	Doors       []StructureElement   `json:"doors"`
 	Desks       []LayoutDesk         `json:"desks"`
 	Groups      []LayoutGroup        `json:"groups,omitempty"`
+	Zones       []LayoutZone         `json:"zones,omitempty"`
+}
+
+// LayoutZone — named coloured area (kitchen, focus, reception, etc.)
+// rendered as a filled polygon below all desks.
+type LayoutZone struct {
+	ID    string      `json:"id"`
+	Label string      `json:"label"`
+	Type  string      `json:"type"`  // kitchen|reception|chill|focus|meeting|open_space|custom
+	Color string      `json:"color"` // hex, e.g. "#fef9c3"
+	PTS   [][]float64 `json:"pts"`   // polygon points [[x,y],...]
 }
 
 type LayoutGroup struct {

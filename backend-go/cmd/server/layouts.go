@@ -734,6 +734,8 @@ func (s *layoutStore) publish(ctx context.Context, floorID int, userID sql.NullI
 	}
 
 	layout := layoutFromRevision(draft)
+	// Inject fresh SVG markup from global_components so published export is always up-to-date.
+	layout = injectFreshComponentsFromPool(ctx, s.pool, layout)
 	svg, err := exporter.RenderSVG(layout)
 	if err != nil {
 		return layoutDocumentResponse{}, fmt.Errorf("%w: %v", errInvalidLayout, err)
@@ -1262,6 +1264,70 @@ func layoutFromRevision(rev layoutRevision) exporter.LayoutDocument {
 	}
 	normalizeLayoutDocument(&doc)
 	return doc
+}
+
+func injectFreshComponentsFromPool(ctx context.Context, pool *pgxpool.Pool, layout exporter.LayoutDocument) exporter.LayoutDocument {
+	rows, err := pool.Query(ctx, `SELECT id, label, asset_type, view_box, default_w, default_h, svg_markup FROM global_components`)
+	if err != nil {
+		return layout
+	}
+	defer rows.Close()
+	fresh := map[string]exporter.LayoutComponent{}
+	for rows.Next() {
+		var (
+			id, label, assetType, svgMarkup string
+			viewBoxStr                        string
+			defaultW, defaultH                float64
+		)
+		if err := rows.Scan(&id, &label, &assetType, &viewBoxStr, &defaultW, &defaultH, &svgMarkup); err != nil {
+			continue
+		}
+		// Parse view_box string "x y w h"
+		var vb []float64
+		parts := strings.Fields(viewBoxStr)
+		for _, p := range parts {
+			if v, err := strconv.ParseFloat(p, 64); err == nil {
+				vb = append(vb, v)
+			}
+		}
+		if len(vb) < 4 {
+			vb = []float64{0, 0, defaultW, defaultH}
+		}
+		fresh[id] = exporter.LayoutComponent{
+			ID:        id,
+			Label:     label,
+			AssetType: assetType,
+			ViewBox:   vb,
+			DefaultW:  defaultW,
+			DefaultH:  defaultH,
+			SVGMarkup: svgMarkup,
+		}
+	}
+	if len(fresh) == 0 {
+		return layout
+	}
+	// Merge: fresh DB values override layout-embedded ones; add any missing ones.
+	byID := map[string]exporter.LayoutComponent{}
+	for _, c := range layout.Components {
+		byID[c.ID] = c
+	}
+	for id, fc := range fresh {
+		if existing, ok := byID[id]; ok {
+			existing.SVGMarkup = fc.SVGMarkup
+			existing.ViewBox = fc.ViewBox
+			existing.DefaultW = fc.DefaultW
+			existing.DefaultH = fc.DefaultH
+			byID[id] = existing
+		} else {
+			byID[id] = fc
+		}
+	}
+	merged := make([]exporter.LayoutComponent, 0, len(byID))
+	for _, c := range byID {
+		merged = append(merged, c)
+	}
+	layout.Components = merged
+	return layout
 }
 
 func decodeLayoutDraftPayload(r *http.Request) (int, string, error) {

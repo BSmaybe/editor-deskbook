@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Boxes, Building2, Layers3, LogOut, PanelLeftClose, PanelLeftOpen, RefreshCw } from 'lucide-react';
 import { apiFetch, login, logout, tokenFromStorage, usernameFromStorage } from './lib/api.js';
@@ -8,6 +8,31 @@ import ComponentPanel from './components/ComponentPanel.jsx';
 import BuildingPanel from './components/BuildingPanel.jsx';
 import { mergeComponentCatalog } from './lib/componentCatalog.js';
 import './styles.css';
+
+async function loadPublishedSvgPreview(floorId) {
+  try {
+    const svg = await apiFetch(`/floors/${floorId}/layout/published.svg`, {
+      headers: { Accept: 'image/svg+xml' },
+    });
+    if (typeof svg === 'string' && svg.includes('<svg')) return svg;
+  } catch {
+    // Fall back to JSON + renderer below. This also covers old nginx builds
+    // that handled .svg as a static asset instead of proxying /api.
+  }
+
+  try {
+    const published = await apiFetch(`/floors/${floorId}/layout/published`);
+    if (!published?.layout) return '';
+    const rendered = await apiFetch('/render/svg', {
+      method: 'POST',
+      headers: { Accept: 'image/svg+xml' },
+      body: JSON.stringify(published.layout),
+    });
+    return typeof rendered === 'string' && rendered.includes('<svg') ? rendered : '';
+  } catch {
+    return '';
+  }
+}
 
 function App() {
   const [token, setToken] = useState(tokenFromStorage());
@@ -22,6 +47,7 @@ function App() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem('deskbook_sidebar_collapsed') === '1',
   );
@@ -82,9 +108,7 @@ function App() {
     try {
       const [lr, sr] = await Promise.allSettled([
         apiFetch(`/floors/${floorId}/layout`),
-        apiFetch(`/floors/${floorId}/layout/published.svg`, {
-          headers: { Accept: 'image/svg+xml' },
-        }),
+        loadPublishedSvgPreview(floorId),
       ]);
       setLayout(lr.status === 'fulfilled' ? lr.value : null);
       setSvgPreview(sr.status === 'fulfilled' ? sr.value : '');
@@ -133,13 +157,22 @@ function App() {
   }
 
   async function refreshAll() {
-    await loadReferenceData();
-    await loadLayout(selectedFloorId);
-    setNotice('Данные обновлены');
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await loadReferenceData();
+      await loadLayout(selectedFloorId);
+      setNotice('Данные обновлены');
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
   }
 
   async function publishDraft() {
-    if (!selectedFloorId) return;
+    if (!selectedFloorId || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError('');
     try {
@@ -149,12 +182,14 @@ function App() {
     } catch (err) {
       setError(err.message);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   async function syncDesks() {
-    if (!selectedFloorId) return;
+    if (!selectedFloorId || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError('');
     try {
@@ -166,6 +201,7 @@ function App() {
     } catch (err) {
       setError(err.message);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -271,6 +307,7 @@ function App() {
         {activeTab === 'layout' && (
           <LayoutPanel
             floorId={selectedFloorId}
+            selectedFloor={selectedFloor}
             layout={layout}
             svgPreview={svgPreview}
             busy={busy}

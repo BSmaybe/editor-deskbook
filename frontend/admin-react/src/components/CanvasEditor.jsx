@@ -36,10 +36,27 @@ import React, {
   useState,
 } from 'react';
 import {
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalSpaceBetween,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignVerticalJustifyStart,
+  AlignVerticalSpaceBetween,
+  Copy,
   DoorOpen,
+  Eye,
+  EyeOff,
   Grid3X3,
   Group,
+  ImageIcon,
+  Layers,
+  Lock,
+  Magnet,
+  Map,
   Maximize,
+  Package,
   Minus,
   Move,
   MousePointer,
@@ -47,11 +64,14 @@ import {
   Plus,
   Redo2,
   RotateCcw,
+  RotateCw,
   Save,
+  Search,
   Square,
   Trash2,
   Ungroup,
   Undo2,
+  Unlock,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -94,8 +114,33 @@ const STRUCT_OPACITY = {
   wall: 1, boundary: 0.3, partition: 0.7, door: 1,
 };
 
+const ZONE_TYPES = [
+  { id: 'kitchen',    label: 'Кухня',        color: '#fef08a' },
+  { id: 'reception',  label: 'Ресепшен',     color: '#bfdbfe' },
+  { id: 'chill',      label: 'Зона отдыха',  color: '#bbf7d0' },
+  { id: 'focus',      label: 'Тишина',       color: '#e9d5ff' },
+  { id: 'meeting',    label: 'Переговоры',   color: '#fed7aa' },
+  { id: 'open_space', label: 'Опен-спейс',   color: '#e0f2fe' },
+  { id: 'custom',     label: 'Другое',       color: '#f1f5f9' },
+];
+
+function zoneDefaultColor(type) {
+  return ZONE_TYPES.find((z) => z.id === type)?.color || '#f1f5f9';
+}
+
 /* Minimum drag distance (SVG user-units) before we start moving desks. */
 const DRAG_MIN = 3;
+const VERTEX_SNAP_PX = 12;
+const LINE_SNAP_PX = 10;
+const OBJECT_SNAP_PX = 8;
+const MIN_BOUNDARY_AREA = 100;
+
+const PLACE_SIZE_MODES = [
+  { id: 's', label: 'S', scale: 0.75 },
+  { id: 'm', label: 'M', scale: 1 },
+  { id: 'l', label: 'L', scale: 1.35 },
+  { id: 'custom', label: 'Custom', scale: 1 },
+];
 
 /* ── helpers ── */
 
@@ -121,11 +166,112 @@ function rotationOf(desk) {
   return Number(desk.r ?? desk.rotation ?? 0) || 0;
 }
 
-function boundingBoxOf(desks, ids) {
+function finiteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function firstFinite(values, fallback) {
+  for (const value of values) {
+    const n = finiteNumber(value);
+    if (n !== null) return n;
+  }
+  return fallback;
+}
+
+function componentForDesk(desk, compMap) {
+  return compMap.get(desk?.component_id || desk?.symbol_id) || compMap.get('desk-short');
+}
+
+function deskW(desk, compMap = new Map()) {
+  const component = componentForDesk(desk, compMap);
+  return Math.max(1, firstFinite([
+    desk?.w,
+    desk?.width,
+    desk?.size?.w,
+    desk?.size?.width,
+    desk?.geometry?.w,
+    desk?.geometry?.width,
+    component?.default_w,
+  ], 100));
+}
+
+function deskH(desk, compMap = new Map()) {
+  const component = componentForDesk(desk, compMap);
+  return Math.max(1, firstFinite([
+    desk?.h,
+    desk?.height,
+    desk?.size?.h,
+    desk?.size?.height,
+    desk?.geometry?.h,
+    desk?.geometry?.height,
+    component?.default_h,
+  ], 60));
+}
+
+function deskX(desk, compMap = new Map()) {
+  const direct = firstFinite([
+    desk?.x,
+    desk?.left,
+    desk?.position?.x,
+    desk?.geometry?.x,
+  ], null);
+  if (direct !== null) return direct;
+  const cx = firstFinite([desk?.cx, desk?.center_x, desk?.center?.x], null);
+  return cx !== null ? cx - deskW(desk, compMap) / 2 : 0;
+}
+
+function deskY(desk, compMap = new Map()) {
+  const direct = firstFinite([
+    desk?.y,
+    desk?.top,
+    desk?.position?.y,
+    desk?.geometry?.y,
+  ], null);
+  if (direct !== null) return direct;
+  const cy = firstFinite([desk?.cy, desk?.center_y, desk?.center?.y], null);
+  return cy !== null ? cy - deskH(desk, compMap) / 2 : 0;
+}
+
+function normalizeDesk(raw, index, compMap) {
+  const componentId = raw?.component_id || raw?.symbol_id || '';
+  const component = compMap.get(componentId) || null;
+  const assetType = raw?.asset_type || raw?.space_type || component?.asset_type || 'desk';
+  const nextComponentId = componentId || (assetType === 'workplace' ? 'workplace-desk-chair' : 'desk-short');
+  const normalized = {
+    ...(raw || {}),
+    id: String(raw?.id || raw?.desk_id || raw?.workplace_id || uid(`desk-${index}`)),
+    x: deskX(raw, compMap),
+    y: deskY(raw, compMap),
+    w: deskW(raw, compMap),
+    h: deskH(raw, compMap),
+    r: rotationOf(raw),
+    asset_type: assetType,
+    space_type: raw?.space_type || assetType,
+    component_id: raw?.component_id || nextComponentId,
+    symbol_id: raw?.symbol_id || nextComponentId,
+    type: raw?.type || (raw?.fixed ? 'fixed' : 'flex'),
+    bookable: raw?.bookable ?? (assetType === 'workplace'),
+  };
+  if (assetType === 'workplace' && !normalized.workplace_id) {
+    normalized.workplace_id = uid('wp');
+  }
+  return normalized;
+}
+
+function structuresLocked(...groups) {
+  return groups.flat().some((item) => item?.locked);
+}
+
+function setStructureLockOnItems(items, locked) {
+  return (items || []).map((item) => ({ ...item, locked }));
+}
+
+function boundingBoxOf(desks, ids, compMap = new Map()) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const d of desks) {
     if (ids && !ids.has(d.id)) continue;
-    const x = d.x || 0, y = d.y || 0, w = d.w || 100, h = d.h || 60;
+    const x = deskX(d, compMap), y = deskY(d, compMap), w = deskW(d, compMap), h = deskH(d, compMap);
     if (x < minX) minX = x;
     if (y < minY) minY = y;
     if (x + w > maxX) maxX = x + w;
@@ -138,6 +284,148 @@ function boundingBoxOf(desks, ids) {
 function ptFromArr(p) {
   if (!p) return { x: 0, y: 0 };
   return Array.isArray(p) ? { x: Number(p[0]), y: Number(p[1]) } : { x: Number(p.x ?? 0), y: Number(p.y ?? 0) };
+}
+
+function pointsFromStructure(item) {
+  const pts = Array.isArray(item?.pts)
+    ? item.pts
+    : (Array.isArray(item?.points) ? item.points : []);
+  const fromPts = pts.map(ptFromArr).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  if (fromPts.length) return fromPts;
+
+  const x1 = finiteNumber(item?.x1);
+  const y1 = finiteNumber(item?.y1);
+  const x2 = finiteNumber(item?.x2);
+  const y2 = finiteNumber(item?.y2);
+  if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
+    return [{ x: x1, y: y1 }, { x: x2, y: y2 }];
+  }
+  return [];
+}
+
+function collectStructureSnapPoints(...groups) {
+  return groups.flatMap((items) => (items || []).flatMap(pointsFromStructure));
+}
+
+function segmentsFromPoints(points, closed = false) {
+  if (!Array.isArray(points) || points.length < 2) return [];
+  const segments = [];
+  const limit = closed ? points.length : points.length - 1;
+  for (let i = 0; i < limit; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    if (Number.isFinite(a?.x) && Number.isFinite(a?.y) && Number.isFinite(b?.x) && Number.isFinite(b?.y)) {
+      segments.push({ a, b });
+    }
+  }
+  return segments;
+}
+
+function segmentsFromStructure(item, closed = false) {
+  return segmentsFromPoints(pointsFromStructure(item), closed || !!item?.closed);
+}
+
+function closestPointOnSegment(point, a, b) {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const den = abx * abx + aby * aby;
+  if (den <= 1e-9) return { x: a.x, y: a.y };
+  const t = Math.max(0, Math.min(1, ((point.x - a.x) * abx + (point.y - a.y) * aby) / den));
+  return { x: a.x + abx * t, y: a.y + aby * t };
+}
+
+function orthogonalPoint(from, point) {
+  if (!from) return point;
+  const dx = point.x - from.x;
+  const dy = point.y - from.y;
+  return Math.abs(dx) >= Math.abs(dy)
+    ? { x: point.x, y: from.y }
+    : { x: from.x, y: point.y };
+}
+
+function polygonArea(points) {
+  if (!Array.isArray(points) || points.length < 3) return 0;
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    area += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(area) / 2;
+}
+
+function orientation(a, b, c) {
+  return (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+}
+
+function onSegment(a, b, c) {
+  return Math.min(a.x, c.x) <= b.x && b.x <= Math.max(a.x, c.x) &&
+    Math.min(a.y, c.y) <= b.y && b.y <= Math.max(a.y, c.y);
+}
+
+function segmentsIntersect(a, b, c, d) {
+  const o1 = orientation(a, b, c);
+  const o2 = orientation(a, b, d);
+  const o3 = orientation(c, d, a);
+  const o4 = orientation(c, d, b);
+  if ((o1 > 0) !== (o2 > 0) && (o3 > 0) !== (o4 > 0)) return true;
+  if (Math.abs(o1) < 1e-9 && onSegment(a, c, b)) return true;
+  if (Math.abs(o2) < 1e-9 && onSegment(a, d, b)) return true;
+  if (Math.abs(o3) < 1e-9 && onSegment(c, a, d)) return true;
+  if (Math.abs(o4) < 1e-9 && onSegment(c, b, d)) return true;
+  return false;
+}
+
+function hasSelfIntersection(points, closed = false) {
+  const segments = segmentsFromPoints(points, closed);
+  for (let i = 0; i < segments.length; i++) {
+    for (let j = i + 1; j < segments.length; j++) {
+      const adjacent = Math.abs(i - j) === 1 || (closed && i === 0 && j === segments.length - 1);
+      if (adjacent) continue;
+      if (segmentsIntersect(segments[i].a, segments[i].b, segments[j].a, segments[j].b)) return true;
+    }
+  }
+  return false;
+}
+
+function drawValidationIssue(type, points, previewPoint = null) {
+  if (type !== 'boundary' && type !== 'zone') return null;
+  const allPoints = previewPoint ? [...points, previewPoint] : points;
+  if (allPoints.length < 3) return { level: 'info', text: 'Нужно минимум 3 точки' };
+  if (polygonArea(allPoints) < MIN_BOUNDARY_AREA) return { level: 'warning', text: 'Зона слишком маленькая' };
+  if (hasSelfIntersection(allPoints, true)) return { level: 'error', text: 'Контур пересекает сам себя' };
+  return { level: 'ok', text: 'Контур валиден' };
+}
+
+function collectDeskSnapAxes(desks, excludedIds, compMap, structurePoints = []) {
+  const axes = { x: [], y: [] };
+  for (const desk of desks || []) {
+    if (excludedIds?.has(desk.id)) continue;
+    const x = deskX(desk, compMap);
+    const y = deskY(desk, compMap);
+    const w = deskW(desk, compMap);
+    const h = deskH(desk, compMap);
+    axes.x.push(x, x + w / 2, x + w);
+    axes.y.push(y, y + h / 2, y + h);
+  }
+  for (const point of structurePoints || []) {
+    axes.x.push(point.x);
+    axes.y.push(point.y);
+  }
+  return axes;
+}
+
+function bestAxisSnap(values, targets, tolerance) {
+  let best = null;
+  for (const value of values) {
+    for (const target of targets) {
+      const diff = target - value;
+      if (Math.abs(diff) <= tolerance && (!best || Math.abs(diff) < Math.abs(best.diff))) {
+        best = { diff, target };
+      }
+    }
+  }
+  return best;
 }
 
 /* ── component ── */
@@ -165,20 +453,25 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const viewport = useViewport({ contentW: canvasW, contentH: canvasH });
   const grid = useGrid({ defaultSize: 10, defaultSnap: false, defaultVisible: true });
 
-  /* ── tool mode: 'select' | 'pan' | 'place' | 'draw_wall' | 'draw_boundary' | 'draw_partition' | 'draw_door' ── */
+  /* ── tool mode: 'select' | 'pan' | 'place' | 'draw_wall' | 'draw_boundary' | 'draw_partition' | 'draw_door' | 'draw_zone' ── */
   const [tool, setTool] = useState('select');
   const [placeComponentId, setPlaceComponentId] = useState('workplace-desk-chair');
 
   /* ── drawing state for structure polylines ── */
   const [drawPoints, setDrawPoints] = useState([]);
   const [drawPreviewPt, setDrawPreviewPt] = useState(null);
+  const [drawSnapPt, setDrawSnapPt] = useState(null);
 
   /* ── selected structure element { type, id } or null ── */
   const [selectedStruct, setSelectedStruct] = useState(null);
 
+  /* ── selected zone id or null ── */
+  const [selectedZoneId, setSelectedZoneId] = useState(null);
+
   /* ── draw mode helpers (must be before keyboard effect) ── */
   const isDrawMode = tool.startsWith('draw_');
   const drawStructType = isDrawMode ? tool.replace('draw_', '') : null;
+  const isZoneDrawMode = tool === 'draw_zone';
 
   /* ── local data state ── */
   const [desks, setDesks] = useState([]);
@@ -187,6 +480,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const [partitions, setPartitions] = useState([]);
   const [doors, setDoors] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [zones, setZones] = useState([]);
   const [dirty, setDirty] = useState(false);
 
   /* ── selection ── */
@@ -194,15 +488,21 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   /* ── undo / redo ── */
   const undoRedo = useUndoRedo({
-    enabled: true,
+    enabled: false,
     onRestore: useCallback((snapshot) => {
-      setDesks(snapshot.desks);
+      setDesks(snapshot.desks || []);
       if (snapshot.walls) setWalls(snapshot.walls);
       if (snapshot.boundaries) setBoundaries(snapshot.boundaries);
       if (snapshot.partitions) setPartitions(snapshot.partitions);
       if (snapshot.doors) setDoors(snapshot.doors);
       if (snapshot.groups) setGroups(snapshot.groups);
+      if (snapshot.zones) setZones(snapshot.zones);
+      setStructureLocked(
+        snapshot.structureLocked ??
+          structuresLocked(snapshot.walls || [], snapshot.boundaries || [], snapshot.partitions || [], snapshot.doors || []),
+      );
       sel.clearSelection();
+      setSelectedStruct(null);
       setDirty(true);
     }, [sel]),
   });
@@ -215,6 +515,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const resizeRef = useRef(null);
   // { deskId, corner: 0-3, startPt, origX, origY, origW, origH }
 
+  /* ── rotation drag state ── */
+  const rotateRef = useRef(null);
+  // { deskId, center, startAngle, origR }
+
+  /* ── clipboard for copy/paste ── */
+  const clipboardRef = useRef(null);
+
   /* ── space-key panning ── */
   const spaceRef = useRef(false);
   const isPanningRef = useRef(false);
@@ -224,6 +531,57 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   /* ── saving ── */
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+
+  /* ── layers visibility ── */
+  const [layerVis, setLayerVis] = useState({
+    walls: true,
+    boundaries: true,
+    partitions: true,
+    doors: true,
+    desks: true,
+    groups: true,
+    zones: true,
+  });
+  const [structureLocked, setStructureLocked] = useState(false);
+  const [layerPanelOpen, setLayerPanelOpen] = useState(false);
+  const toggleLayer = (key) => setLayerVis((prev) => ({ ...prev, [key]: !prev[key] }));
+  const [objectSnapGuides, setObjectSnapGuides] = useState(null);
+
+  /* ── background tracing image ── */
+  const [bgImage, setBgImage] = useState(null);       // data URL or null
+  const [bgOpacity, setBgOpacity] = useState(0.3);    // 0–1
+  const [bgVisible, setBgVisible] = useState(true);
+  const bgFileRef = useRef(null);
+
+  function onBgFileChange(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setBgImage(ev.target.result);
+      setBgVisible(true);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }
+
+  /* ── placement palette ── */
+  const [placeSizeMode, setPlaceSizeMode] = useState('m');
+  const [placeCustomSize, setPlaceCustomSize] = useState({ w: 140, h: 125 });
+
+  /* ── search ── */
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.trim().toLowerCase();
+    return desks.filter((d) =>
+      (d.label || d.id || '').toLowerCase().includes(q) ||
+      (d.assigned_to || '').toLowerCase().includes(q)
+    );
+  }, [desks, searchQuery]);
+  const autoSaveRef = useRef(null);
 
   /* ── component size lookup ── */
   const componentCatalog = useMemo(() => mergeComponentCatalog(components), [components]);
@@ -237,34 +595,137 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   }, [componentCatalog]);
 
   const selectedPlaceComponent = compMap.get(placeComponentId) || componentCatalog[0] || compMap.get('desk-short');
+  const selectedPlaceSize = useMemo(() => {
+    const baseW = selectedPlaceComponent?.default_w || 100;
+    const baseH = selectedPlaceComponent?.default_h || 60;
+    if (placeSizeMode === 'custom') {
+      return {
+        w: Math.max(10, Number(placeCustomSize.w) || baseW),
+        h: Math.max(10, Number(placeCustomSize.h) || baseH),
+      };
+    }
+    const preset = PLACE_SIZE_MODES.find((item) => item.id === placeSizeMode) || PLACE_SIZE_MODES[1];
+    return { w: Math.round(baseW * preset.scale), h: Math.round(baseH * preset.scale) };
+  }, [placeCustomSize.h, placeCustomSize.w, placeSizeMode, selectedPlaceComponent]);
 
   useEffect(() => {
     if (!componentCatalog.length) return;
     if (!componentCatalog.some((c) => c.id === placeComponentId)) {
       setPlaceComponentId(componentCatalog[0].id);
+      setPlaceCustomSize({
+        w: componentCatalog[0].default_w || 100,
+        h: componentCatalog[0].default_h || 60,
+      });
     }
   }, [componentCatalog, placeComponentId]);
 
-  function deskW(d) { return d.w || compMap.get(d.component_id)?.default_w || 100; }
-  function deskH(d) { return d.h || compMap.get(d.component_id)?.default_h || 60; }
+  function selectPlaceComponent(component) {
+    setPlaceComponentId(component.id);
+    setPlaceCustomSize({
+      w: component.default_w || 100,
+      h: component.default_h || 60,
+    });
+  }
+
+  function snapshot() {
+    return { desks, walls, boundaries, partitions, doors, groups, zones, structureLocked };
+  }
+
+  const visibleWalls = layerVis.walls ? walls : [];
+  const visibleBoundaries = layerVis.boundaries ? boundaries : [];
+  const visiblePartitions = layerVis.partitions ? partitions : [];
+  const visibleDoors = layerVis.doors ? doors : [];
+
+  const structureSnapPoints = useMemo(
+    () => collectStructureSnapPoints(visibleWalls, visibleBoundaries, visiblePartitions, visibleDoors),
+    [visibleWalls, visibleBoundaries, visiblePartitions, visibleDoors],
+  );
+
+  const structureSnapSegments = useMemo(() => [
+    ...visibleWalls.flatMap((item) => segmentsFromStructure(item)),
+    ...visibleBoundaries.flatMap((item) => segmentsFromStructure(item, true)),
+    ...visiblePartitions.flatMap((item) => segmentsFromStructure(item)),
+    ...visibleDoors.flatMap((item) => segmentsFromStructure(item)),
+  ], [visibleWalls, visibleBoundaries, visiblePartitions, visibleDoors]);
+
+  const resolveDrawPoint = useCallback((rawPt, event) => {
+    const vertexTolerance = viewport.worldUnitsForPx(VERTEX_SNAP_PX);
+    const lineTolerance = viewport.worldUnitsForPx(LINE_SNAP_PX);
+    const candidates = [
+      ...drawPoints.slice(0, Math.max(0, drawPoints.length - 1)),
+      ...structureSnapPoints,
+    ];
+    let best = null;
+    let bestDist = Infinity;
+    for (const candidate of candidates) {
+      const dist = Math.hypot(rawPt.x - candidate.x, rawPt.y - candidate.y);
+      if (dist < bestDist) {
+        best = candidate;
+        bestDist = dist;
+      }
+    }
+    if (best && bestDist <= vertexTolerance) {
+      const point = { x: best.x, y: best.y };
+      return { point, snapPoint: point, snapKind: 'vertex' };
+    }
+
+    let bestLine = null;
+    let bestLineDist = Infinity;
+    for (const segment of structureSnapSegments) {
+      const point = closestPointOnSegment(rawPt, segment.a, segment.b);
+      const dist = Math.hypot(rawPt.x - point.x, rawPt.y - point.y);
+      if (dist < bestLineDist) {
+        bestLine = point;
+        bestLineDist = dist;
+      }
+    }
+    if (bestLine && bestLineDist <= lineTolerance) {
+      const point = event?.shiftKey && drawPoints.length
+        ? orthogonalPoint(drawPoints[drawPoints.length - 1], bestLine)
+        : bestLine;
+      return { point, snapPoint: bestLine, snapKind: 'line' };
+    }
+
+    const snapped = grid.snapPoint(rawPt, {
+      altSnapOff: event?.altKey,
+      shiftFine: false,
+    });
+    const point = event?.shiftKey && drawPoints.length
+      ? orthogonalPoint(drawPoints[drawPoints.length - 1], snapped)
+      : snapped;
+    return {
+      point,
+      snapPoint: null,
+      snapKind: null,
+    };
+  }, [drawPoints, grid, structureSnapPoints, structureSnapSegments, viewport]);
 
   /* ── sync layout → local state ── */
   useEffect(() => {
-    setDesks(layout?.layout?.desks || []);
-    setWalls(layout?.layout?.walls || []);
-    setBoundaries(layout?.layout?.boundaries || []);
-    setPartitions(layout?.layout?.partitions || []);
-    setDoors(layout?.layout?.doors || []);
+    const nextDesks = (layout?.layout?.desks || []).map((desk, index) => normalizeDesk(desk, index, compMap));
+    const nextWalls = layout?.layout?.walls || [];
+    const nextBoundaries = layout?.layout?.boundaries || [];
+    const nextPartitions = layout?.layout?.partitions || [];
+    const nextDoors = layout?.layout?.doors || [];
+    setDesks(nextDesks);
+    setWalls(nextWalls);
+    setBoundaries(nextBoundaries);
+    setPartitions(nextPartitions);
+    setDoors(nextDoors);
     setGroups(layout?.layout?.groups || []);
+    setZones(layout?.layout?.zones || []);
+    setStructureLocked(structuresLocked(nextWalls, nextBoundaries, nextPartitions, nextDoors));
     sel.clearSelection();
     setDirty(false);
     setDrawPoints([]);
     setDrawPreviewPt(null);
+    setDrawSnapPt(null);
+    setObjectSnapGuides(null);
     setSelectedStruct(null);
     undoRedo.clear();
     setTimeout(() => viewport.zoomToFit({ x: 0, y: 0, w: canvasW, h: canvasH }, 60), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout]);
+  }, [layout, compMap]);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -302,7 +763,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         return;
       }
 
-      if (e.key === 'Enter' && drawPoints.length >= 2) {
+      if (e.key === 'Enter' && (isZoneDrawMode ? drawPoints.length >= 3 : drawPoints.length >= 2)) {
         e.preventDefault();
         finishDraw();
         return;
@@ -310,8 +771,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
       if (e.key === 'v' && !inInput && !meta) { cancelDraw(); setTool('select'); return; }
       if (e.key === 'p' && !inInput && !meta) { cancelDraw(); setTool('place'); return; }
-      if (e.key === 'w' && !inInput && !meta) { cancelDraw(); setTool('draw_wall'); return; }
-      if (e.key === 'b' && !inInput && !meta) { cancelDraw(); setTool('draw_boundary'); return; }
+      if (e.key === 'w' && !inInput && !meta && !structureLocked) { cancelDraw(); setTool('draw_wall'); return; }
+      if (e.key === 'b' && !inInput && !meta && !structureLocked) { cancelDraw(); setTool('draw_boundary'); return; }
       if (e.key === 'f' && !inInput && !meta) { handleZoomToFit(); return; }
 
       if ((e.key === 'Delete' || e.key === 'Backspace') && !inInput) {
@@ -320,11 +781,61 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           deleteSelected();
           return;
         }
-        if (selectedStruct) {
+        if (selectedStruct && !structureLocked) {
           e.preventDefault();
           deleteSelectedStruct();
           return;
         }
+        if (selectedZoneId) {
+          e.preventDefault();
+          deleteZone(selectedZoneId);
+          return;
+        }
+      }
+
+      // Search
+      if (meta && e.key === 'f') {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+        setSearchQuery('');
+        return;
+      }
+
+      // Copy
+      if (meta && e.key === 'c' && !inInput && sel.selectedIds.size) {
+        e.preventDefault();
+        clipboardRef.current = desks.filter((d) => sel.selectedIds.has(d.id)).map((d) => ({ ...d }));
+        onNotice(`Скопировано: ${clipboardRef.current.length}`);
+        return;
+      }
+
+      // Paste
+      if (meta && e.key === 'v' && !inInput && clipboardRef.current?.length) {
+        e.preventDefault();
+        const offset = 20;
+        const pasted = clipboardRef.current.map((d) => ({
+          ...d,
+          id: uid('desk'),
+          x: deskX(d, compMap) + offset,
+          y: deskY(d, compMap) + offset,
+          w: deskW(d, compMap),
+          h: deskH(d, compMap),
+          r: rotationOf(d),
+          label: d.label ? `${d.label} (копия)` : undefined,
+        }));
+        clipboardRef.current = pasted.map((d) => ({ ...d }));
+        modifyDesks((prev) => [...prev, ...pasted]);
+        sel.selectIds(pasted.map((d) => d.id));
+        setSelectedStruct(null);
+        onNotice(`Вставлено: ${pasted.length}`);
+        return;
+      }
+
+      // Duplicate
+      if (meta && e.key === 'd' && !inInput && sel.selectedIds.size) {
+        e.preventDefault();
+        duplicateSelected();
+        return;
       }
 
       if (meta && e.key === 'g' && !e.shiftKey && !inInput) {
@@ -340,13 +851,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
       if (meta && e.key === 'z' && !e.shiftKey && !inInput) {
         e.preventDefault();
-        undoRedo.undo({ desks });
+        undoRedo.undo(snapshot());
         return;
       }
 
       if (meta && (e.key === 'y' || (e.key === 'z' && e.shiftKey)) && !inInput) {
         e.preventDefault();
-        undoRedo.redo({ desks });
+        undoRedo.redo(snapshot());
         return;
       }
 
@@ -359,7 +870,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         modifyDesks((prev) =>
           prev.map((d) =>
             sel.selectedIds.has(d.id)
-              ? { ...d, x: (d.x || 0) + dx, y: (d.y || 0) + dy }
+              ? { ...d, x: deskX(d, compMap) + dx, y: deskY(d, compMap) + dy }
               : d,
           ),
         );
@@ -382,36 +893,58 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       window.removeEventListener('keyup', onKeyUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.selectedIds, desks, drawPoints, isDrawMode, tool, selectedStruct]);
+  }, [sel.selectedIds, desks, zones, drawPoints, isDrawMode, tool, selectedStruct, selectedZoneId, structureLocked, compMap]);
 
-  function finishDraw() {
-    if (drawPoints.length < 2) {
+  function finishDraw(points = drawPoints) {
+    if (points.length < 2) {
       setDrawPoints([]);
       setDrawPreviewPt(null);
       return;
     }
-    const newStruct = { id: uid(drawStructType), pts: drawPoints.map((p) => [p.x, p.y]) };
-    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
-    switch (drawStructType) {
-      case 'wall':      setWalls((prev) => [...prev, newStruct]); break;
-      case 'boundary':  setBoundaries((prev) => [...prev, newStruct]); break;
-      case 'partition': setPartitions((prev) => [...prev, newStruct]); break;
-      case 'door':      setDoors((prev) => [...prev, newStruct]); break;
+    undoRedo.push(snapshot());
+    if (drawStructType === 'zone') {
+      if (points.length < 3) {
+        setDrawPoints([]);
+        setDrawPreviewPt(null);
+        return;
+      }
+      const newZone = {
+        id: uid('zone'),
+        label: `Зона ${zones.length + 1}`,
+        type: 'custom',
+        color: zoneDefaultColor('custom'),
+        pts: points.map((p) => [p.x, p.y]),
+      };
+      setZones((prev) => [...prev, newZone]);
+      setSelectedZoneId(newZone.id);
+      setTool('select');
+    } else {
+      const newStruct = { id: uid(drawStructType), pts: points.map((p) => [p.x, p.y]) };
+      if (drawStructType === 'boundary') newStruct.closed = true;
+      switch (drawStructType) {
+        case 'wall':      setWalls((prev) => [...prev, newStruct]); break;
+        case 'boundary':  setBoundaries((prev) => [...prev, newStruct]); break;
+        case 'partition': setPartitions((prev) => [...prev, newStruct]); break;
+        case 'door':      setDoors((prev) => [...prev, newStruct]); break;
+      }
     }
     setDirty(true);
     setDrawPoints([]);
     setDrawPreviewPt(null);
+    setDrawSnapPt(null);
+    setObjectSnapGuides(null);
   }
 
   function cancelDraw() {
     setDrawPoints([]);
     setDrawPreviewPt(null);
+    setDrawSnapPt(null);
   }
 
   /* ── data mutations ── */
 
   function modifyDesks(updater) {
-    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+    undoRedo.push(snapshot());
     setDesks(updater);
     setDirty(true);
   }
@@ -422,9 +955,84 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     sel.clearSelection();
   }
 
+  function duplicateSelected() {
+    if (!sel.selectedIds.size) return;
+    const offset = 20;
+    const duped = desks.filter((d) => sel.selectedIds.has(d.id)).map((d) => ({
+      ...d,
+      id: uid('desk'),
+      x: deskX(d, compMap) + offset,
+      y: deskY(d, compMap) + offset,
+      w: deskW(d, compMap),
+      h: deskH(d, compMap),
+      r: rotationOf(d),
+      workplace_id: d.asset_type === 'workplace' ? uid('wp') : d.workplace_id,
+    }));
+    modifyDesks((prev) => [...prev, ...duped]);
+    sel.selectIds(duped.map((d) => d.id));
+    setSelectedStruct(null);
+    onNotice(`Дублировано: ${duped.length}`);
+  }
+
+  function alignSelected(kind) {
+    if (sel.selectedIds.size < 2) return;
+    const bbox = boundingBoxOf(desks, sel.selectedIds, compMap);
+    if (!bbox) return;
+    modifyDesks((prev) => prev.map((desk) => {
+      if (!sel.selectedIds.has(desk.id)) return desk;
+      const w = deskW(desk, compMap);
+      const h = deskH(desk, compMap);
+      const patch = {};
+      if (kind === 'left') patch.x = bbox.x;
+      if (kind === 'hcenter') patch.x = bbox.x + bbox.w / 2 - w / 2;
+      if (kind === 'right') patch.x = bbox.x + bbox.w - w;
+      if (kind === 'top') patch.y = bbox.y;
+      if (kind === 'vcenter') patch.y = bbox.y + bbox.h / 2 - h / 2;
+      if (kind === 'bottom') patch.y = bbox.y + bbox.h - h;
+      return { ...desk, ...patch };
+    }));
+  }
+
+  function distributeSelected(axis) {
+    if (sel.selectedIds.size < 3) return;
+    const selected = desks
+      .filter((desk) => sel.selectedIds.has(desk.id))
+      .map((desk) => ({
+        desk,
+        x: deskX(desk, compMap),
+        y: deskY(desk, compMap),
+        w: deskW(desk, compMap),
+        h: deskH(desk, compMap),
+      }))
+      .sort((a, b) => (
+        axis === 'x'
+          ? (a.x + a.w / 2) - (b.x + b.w / 2)
+          : (a.y + a.h / 2) - (b.y + b.h / 2)
+      ));
+    const first = selected[0];
+    const last = selected[selected.length - 1];
+    const start = axis === 'x' ? first.x + first.w / 2 : first.y + first.h / 2;
+    const end = axis === 'x' ? last.x + last.w / 2 : last.y + last.h / 2;
+    const step = (end - start) / (selected.length - 1);
+    const targets = new Map(selected.map((item, index) => {
+      const center = start + step * index;
+      return [item.desk.id, axis === 'x' ? { x: center - item.w / 2 } : { y: center - item.h / 2 }];
+    }));
+    modifyDesks((prev) => prev.map((desk) => targets.has(desk.id) ? { ...desk, ...targets.get(desk.id) } : desk));
+  }
+
+  function rotateSelectedBy(delta) {
+    if (!sel.selectedIds.size) return;
+    modifyDesks((prev) => prev.map((desk) => (
+      sel.selectedIds.has(desk.id)
+        ? { ...desk, r: (rotationOf(desk) + delta) % 360 }
+        : desk
+    )));
+  }
+
   function deleteSelectedStruct() {
-    if (!selectedStruct) return;
-    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+    if (!selectedStruct || structureLocked) return;
+    undoRedo.push(snapshot());
     const { type, id } = selectedStruct;
     switch (type) {
       case 'wall':      setWalls((prev) => prev.filter((s) => s.id !== id)); break;
@@ -440,13 +1048,31 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     modifyDesks((prev) => prev.map((d) => d.id === id ? { ...d, ...patch } : d));
   }
 
+  function toggleStructureLock() {
+    const nextLocked = !structureLocked;
+    undoRedo.push(snapshot());
+    setWalls((prev) => setStructureLockOnItems(prev, nextLocked));
+    setBoundaries((prev) => setStructureLockOnItems(prev, nextLocked));
+    setPartitions((prev) => setStructureLockOnItems(prev, nextLocked));
+    setDoors((prev) => setStructureLockOnItems(prev, nextLocked));
+    setStructureLocked(nextLocked);
+    if (nextLocked) {
+      setSelectedStruct(null);
+      if (isDrawMode) {
+        setTool('select');
+        cancelDraw();
+      }
+    }
+    setDirty(true);
+  }
+
   /* ── group operations ── */
 
   const GROUP_COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2'];
 
   function groupSelected() {
     if (sel.selectedIds.size < 2) return;
-    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+    undoRedo.push(snapshot());
     const deskIds = [...sel.selectedIds];
     const colorIdx = groups.length % GROUP_COLORS.length;
     const newGroup = {
@@ -464,20 +1090,35 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     const idsToUngroup = [...sel.selectedIds];
     const matching = groups.filter((g) => g.desk_ids.some((did) => idsToUngroup.includes(did)));
     if (!matching.length) return;
-    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+    undoRedo.push(snapshot());
     setGroups((prev) => prev.filter((g) => !matching.includes(g)));
     setDirty(true);
   }
 
   function updateGroup(groupId, patch) {
-    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+    undoRedo.push(snapshot());
     setGroups((prev) => prev.map((g) => g.id === groupId ? { ...g, ...patch } : g));
     setDirty(true);
   }
 
   function deleteGroup(groupId) {
-    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+    undoRedo.push(snapshot());
     setGroups((prev) => prev.filter((g) => g.id !== groupId));
+    setDirty(true);
+  }
+
+  /* ── zone operations ── */
+
+  function updateZone(zoneId, patch) {
+    undoRedo.push(snapshot());
+    setZones((prev) => prev.map((z) => z.id === zoneId ? { ...z, ...patch } : z));
+    setDirty(true);
+  }
+
+  function deleteZone(zoneId) {
+    undoRedo.push(snapshot());
+    setZones((prev) => prev.filter((z) => z.id !== zoneId));
+    setSelectedZoneId(null);
     setDirty(true);
   }
 
@@ -499,10 +1140,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     const comp = selectedPlaceComponent || compMap.get('desk-short');
     const componentId = comp?.id || 'desk-short';
     const assetType = comp?.asset_type || 'desk';
-    const dw = comp?.default_w || 100;
-    const dh = comp?.default_h || 60;
-    const px = grid.snapOn ? Math.round(svgPt.x / grid.gridSize) * grid.gridSize : Math.round(svgPt.x);
-    const py = grid.snapOn ? Math.round(svgPt.y / grid.gridSize) * grid.gridSize : Math.round(svgPt.y);
+    const dw = selectedPlaceSize.w;
+    const dh = selectedPlaceSize.h;
+    const rawX = svgPt.x - dw / 2;
+    const rawY = svgPt.y - dh / 2;
+    const px = grid.snapOn ? Math.round(rawX / grid.gridSize) * grid.gridSize : Math.round(rawX);
+    const py = grid.snapOn ? Math.round(rawY / grid.gridSize) * grid.gridSize : Math.round(rawY);
     const usedLabels = new Set(desks.map((d) => d.label));
     const labelPrefix = labelPrefixForComponent(comp);
     let num = desks.length + 1;
@@ -522,7 +1165,23 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     modifyDesks((prev) => [...prev, newDesk]);
     sel.selectIds(new Set([newDesk.id]));
     setSelectedStruct(null);
-    setTool('select');
+  }
+
+  function resolveObjectSnapDelta(rawDx, rawDy, dragState, event) {
+    if (!dragState?.originBBox || event?.altKey) {
+      return { dx: rawDx, dy: rawDy, guides: null };
+    }
+    const tolerance = viewport.worldUnitsForPx(OBJECT_SNAP_PX);
+    const { originBBox: bbox, snapAxes } = dragState;
+    const xValues = [bbox.x + rawDx, bbox.x + bbox.w / 2 + rawDx, bbox.x + bbox.w + rawDx];
+    const yValues = [bbox.y + rawDy, bbox.y + bbox.h / 2 + rawDy, bbox.y + bbox.h + rawDy];
+    const xSnap = bestAxisSnap(xValues, snapAxes?.x || [], tolerance);
+    const ySnap = bestAxisSnap(yValues, snapAxes?.y || [], tolerance);
+    return {
+      dx: rawDx + (xSnap?.diff || 0),
+      dy: rawDy + (ySnap?.diff || 0),
+      guides: xSnap || ySnap ? { x: xSnap?.target, y: ySnap?.target } : null,
+    };
   }
 
   /* ── pointer handlers ── */
@@ -560,14 +1219,52 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
     // Draw mode — add point to polyline
     if (isDrawMode) {
-      const snapped = { x: grid.snap(pt.x), y: grid.snap(pt.y) };
-      setDrawPoints((prev) => [...prev, snapped]);
+      if (structureLocked && !isZoneDrawMode) return;
+      const { point, snapPoint } = resolveDrawPoint(pt, e);
+      setDrawSnapPt(snapPoint);
+      const closeTolerance = viewport.worldUnitsForPx(VERTEX_SNAP_PX);
+      if ((drawStructType === 'boundary' || drawStructType === 'zone') && drawPoints.length >= 3) {
+        const first = drawPoints[0];
+        if (Math.hypot(point.x - first.x, point.y - first.y) <= closeTolerance) {
+          finishDraw(drawPoints);
+          return;
+        }
+      }
+      setDrawPoints((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && Math.hypot(last.x - point.x, last.y - point.y) < 0.01) return prev;
+        return [...prev, point];
+      });
       return;
+    }
+
+    // Group click — select all desks in the group
+    const groupEl = e.target?.closest?.('.ce-group-visual');
+    if (groupEl) {
+      const groupId = groupEl.dataset.groupId;
+      if (groupId) {
+        selectGroup(groupId);
+        setSelectedStruct(null);
+        setSelectedZoneId(null);
+        return;
+      }
+    }
+
+    // Zone click — select zone
+    const zoneEl = e.target?.closest?.('.ce-zone-visual');
+    if (zoneEl) {
+      const zoneId = zoneEl.dataset.zoneId;
+      if (zoneId) {
+        setSelectedZoneId(zoneId);
+        sel.clearSelection();
+        setSelectedStruct(null);
+        return;
+      }
     }
 
     // Select tool — prefer the actual SVG target for imported structures.
     const structEl = e.target?.closest?.('[data-struct-id]');
-    if (structEl) {
+    if (structEl && !structureLocked) {
       sel.clearSelection();
       setSelectedStruct({ type: structEl.dataset.structType, id: structEl.dataset.structId });
       return;
@@ -588,15 +1285,22 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       const origins = new Map();
       for (const id of ids) {
         const d = desks.find((dd) => dd.id === id);
-        if (d) origins.set(id, { x: d.x || 0, y: d.y || 0 });
+        if (d) origins.set(id, { x: deskX(d, compMap), y: deskY(d, compMap) });
       }
-      dragRef.current = { startSvgPt: pt, origins, moved: false };
+      dragRef.current = {
+        startSvgPt: pt,
+        origins,
+        moved: false,
+        snapshot: snapshot(),
+        originBBox: boundingBoxOf(desks, ids, compMap),
+        snapAxes: collectDeskSnapAxes(desks, ids, compMap, structureSnapPoints),
+      };
       svgEl.setPointerCapture(e.pointerId);
       return;
     }
 
     // Structure click — select it
-    if (hit && hit.type !== 'desk') {
+    if (hit && hit.type !== 'desk' && !structureLocked) {
       sel.clearSelection();
       setSelectedStruct(hit);
       return;
@@ -605,9 +1309,33 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     // Click on empty space → start marquee
     if (!e.shiftKey) sel.clearSelection();
     setSelectedStruct(null);
+    setSelectedZoneId(null);
     sel.startMarquee(pt, { append: e.shiftKey });
     svgEl.setPointerCapture(e.pointerId);
-  }, [tool, viewport, sel, desks, isDrawMode, grid]);
+  }, [
+    tool,
+    viewport,
+    sel,
+    desks,
+    groups,
+    walls,
+    boundaries,
+    partitions,
+    doors,
+    zones,
+    isDrawMode,
+    isZoneDrawMode,
+    grid,
+    structureLocked,
+    compMap,
+    selectedPlaceComponent,
+    selectedPlaceSize,
+    resolveDrawPoint,
+    structureSnapPoints,
+    drawPoints,
+    drawStructType,
+    layerVis,
+  ]);
 
   const onSvgPointerMove = useCallback((e) => {
     const pt = viewport.screenToSvg(e);
@@ -615,12 +1343,28 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
     // Draw preview
     if (isDrawMode && drawPoints.length > 0) {
-      setDrawPreviewPt({ x: grid.snap(pt.x), y: grid.snap(pt.y) });
+      const { point, snapPoint } = resolveDrawPoint(pt, e);
+      setDrawPreviewPt(point);
+      setDrawSnapPt(snapPoint);
+    } else if (isDrawMode) {
+      const { snapPoint } = resolveDrawPoint(pt, e);
+      setDrawSnapPt(snapPoint);
     }
 
     // Pan
     if (isPanningRef.current) {
       viewport.updatePan(e);
+      return;
+    }
+
+    // Rotate drag
+    if (rotateRef.current) {
+      const { deskId, center, startAngle, origR } = rotateRef.current;
+      const angle = Math.atan2(pt.y - center.y, pt.x - center.x) * 180 / Math.PI;
+      let nextR = origR + angle - startAngle;
+      if (e.shiftKey) nextR = Math.round(nextR / 15) * 15;
+      setDesks((prev) => prev.map((d) => d.id === deskId ? { ...d, r: nextR } : d));
+      setDirty(true);
       return;
     }
 
@@ -652,6 +1396,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
       if (!dragRef.current.moved && Math.hypot(dx, dy) < DRAG_MIN) return;
       dragRef.current.moved = true;
+      const snapped = resolveObjectSnapDelta(dx, dy, dragRef.current, e);
+      setObjectSnapGuides(snapped.guides);
 
       setDesks((prev) =>
         prev.map((d) => {
@@ -659,8 +1405,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           if (!orig) return d;
           return {
             ...d,
-            x: grid.snap(orig.x + dx),
-            y: grid.snap(orig.y + dy),
+            x: grid.snap(orig.x + snapped.dx, { altSnapOff: e.altKey }),
+            y: grid.snap(orig.y + snapped.dy, { altSnapOff: e.altKey }),
           };
         }),
       );
@@ -672,15 +1418,16 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     if (sel.marquee) {
       sel.updateMarquee(pt);
     }
-  }, [viewport, sel, grid, isDrawMode, drawPoints]);
+  }, [viewport, sel, grid, isDrawMode, drawPoints, compMap, resolveDrawPoint]);
 
   const onSvgDoubleClick = useCallback((e) => {
-    if (isDrawMode && drawPoints.length >= 2) {
+    const minPts = isZoneDrawMode ? 3 : 2;
+    if (isDrawMode && drawPoints.length >= minPts) {
       e.preventDefault();
       finishDraw();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDrawMode, drawPoints, drawStructType]);
+  }, [isDrawMode, isZoneDrawMode, drawPoints, drawStructType]);
 
   const onSvgPointerUp = useCallback((e) => {
     const svgEl = viewport.svgRef.current;
@@ -700,12 +1447,20 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       return;
     }
 
+    // Rotate end
+    if (rotateRef.current) {
+      rotateRef.current = null;
+      try { svgEl?.releasePointerCapture(e.pointerId); } catch {}
+      return;
+    }
+
     // Desk drag end
     if (dragRef.current) {
       if (dragRef.current.moved) {
-        undoRedo.push({ desks: dragRef.current.origins }); // push pre-drag state
+        undoRedo.push(dragRef.current.snapshot);
       }
       dragRef.current = null;
+      setObjectSnapGuides(null);
       try { svgEl?.releasePointerCapture(e.pointerId); } catch {}
       return;
     }
@@ -719,14 +1474,26 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   /* ── build a lightweight layout object for hit-testing ── */
   function buildLayoutForHitTest() {
-    return { desks, walls, boundaries, partitions, doors };
+    return {
+      desks: desks.map((d) => ({
+        ...d,
+        x: deskX(d, compMap),
+        y: deskY(d, compMap),
+        w: deskW(d, compMap),
+        h: deskH(d, compMap),
+      })),
+      walls: structureLocked || !layerVis.walls ? [] : walls,
+      boundaries: structureLocked || !layerVis.boundaries ? [] : boundaries,
+      partitions: structureLocked || !layerVis.partitions ? [] : partitions,
+      doors: structureLocked || !layerVis.doors ? [] : doors,
+    };
   }
 
   /* ── zoom to fit selection or all ── */
   function handleZoomToFit() {
     const bb = sel.selectedIds.size
-      ? boundingBoxOf(desks, sel.selectedIds)
-      : boundingBoxOf(desks, null) || { x: 0, y: 0, w: canvasW, h: canvasH };
+      ? boundingBoxOf(desks, sel.selectedIds, compMap)
+      : boundingBoxOf(desks, null, compMap) || { x: 0, y: 0, w: canvasW, h: canvasH };
     if (bb) viewport.zoomToFit(bb, 60);
   }
 
@@ -739,18 +1506,21 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       ...(layout?.layout || {}),
       components: customComponents,
       desks,
-      walls,
-      boundaries,
-      partitions,
-      doors,
+      walls: setStructureLockOnItems(walls, structureLocked),
+      boundaries: setStructureLockOnItems(boundaries, structureLocked),
+      partitions: setStructureLockOnItems(partitions, structureLocked),
+      doors: setStructureLockOnItems(doors, structureLocked),
       groups,
+      zones,
     };
-  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors, groups]);
+  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors, groups, structureLocked]);
 
   /* ── save ── */
   const saveDraft = useCallback(async ({ silent = false } = {}) => {
     if (!floorId) return null;
     if (!dirty) return { saved: false, layout: currentLayoutDoc() };
+    if (savingRef.current) return null;
+    savingRef.current = true;
     setSaving(true);
     onError('');
     try {
@@ -767,26 +1537,108 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       onError(err.message);
       throw err;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }, [currentLayoutDoc, dirty, floorId, layout?.version, onError, onLayoutChange, onNotice]);
+
+  useEffect(() => {
+    if (!dirty || !floorId) return undefined;
+    autoSaveRef.current = setTimeout(() => {
+      saveDraft({ silent: true }).catch(() => {});
+    }, 30000);
+    return () => clearTimeout(autoSaveRef.current);
+  }, [dirty, floorId, saveDraft]);
+
+  /* ── insert objects from block ── */
+  function insertObjects(rawDesks) {
+    if (!rawDesks?.length) return;
+    // find canvas center in SVG coords
+    const vb = viewport.viewBoxAttr ? viewport.viewBoxAttr.split(' ').map(Number) : [0, 0, canvasW, canvasH];
+    const cx = vb[0] + vb[2] / 2;
+    const cy = vb[1] + vb[3] / 2;
+    // compute block bounding box origin
+    let minX = Infinity, minY = Infinity;
+    for (const d of rawDesks) {
+      const x = Number(d.x ?? d.position?.x ?? 0);
+      const y = Number(d.y ?? d.position?.y ?? 0);
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+    }
+    if (!Number.isFinite(minX)) { minX = 0; minY = 0; }
+    const inserted = rawDesks.map((d) => ({
+      ...d,
+      id: uid('desk'),
+      x: (cx - minX) + Number(d.x ?? d.position?.x ?? 0),
+      y: (cy - minY) + Number(d.y ?? d.position?.y ?? 0),
+    }));
+    modifyDesks((prev) => [...prev, ...inserted]);
+    sel.selectIds(inserted.map((d) => d.id));
+    onNotice(`Вставлено из блока: ${inserted.length} объектов`);
+  }
+
+  /* ── save selected desks as block ── */
+  async function saveSelectedAsBlock() {
+    if (!sel.selectedIds.size) return;
+    const selected = desks.filter((d) => sel.selectedIds.has(d.id));
+    if (selected.length < 1) return;
+    const name = prompt('Название блока:');
+    if (!name) return;
+    try {
+      await apiFetch('/blocks', {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          category: 'custom',
+          objects: selected.map((d) => ({
+            id: d.id,
+            label: d.label,
+            component_id: d.component_id || d.symbol_id,
+            asset_type: d.asset_type,
+            x: deskX(d, compMap),
+            y: deskY(d, compMap),
+            w: deskW(d, compMap),
+            h: deskH(d, compMap),
+            r: rotationOf(d),
+            bookable: d.bookable,
+          })),
+        }),
+      });
+      onNotice(`Блок «${name}» сохранён (${selected.length} объектов)`);
+    } catch (err) {
+      onError(err.message);
+    }
+  }
 
   useImperativeHandle(ref, () => ({
     hasDirty: () => dirty,
     getCurrentLayout: currentLayoutDoc,
     saveIfDirty: () => saveDraft({ silent: true }),
-  }), [currentLayoutDoc, dirty, saveDraft]);
+    insertObjects,
+    getSelectedDesks: () => desks.filter((d) => sel.selectedIds.has(d.id)),
+    hasSelection: () => sel.selectedIds.size > 0,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [currentLayoutDoc, dirty, saveDraft, desks, sel.selectedIds]);
 
   function resetChanges() {
-    setDesks(layout?.layout?.desks || []);
-    setWalls(layout?.layout?.walls || []);
-    setBoundaries(layout?.layout?.boundaries || []);
-    setPartitions(layout?.layout?.partitions || []);
-    setDoors(layout?.layout?.doors || []);
+    const nextDesks = (layout?.layout?.desks || []).map((desk, index) => normalizeDesk(desk, index, compMap));
+    const nextWalls = layout?.layout?.walls || [];
+    const nextBoundaries = layout?.layout?.boundaries || [];
+    const nextPartitions = layout?.layout?.partitions || [];
+    const nextDoors = layout?.layout?.doors || [];
+    setDesks(nextDesks);
+    setWalls(nextWalls);
+    setBoundaries(nextBoundaries);
+    setPartitions(nextPartitions);
+    setDoors(nextDoors);
     setGroups(layout?.layout?.groups || []);
+    setZones(layout?.layout?.zones || []);
+    setStructureLocked(structuresLocked(nextWalls, nextBoundaries, nextPartitions, nextDoors));
     sel.clearSelection();
     setDrawPoints([]);
     setDrawPreviewPt(null);
+    setDrawSnapPt(null);
+    setObjectSnapGuides(null);
     setDirty(false);
     undoRedo.clear();
   }
@@ -798,8 +1650,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   const selBBox = useMemo(() => {
     if (!sel.selectedIds.size) return null;
-    return boundingBoxOf(desks, sel.selectedIds);
-  }, [desks, sel.selectedIds]);
+    return boundingBoxOf(desks, sel.selectedIds, compMap);
+  }, [desks, sel.selectedIds, compMap]);
   const structureCount = walls.length + boundaries.length + partitions.length + doors.length;
 
   /* ── cursor class ── */
@@ -818,6 +1670,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     const rows = Math.ceil(canvasH / grid.gridSize) + 1;
     return { cols, rows };
   }, [grid.gridVisible, grid.gridSize, canvasW, canvasH]);
+
+  const drawIssue = useMemo(
+    () => drawValidationIssue(drawStructType, drawPoints, drawPreviewPt),
+    [drawStructType, drawPoints, drawPreviewPt],
+  );
 
   /* ── render ── */
   return (
@@ -846,52 +1703,47 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         >
           <Plus size={14} />
         </button>
-        {tool === 'place' && (
-          <select
-            className="ce-place-select"
-            value={placeComponentId}
-            onChange={(e) => setPlaceComponentId(e.target.value)}
-            title="Компонент для вставки"
-          >
-            {componentGroups.map((group) => (
-              <optgroup label={group.label} key={group.id}>
-                {group.items.map((c) => (
-                  <option key={c.id} value={c.id}>{c.label || c.id}</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        )}
 
         <div className="ce-toolbar-sep" />
 
         <button
           className={`ce-tool-btn ${tool === 'draw_wall' ? 'active' : ''}`}
-          title="Стена (W)"
+          title={structureLocked ? 'Слой конструкций заблокирован' : 'Стена (W)'}
+          disabled={structureLocked}
           onClick={() => { cancelDraw(); setTool(tool === 'draw_wall' ? 'select' : 'draw_wall'); }}
         >
           <Minus size={14} />
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_boundary' ? 'active' : ''}`}
-          title="Контур (B)"
+          title={structureLocked ? 'Слой конструкций заблокирован' : 'Контур (B)'}
+          disabled={structureLocked}
           onClick={() => { cancelDraw(); setTool(tool === 'draw_boundary' ? 'select' : 'draw_boundary'); }}
         >
           <Square size={14} />
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_partition' ? 'active' : ''}`}
-          title="Перегородка"
+          title={structureLocked ? 'Слой конструкций заблокирован' : 'Перегородка'}
+          disabled={structureLocked}
           onClick={() => { cancelDraw(); setTool(tool === 'draw_partition' ? 'select' : 'draw_partition'); }}
         >
           <Pencil size={14} />
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_door' ? 'active' : ''}`}
-          title="Дверь"
+          title={structureLocked ? 'Слой конструкций заблокирован' : 'Дверь'}
+          disabled={structureLocked}
           onClick={() => { cancelDraw(); setTool(tool === 'draw_door' ? 'select' : 'draw_door'); }}
         >
           <DoorOpen size={14} />
+        </button>
+        <button
+          className={`ce-tool-btn ${tool === 'draw_zone' ? 'active' : ''}`}
+          title="Нарисовать зону (кликни 3+ точки, замкни у первой)"
+          onClick={() => { cancelDraw(); setTool(tool === 'draw_zone' ? 'select' : 'draw_zone'); }}
+        >
+          <Map size={14} />
         </button>
 
         <div className="ce-toolbar-sep" />
@@ -917,16 +1769,96 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           <Grid3X3 size={14} />
         </button>
         <button
-          className={`ce-tool-btn icon-text ${grid.snapOn ? 'active' : ''}`}
-          title="Привязка к сетке"
+          className={`ce-tool-btn ${grid.snapOn ? 'active' : ''}`}
+          title={grid.snapOn ? 'Привязка к сетке вкл (кликни чтобы выкл)' : 'Привязка к сетке выкл (кликни чтобы вкл)'}
           onClick={grid.toggleSnap}
         >
-          Snap
+          <Magnet size={14} />
+        </button>
+
+        <div className="ce-toolbar-sep" />
+
+        <button
+          className={`ce-tool-btn ${layerPanelOpen ? 'active' : ''}`}
+          title="Слои"
+          onClick={() => setLayerPanelOpen(!layerPanelOpen)}
+        >
+          <Layers size={14} />
+        </button>
+        <button
+          className={`ce-tool-btn ${searchOpen ? 'active' : ''}`}
+          title="Поиск (Ctrl+F)"
+          onClick={() => { setSearchOpen(!searchOpen); setSearchQuery(''); }}
+        >
+          <Search size={14} />
         </button>
 
         {(sel.selectedIds.size > 0 || selectedStruct) && (
           <>
             <div className="ce-toolbar-sep" />
+            {sel.selectedIds.size > 0 && (
+              <button
+                className="ce-tool-btn"
+                title="Копировать (Ctrl+C)"
+                onClick={() => {
+                  clipboardRef.current = desks.filter((d) => sel.selectedIds.has(d.id)).map((d) => ({ ...d }));
+                  onNotice(`Скопировано: ${clipboardRef.current.length}`);
+                }}
+              >
+                <Copy size={14} />
+              </button>
+            )}
+            {sel.selectedIds.size > 0 && (
+              <button
+                className="ce-tool-btn"
+                title="Дублировать (Ctrl+D)"
+                onClick={duplicateSelected}
+              >
+                <Copy size={14} />
+                <Plus size={10} />
+              </button>
+            )}
+            {sel.selectedIds.size > 0 && (
+              <button
+                className="ce-tool-btn"
+                title="Повернуть выбранное на 90°"
+                onClick={() => rotateSelectedBy(90)}
+              >
+                <RotateCw size={14} />
+              </button>
+            )}
+            {sel.selectedIds.size > 1 && (
+              <>
+                <button className="ce-tool-btn" title="Выровнять слева" onClick={() => alignSelected('left')}>
+                  <AlignHorizontalJustifyStart size={14} />
+                </button>
+                <button className="ce-tool-btn" title="Выровнять по центру X" onClick={() => alignSelected('hcenter')}>
+                  <AlignHorizontalJustifyCenter size={14} />
+                </button>
+                <button className="ce-tool-btn" title="Выровнять справа" onClick={() => alignSelected('right')}>
+                  <AlignHorizontalJustifyEnd size={14} />
+                </button>
+                <button className="ce-tool-btn" title="Выровнять сверху" onClick={() => alignSelected('top')}>
+                  <AlignVerticalJustifyStart size={14} />
+                </button>
+                <button className="ce-tool-btn" title="Выровнять по центру Y" onClick={() => alignSelected('vcenter')}>
+                  <AlignVerticalJustifyCenter size={14} />
+                </button>
+                <button className="ce-tool-btn" title="Выровнять снизу" onClick={() => alignSelected('bottom')}>
+                  <AlignVerticalJustifyEnd size={14} />
+                </button>
+              </>
+            )}
+            {sel.selectedIds.size > 2 && (
+              <>
+                <button className="ce-tool-btn" title="Распределить по горизонтали" onClick={() => distributeSelected('x')}>
+                  <AlignHorizontalSpaceBetween size={14} />
+                </button>
+                <button className="ce-tool-btn" title="Распределить по вертикали" onClick={() => distributeSelected('y')}>
+                  <AlignVerticalSpaceBetween size={14} />
+                </button>
+              </>
+            )}
             {canGroup && (
               <button
                 className="ce-tool-btn"
@@ -945,6 +1877,15 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                 <Ungroup size={14} />
               </button>
             )}
+            {sel.selectedIds.size >= 1 && (
+              <button
+                className="ce-tool-btn"
+                title="Сохранить выбранное как блок"
+                onClick={saveSelectedAsBlock}
+              >
+                <Package size={14} />
+              </button>
+            )}
             <button
               className="ce-tool-btn danger"
               title="Удалить выбранное (Del)"
@@ -955,13 +1896,58 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           </>
         )}
 
+        <div className="ce-toolbar-sep" />
+
+        {/* Background tracing image controls */}
+        <input
+          ref={bgFileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+          style={{ display: 'none' }}
+          onChange={onBgFileChange}
+        />
+        <button
+          className={`ce-tool-btn icon-text ${bgImage ? 'active' : ''}`}
+          title="Загрузить фоновое изображение для обводки стен"
+          onClick={() => bgFileRef.current?.click()}
+        >
+          <ImageIcon size={14} />
+          <span>Фон</span>
+        </button>
+        {bgImage && (
+          <>
+            <button
+              className={`ce-tool-btn mini ${bgVisible ? 'active' : ''}`}
+              title={bgVisible ? 'Скрыть фон' : 'Показать фон'}
+              onClick={() => setBgVisible((v) => !v)}
+            >
+              {bgVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+            </button>
+            <input
+              type="range"
+              min={0.05} max={1} step={0.05}
+              value={bgOpacity}
+              onChange={(e) => setBgOpacity(Number(e.target.value))}
+              title={`Прозрачность фона: ${Math.round(bgOpacity * 100)}%`}
+              className="ce-bg-opacity-slider"
+            />
+            <button
+              className="ce-tool-btn mini danger"
+              title="Удалить фоновое изображение"
+              onClick={() => setBgImage(null)}
+            >
+              <Trash2 size={12} />
+            </button>
+          </>
+        )}
+
         <div className="ce-toolbar-spacer" />
 
         <button
           className="ce-tool-btn"
           title="Отменить (Ctrl+Z)"
           disabled={!undoRedo.canUndo}
-          onClick={() => undoRedo.undo({ desks })}
+          onClick={() => undoRedo.undo(snapshot())}
         >
           <Undo2 size={14} />
         </button>
@@ -969,7 +1955,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           className="ce-tool-btn"
           title="Повторить (Ctrl+Shift+Z)"
           disabled={!undoRedo.canRedo}
-          onClick={() => undoRedo.redo({ desks })}
+          onClick={() => undoRedo.redo(snapshot())}
         >
           <Redo2 size={14} />
         </button>
@@ -992,29 +1978,160 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         )}
       </div>
 
+      {/* ── Layers panel ── */}
+      {layerPanelOpen && (
+        <div className="ce-layers-panel">
+          <div className="ce-layer-lock">
+            <span>Конструкции</span>
+            <button
+              className={`ce-tool-btn mini ${structureLocked ? 'active' : ''}`}
+              onClick={toggleStructureLock}
+              title={structureLocked ? 'Разблокировать конструкции' : 'Заблокировать конструкции'}
+            >
+              {structureLocked ? <Lock size={12} /> : <Unlock size={12} />}
+            </button>
+          </div>
+          {[
+            ['walls', 'Стены', walls.length],
+            ['boundaries', 'Контуры', boundaries.length],
+            ['partitions', 'Перегородки', partitions.length],
+            ['doors', 'Двери', doors.length],
+            ['zones', 'Зоны', zones.length],
+            ['desks', 'Объекты', desks.length],
+            ['groups', 'Группы', groups.length],
+          ].map(([key, label, count]) => (
+            <label className="ce-layer-toggle" key={key}>
+              <button className="ce-tool-btn mini" onClick={() => toggleLayer(key)}>
+                {layerVis[key] ? <Eye size={12} /> : <EyeOff size={12} />}
+              </button>
+              <span>{label}</span>
+              <span className="ce-layer-count">{count}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {/* ── Search bar ── */}
+      {searchOpen && (
+        <div className="ce-search-bar">
+          <Search size={14} />
+          <input
+            autoFocus
+            type="text"
+            placeholder="Поиск по имени, номеру, сотруднику..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery(''); }
+              if (e.key === 'Enter' && searchResults.length) {
+                const d = searchResults[0];
+                sel.selectOne(d.id);
+                viewport.panTo(deskX(d, compMap), deskY(d, compMap));
+              }
+            }}
+          />
+          {searchQuery && (
+            <span className="ce-search-count">
+              {searchResults.length} {pluralRu(searchResults.length, 'найден', 'найдено', 'найдено')}
+            </span>
+          )}
+          {searchResults.length > 0 && (
+            <div className="ce-search-results">
+              {searchResults.slice(0, 8).map((d) => (
+                <button
+                  key={d.id}
+                  className="ce-search-item"
+                  onClick={() => {
+                    sel.selectOne(d.id);
+                    viewport.panTo(deskX(d, compMap), deskY(d, compMap));
+                    setSearchOpen(false);
+                    setSearchQuery('');
+                  }}
+                >
+                  <strong>{d.label || d.id}</strong>
+                  {d.assigned_to && <span> · {d.assigned_to}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {tool === 'place' && (
         <div className="ce-place-rail">
-          <span className="ce-place-rail-label">Вставка объекта</span>
+          <div className="ce-place-summary">
+            <span className="ce-place-rail-label">Вставка объекта</span>
+            <span className="ce-place-size-readout">
+              {selectedPlaceSize.w}×{selectedPlaceSize.h}
+            </span>
+          </div>
           <div className="ce-place-cards">
-            {componentCatalog.map((component) => (
-              <button
-                key={component.id}
-                className={`ce-place-card ${placeComponentId === component.id ? 'active' : ''}`}
-                onClick={() => setPlaceComponentId(component.id)}
-                title={component.label || component.id}
-              >
-                <span className="ce-place-thumb">
-                  <svg
-                    viewBox={viewBoxString(component)}
-                    xmlns="http://www.w3.org/2000/svg"
-                    dangerouslySetInnerHTML={{ __html: componentMarkup(component) }}
-                  />
-                </span>
-                <span>{component.label || component.id}</span>
-              </button>
+            {componentGroups.map((group) => (
+              <div className="ce-place-group" key={group.id}>
+                <span className="ce-place-group-label">{group.label}</span>
+                <div className="ce-place-group-items">
+                  {group.items.map((component) => (
+                    <button
+                      key={component.id}
+                      className={`ce-place-card ${placeComponentId === component.id ? 'active' : ''}`}
+                      onClick={() => selectPlaceComponent(component)}
+                      title={component.label || component.id}
+                    >
+                      <span className="ce-place-thumb">
+                        <svg
+                          viewBox={viewBoxString(component)}
+                          xmlns="http://www.w3.org/2000/svg"
+                          dangerouslySetInnerHTML={{ __html: componentMarkup(component) }}
+                        />
+                      </span>
+                      <span>{component.label || component.id}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
-          <span className="ce-place-rail-hint">Нажмите на холст, чтобы вставить</span>
+          <div className="ce-place-controls">
+            <div className="ce-size-segment" role="group" aria-label="Размер объекта">
+              {PLACE_SIZE_MODES.map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  className={placeSizeMode === mode.id ? 'active' : ''}
+                  onClick={() => setPlaceSizeMode(mode.id)}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            {placeSizeMode === 'custom' && (
+              <div className="ce-custom-size">
+                <input
+                  type="number"
+                  min="10"
+                  value={placeCustomSize.w}
+                  onChange={(e) => setPlaceCustomSize((prev) => ({ ...prev, w: Number(e.target.value) }))}
+                  aria-label="Ширина объекта"
+                />
+                <span>×</span>
+                <input
+                  type="number"
+                  min="10"
+                  value={placeCustomSize.h}
+                  onChange={(e) => setPlaceCustomSize((prev) => ({ ...prev, h: Number(e.target.value) }))}
+                  aria-label="Высота объекта"
+                />
+              </div>
+            )}
+            <div className="ce-place-preview">
+              <svg
+                viewBox={viewBoxString(selectedPlaceComponent)}
+                xmlns="http://www.w3.org/2000/svg"
+                dangerouslySetInnerHTML={{ __html: componentMarkup(selectedPlaceComponent) }}
+              />
+            </div>
+            <span className="ce-place-rail-hint">Кликайте по холсту. Escape завершит вставку.</span>
+          </div>
         </div>
       )}
 
@@ -1022,8 +2139,32 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       {isDrawMode && (
         <div className="ce-hint-bar">
           Рисование: <strong>{structureLabel(drawStructType).toLowerCase()}</strong> — кликом добавляйте точки
-          {drawPoints.length >= 2 && ', двойной клик или Enter завершит линию'}
+          {isZoneDrawMode
+            ? (drawPoints.length >= 3
+                ? ', нажмите у первой точки чтобы замкнуть'
+                : ` (нужно ${Math.max(0, 3 - drawPoints.length)} ещё)`)
+            : (drawPoints.length >= 2 && ', двойной клик или Enter завершит линию')
+          }
           {drawPoints.length > 0 && ', Escape отменит'}
+          {!isZoneDrawMode && drawPoints.length > 0 && ', Shift держит горизонталь/вертикаль'}
+          {drawIssue?.text && (
+            <span className={`ce-draw-issue ${drawIssue.level}`}>{drawIssue.text}</span>
+          )}
+        </div>
+      )}
+
+      {/* ── No-draft overlay (shown over the canvas when layout is missing) ── */}
+      {!layout && (
+        <div className="ce-no-draft-overlay">
+          <div className="ce-no-draft-body">
+            <Layers size={40} strokeWidth={1.2} />
+            <p>{floorId ? 'Нет черновика карты' : 'Выберите этаж'}</p>
+            {floorId && (
+              <p className="ce-no-draft-hint">
+                Нажмите «Пустой черновик» в панели выше или загрузите SVG.
+              </p>
+            )}
+          </div>
         </div>
       )}
 
@@ -1042,6 +2183,18 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         >
           {/* Canvas background */}
           <rect className="ce-bg" width={canvasW} height={canvasH} />
+
+          {/* Tracing background image */}
+          {bgImage && bgVisible && (
+            <image
+              href={bgImage}
+              x={0} y={0}
+              width={canvasW} height={canvasH}
+              opacity={bgOpacity}
+              preserveAspectRatio="xMidYMid meet"
+              style={{ pointerEvents: 'none' }}
+            />
+          )}
 
           {/* Grid lines layer */}
           {gridLines && (
@@ -1065,11 +2218,73 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             </g>
           )}
 
+          {/* Zones layer — rendered below structure */}
+          <g style={{ display: layerVis.zones ? undefined : 'none' }}>
+            {zones.map((zone) => {
+              const pts = (zone.pts || []);
+              if (pts.length < 3) return null;
+              const isSel = selectedZoneId === zone.id;
+              const color = zone.color || zoneDefaultColor(zone.type);
+              // centroid
+              const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+              const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+              return (
+                <g key={zone.id} className="ce-zone-visual" data-zone-id={zone.id}>
+                  <polygon
+                    points={pts.map((p) => `${p[0]},${p[1]}`).join(' ')}
+                    fill={color}
+                    fillOpacity={0.35}
+                    stroke={isSel ? '#2563eb' : color}
+                    strokeWidth={isSel ? 2.5 : 1.5}
+                    strokeDasharray={isSel ? '6 3' : 'none'}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <text
+                    x={cx} y={cy}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize={13}
+                    fontWeight={600}
+                    fill={isSel ? '#1d4ed8' : '#374151'}
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                    fillOpacity={0.8}
+                  >
+                    {zone.label}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+
+          {/* Zone draw preview */}
+          {isZoneDrawMode && drawPoints.length > 0 && (() => {
+            const allPts = drawPreviewPt ? [...drawPoints, drawPreviewPt] : drawPoints;
+            const color = '#7c3aed';
+            return (
+              <g className="ce-draw-preview">
+                <polygon
+                  points={allPts.map((p) => `${p.x},${p.y}`).join(' ')}
+                  fill={color}
+                  fillOpacity={0.15}
+                  stroke={color}
+                  strokeWidth={2}
+                  strokeDasharray="6 4"
+                  strokeLinecap="round"
+                />
+                {drawPoints.map((p, i) => (
+                  <circle key={i} cx={p.x} cy={p.y} r={4} fill="#fff" stroke={color} strokeWidth={1.5} />
+                ))}
+              </g>
+            );
+          })()}
+
           {/* Structure layer */}
-          <g className="ce-structure">
-            {boundaries.map((b, i) => {
+          <g
+            className={`ce-structure ${structureLocked ? 'locked' : ''}`}
+          >
+            {layerVis.boundaries && boundaries.map((b, i) => {
               const pts = (b.pts || b.points || []).map(ptFromArr);
-              const isSel = selectedStruct?.type === 'boundary' && selectedStruct?.id === b.id;
+              const isSel = !structureLocked && selectedStruct?.type === 'boundary' && selectedStruct?.id === b.id;
               return (
                 <polygon
                   key={`b${i}`}
@@ -1085,9 +2300,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                 />
               );
             })}
-            {partitions.map((p, i) => {
+            {layerVis.partitions && partitions.map((p, i) => {
               const pts = (p.pts || []).map(ptFromArr);
-              const isSel = selectedStruct?.type === 'partition' && selectedStruct?.id === p.id;
+              const isSel = !structureLocked && selectedStruct?.type === 'partition' && selectedStruct?.id === p.id;
               return (
                 <polyline
                   key={`p${i}`}
@@ -1104,9 +2319,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                 />
               );
             })}
-            {walls.map((w, i) => {
+            {layerVis.walls && walls.map((w, i) => {
               const pts = (w.pts || []).map(ptFromArr);
-              const isSel = selectedStruct?.type === 'wall' && selectedStruct?.id === w.id;
+              const isSel = !structureLocked && selectedStruct?.type === 'wall' && selectedStruct?.id === w.id;
               if (pts.length >= 2) {
                 return (
                   <polyline
@@ -1137,9 +2352,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                 />
               );
             })}
-            {doors.map((d, i) => {
+            {layerVis.doors && doors.map((d, i) => {
               const pts = (d.pts || []).map(ptFromArr);
-              const isSel = selectedStruct?.type === 'door' && selectedStruct?.id === d.id;
+              const isSel = !structureLocked && selectedStruct?.type === 'door' && selectedStruct?.id === d.id;
               if (pts.length >= 2) {
                 return (
                   <polyline
@@ -1172,8 +2387,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             })}
           </g>
 
-          {/* Draw preview polyline */}
-          {isDrawMode && drawPoints.length > 0 && (() => {
+          {/* Draw preview polyline (not for zone — zone has its own preview above) */}
+          {isDrawMode && !isZoneDrawMode && drawPoints.length > 0 && (() => {
             const allPts = drawPreviewPt
               ? [...drawPoints, drawPreviewPt]
               : drawPoints;
@@ -1181,6 +2396,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             return (
               <g className="ce-draw-preview">
                 <polyline
+                  className={drawIssue?.level === 'error' ? 'invalid' : ''}
                   points={allPts.map((p) => `${p.x},${p.y}`).join(' ')}
                   fill="none"
                   stroke={color}
@@ -1200,12 +2416,31 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             );
           })()}
 
+          {isDrawMode && drawSnapPt && (
+            <g className="ce-snap-marker" transform={`translate(${drawSnapPt.x},${drawSnapPt.y})`}>
+              <circle r={7} />
+              <path d="M-10 0H-4M4 0H10M0-10V-4M0 4V10" />
+            </g>
+          )}
+
+          {objectSnapGuides && (
+            <g className="ce-object-snap-guides">
+              {Number.isFinite(objectSnapGuides.x) && (
+                <line x1={objectSnapGuides.x} y1={0} x2={objectSnapGuides.x} y2={canvasH} />
+              )}
+              {Number.isFinite(objectSnapGuides.y) && (
+                <line x1={0} y1={objectSnapGuides.y} x2={canvasW} y2={objectSnapGuides.y} />
+              )}
+            </g>
+          )}
+
           {/* Desks layer */}
+          <g style={{ display: layerVis.desks ? undefined : 'none' }}>
           {desks.map((desk) => {
-            const w = deskW(desk);
-            const h = deskH(desk);
-            const x = desk.x || 0;
-            const y = desk.y || 0;
+            const w = deskW(desk, compMap);
+            const h = deskH(desk, compMap);
+            const x = deskX(desk, compMap);
+            const y = deskY(desk, compMap);
             const component = compMap.get(desk.component_id || desk.symbol_id) || compMap.get('desk-short');
             const markup = componentMarkup(component);
             const isSelected = sel.selectedIds.has(desk.id);
@@ -1265,15 +2500,17 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             );
           })}
 
+          </g>
+
           {/* Group bounding boxes */}
-          <g className="ce-group-bbox">
+          <g className="ce-group-bbox" style={{ display: layerVis.groups ? undefined : 'none' }}>
             {groups.map((group) => {
               const gDesks = desks.filter((d) => group.desk_ids.includes(d.id));
               if (!gDesks.length) return null;
               let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
               for (const d of gDesks) {
-                const dx = d.x || 0, dy = d.y || 0;
-                const dw = deskW(d), dh = deskH(d);
+                const dx = deskX(d, compMap), dy = deskY(d, compMap);
+                const dw = deskW(d, compMap), dh = deskH(d, compMap);
                 if (dx < minX) minX = dx;
                 if (dy < minY) minY = dy;
                 if (dx + dw > maxX) maxX = dx + dw;
@@ -1283,7 +2520,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               const pad = 8;
               const color = group.color || '#2563eb';
               return (
-                <g key={group.id} className="ce-group-visual" onClick={() => selectGroup(group.id)}>
+                <g key={group.id} className="ce-group-visual" data-group-id={group.id}>
                   <rect
                     x={minX - pad} y={minY - pad}
                     width={maxX - minX + pad * 2} height={maxY - minY + pad * 2}
@@ -1293,7 +2530,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                     stroke={color}
                     strokeWidth={1.5}
                     strokeDasharray="8 4"
-                    style={{ cursor: 'pointer', pointerEvents: 'all' }}
+                    style={{ cursor: 'pointer', pointerEvents: 'stroke' }}
                   />
                   <text
                     x={minX - pad + 4} y={minY - pad - 4}
@@ -1315,14 +2552,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             {sel.selectedIds.size > 1 && desks
               .filter((d) => sel.selectedIds.has(d.id))
               .map((desk) => {
-                const w = deskW(desk);
-                const h = deskH(desk);
+                const w = deskW(desk, compMap);
+                const h = deskH(desk, compMap);
                 const r = rotationOf(desk);
                 const rotate = r ? ` rotate(${r} ${w / 2} ${h / 2})` : '';
                 return (
                   <rect
                     key={`sel-${desk.id}`}
-                    transform={`translate(${desk.x || 0},${desk.y || 0})${rotate}`}
+                    transform={`translate(${deskX(desk, compMap)},${deskY(desk, compMap)})${rotate}`}
                     x={-2} y={-2}
                     width={w + 4} height={h + 4}
                     fill="none"
@@ -1348,10 +2585,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
             {/* Single-desk selection handles */}
             {selectedDesk && (() => {
-              const w = deskW(selectedDesk);
-              const h = deskH(selectedDesk);
-              const x = selectedDesk.x || 0;
-              const y = selectedDesk.y || 0;
+              const w = deskW(selectedDesk, compMap);
+              const h = deskH(selectedDesk, compMap);
+              const x = deskX(selectedDesk, compMap);
+              const y = deskY(selectedDesk, compMap);
               const r = rotationOf(selectedDesk);
               const rotate = r
                 ? ` rotate(${r} ${x + w / 2} ${y + h / 2})`
@@ -1364,12 +2601,25 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               ];
               function onHandleDown(corner, e) {
                 e.stopPropagation();
-                undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+                undoRedo.push(snapshot());
                 resizeRef.current = {
                   deskId: selectedDesk.id,
                   corner,
                   startPt: viewport.screenToSvg(e),
                   origX: x, origY: y, origW: w, origH: h,
+                };
+                viewport.svgRef.current?.setPointerCapture(e.pointerId);
+              }
+              function onRotateDown(e) {
+                e.stopPropagation();
+                const center = { x: x + w / 2, y: y + h / 2 };
+                const startPt = viewport.screenToSvg(e);
+                undoRedo.push(snapshot());
+                rotateRef.current = {
+                  deskId: selectedDesk.id,
+                  center,
+                  startAngle: Math.atan2(startPt.y - center.y, startPt.x - center.x) * 180 / Math.PI,
+                  origR: rotationOf(selectedDesk),
                 };
                 viewport.svgRef.current?.setPointerCapture(e.pointerId);
               }
@@ -1396,6 +2646,20 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                       onPointerDown={(e) => onHandleDown(i, e)}
                     />
                   ))}
+                  <line
+                    className="ce-sel-rotate-line"
+                    x1={x + w / 2}
+                    y1={y - 3}
+                    x2={x + w / 2}
+                    y2={y - 26}
+                  />
+                  <circle
+                    className="ce-sel-rotate"
+                    cx={x + w / 2}
+                    cy={y - 30}
+                    r={6}
+                    onPointerDown={onRotateDown}
+                  />
                 </g>
               );
             })()}
@@ -1413,6 +2677,53 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           </g>
         </svg>
       </div>
+
+      {/* ── Zone properties panel ── */}
+      {selectedZoneId && (() => {
+        const zone = zones.find((z) => z.id === selectedZoneId);
+        if (!zone) return null;
+        return (
+          <div className="ce-zone-props">
+            <div className="ce-zone-props-header">
+              <span>Зона</span>
+              <button className="ce-tool-btn mini danger" title="Удалить зону (Del)" onClick={() => deleteZone(zone.id)}>
+                <Trash2 size={12} />
+              </button>
+            </div>
+            <label className="ce-prop-row">
+              <span>Название</span>
+              <input
+                type="text"
+                value={zone.label}
+                onChange={(e) => updateZone(zone.id, { label: e.target.value })}
+              />
+            </label>
+            <label className="ce-prop-row">
+              <span>Тип</span>
+              <select
+                value={zone.type}
+                onChange={(e) => {
+                  const newType = e.target.value;
+                  updateZone(zone.id, { type: newType, color: zoneDefaultColor(newType) });
+                }}
+              >
+                {ZONE_TYPES.map((zt) => (
+                  <option key={zt.id} value={zt.id}>{zt.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="ce-prop-row">
+              <span>Цвет</span>
+              <input
+                type="color"
+                value={zone.color || zoneDefaultColor(zone.type)}
+                onChange={(e) => updateZone(zone.id, { color: e.target.value })}
+                style={{ width: 36, height: 24, padding: 1, cursor: 'pointer' }}
+              />
+            </label>
+          </div>
+        );
+      })()}
 
       {/* ── Properties sidebar ── */}
       <PropertiesPanel

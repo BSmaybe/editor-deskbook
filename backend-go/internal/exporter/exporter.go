@@ -136,6 +136,7 @@ func RenderSVG(doc LayoutDocument) (string, error) {
 		return "", err
 	}
 	appendBackground(&w, doc, vx, vy, vw, vh)
+	appendZones(&w, doc)
 	appendStructure(&w, doc)
 
 	w.start("g", a("class", "building"), a("id", buildingID), a("data-building", buildingID))
@@ -482,6 +483,88 @@ func appendBackground(w *xmlWriter, doc LayoutDocument, vx, vy, vw, vh float64) 
 		)
 	}
 	w.end("g")
+}
+
+func appendZones(w *xmlWriter, doc LayoutDocument) {
+	if len(doc.Zones) == 0 {
+		return
+	}
+	w.start("g", a("class", "map-zones"), a("data-layer", "zones"))
+	for _, zone := range doc.Zones {
+		if len(zone.PTS) < 3 {
+			continue
+		}
+		color := zone.Color
+		if color == "" {
+			color = zoneDefaultColor(zone.Type)
+		}
+		var pts strings.Builder
+		for i, pt := range zone.PTS {
+			if len(pt) < 2 {
+				continue
+			}
+			if i > 0 {
+				pts.WriteByte(' ')
+			}
+			pts.WriteString(num(pt[0]) + "," + num(pt[1]))
+		}
+		attrs := []attr{
+			a("class", "map-zone"),
+			a("data-zone-type", zone.Type),
+			a("data-zone-id", zone.ID),
+			a("points", pts.String()),
+			a("fill", color),
+			a("fill-opacity", "0.18"),
+			a("stroke", color),
+			a("stroke-width", "1.5"),
+			a("stroke-opacity", "0.6"),
+		}
+		w.empty("polygon", attrs...)
+		if zone.Label != "" {
+			// centroid label
+			var cx, cy float64
+			for _, pt := range zone.PTS {
+				if len(pt) >= 2 {
+					cx += pt[0]
+					cy += pt[1]
+				}
+			}
+			n := float64(len(zone.PTS))
+			w.start("text",
+				a("x", num(cx/n)),
+				a("y", num(cy/n)),
+				a("text-anchor", "middle"),
+				a("dominant-baseline", "middle"),
+				a("font-size", "12"),
+				a("fill", color),
+				a("font-weight", "600"),
+				a("pointer-events", "none"),
+				a("class", "map-zone-label"),
+			)
+			w.text(zone.Label)
+			w.end("text")
+		}
+	}
+	w.end("g")
+}
+
+func zoneDefaultColor(zoneType string) string {
+	switch zoneType {
+	case "kitchen":
+		return "#fef9c3"
+	case "reception":
+		return "#fce7f3"
+	case "chill":
+		return "#dcfce7"
+	case "focus":
+		return "#ede9fe"
+	case "meeting":
+		return "#dbeafe"
+	case "open_space":
+		return "#fff7ed"
+	default:
+		return "#f1f5f9"
+	}
 }
 
 func appendStructure(w *xmlWriter, doc LayoutDocument) {

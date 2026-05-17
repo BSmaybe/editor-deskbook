@@ -32,12 +32,14 @@ func main() {
 	ctx := context.Background()
 
 	var (
-		cs *componentStore
-		ls *layoutStore
-		us *userStore
+		cs  *componentStore
+		ls  *layoutStore
+		us  *userStore
 		os2 *officeStore
-		fs *floorStore
-		ds *deskStore
+		fs  *floorStore
+		ds  *deskStore
+		ts  *templateStore
+		bs  *blockStore
 	)
 
 	if databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL")); databaseURL != "" {
@@ -77,10 +79,22 @@ func main() {
 			ds = store
 			defer ds.close()
 		}
+		if store, err := newTemplateStore(ctx, databaseURL); err != nil {
+			log.Printf("template store disabled: %v", err)
+		} else {
+			ts = store
+			defer ts.close()
+		}
+		if store, err := newBlockStore(ctx, databaseURL); err != nil {
+			log.Printf("block store disabled: %v", err)
+		} else {
+			bs = store
+			defer bs.close()
+		}
 		log.Printf("database stores initialized")
 	}
 
-	app := &appServer{components: cs, layouts: ls, users: us, offices: os2, floors: fs, desks: ds}
+	app := &appServer{components: cs, layouts: ls, users: us, offices: os2, floors: fs, desks: ds, templates: ts, blocks: bs}
 	mux := http.NewServeMux()
 
 	// Health
@@ -138,6 +152,16 @@ func main() {
 	mux.HandleFunc("GET /floors/{floor_id}/lock", app.getFloorLockHandler)
 	mux.HandleFunc("POST /floors/{floor_id}/lock", app.acquireFloorLockHandler)
 	mux.HandleFunc("DELETE /floors/{floor_id}/lock", app.releaseFloorLockHandler)
+
+	// Templates
+	mux.HandleFunc("GET /templates", app.listTemplatesHandler)
+	mux.HandleFunc("POST /templates", app.createTemplateHandler)
+	mux.HandleFunc("DELETE /templates/{template_id}", app.deleteTemplateHandler)
+
+	// Blocks
+	mux.HandleFunc("GET /blocks", app.listBlocksHandler)
+	mux.HandleFunc("POST /blocks", app.createBlockHandler)
+	mux.HandleFunc("DELETE /blocks/{block_id}", app.deleteBlockHandler)
 
 	// Desks
 	mux.HandleFunc("GET /desks", app.listDesksHandler)

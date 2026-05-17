@@ -247,6 +247,10 @@ export function useViewport({ contentW = 1200, contentH = 800 } = {}) {
     _applyVb(next);
   }, [contentW, contentH, _applyVb]);
 
+  const panTo = useCallback((x, y) => {
+    _applyVb({ x: x - vb.w / 2, y: y - vb.h / 2, w: vb.w, h: vb.h });
+  }, [vb, _applyVb]);
+
   /* ── viewBox string for the SVG attribute ── */
   const viewBoxAttr = `${vb.x} ${vb.y} ${vb.w} ${vb.h}`;
 
@@ -262,6 +266,7 @@ export function useViewport({ contentW = 1200, contentH = 800 } = {}) {
     zoomToFit,
     zoomTo100,
     onWheel,
+    panTo,
     startPan,
     updatePan,
     endPan,
