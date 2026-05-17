@@ -32,6 +32,11 @@ a {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
   min-height: 100vh;
+  transition: grid-template-columns 0.16s ease;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 76px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -41,12 +46,14 @@ a {
   padding: 20px 16px;
   background: #111827;
   color: #f8fafc;
+  transition: padding 0.16s ease;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .brand strong {
@@ -61,6 +68,48 @@ a {
   font-size: 12px;
 }
 
+.brand-copy {
+  min-width: 0;
+}
+
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 7px;
+  background: #243047;
+  color: #f8fafc;
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover {
+  background: #334155;
+}
+
+.sidebar.collapsed {
+  align-items: center;
+  padding: 20px 14px;
+}
+
+.sidebar.collapsed .brand {
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sidebar.collapsed .brand-copy,
+.sidebar.collapsed .tabs button span,
+.sidebar.collapsed .session span {
+  display: none;
+}
+
+.sidebar.collapsed .sidebar-toggle {
+  margin-left: 0;
+}
+
 .brand.compact {
   margin-bottom: 10px;
   color: #172033;
@@ -73,6 +122,7 @@ a {
 .tabs {
   display: grid;
   gap: 6px;
+  width: 100%;
 }
 
 .tabs button,
@@ -95,6 +145,16 @@ a {
   text-align: left;
 }
 
+.tabs button svg {
+  flex-shrink: 0;
+}
+
+.sidebar.collapsed .tabs button {
+  justify-content: center;
+  width: 46px;
+  padding: 0;
+}
+
 .tabs button.active,
 .tabs button:hover {
   background: #243047;
@@ -111,6 +171,12 @@ a {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   color: #cbd5e1;
   font-size: 13px;
+}
+
+.sidebar.collapsed .session {
+  justify-content: center;
+  width: 46px;
+  padding-top: 14px;
 }
 
 .workspace {
@@ -352,11 +418,87 @@ input {
   margin: 0 14px;
 }
 
-.component-card {
+.component-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.component-toolbar h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.component-toolbar p {
+  margin: 3px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.component-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
   gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.component-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #d8e0eb;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #64748b;
+}
+
+.component-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  font: inherit;
+  color: #0f172a;
+}
+
+.component-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.component-filter-tabs button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid #d8e0eb;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.component-filter-tabs button.active,
+.component-filter-tabs button:hover {
+  border-color: #2563eb;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.component-card {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-areas:
+    "thumb info"
+    "thumb actions";
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 8px;
   border: 1px solid #d8e0eb;
   border-radius: 7px;
   background: #ffffff;
@@ -370,19 +512,20 @@ input {
 
 .component-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 12px;
 }
 
 .component-card {
-  min-height: 108px;
+  min-height: 118px;
   padding: 12px;
 }
 
 .component-thumb {
+  grid-area: thumb;
   display: grid;
   place-items: center;
-  width: 86px;
+  width: 72px;
   height: 72px;
   border: 1px solid #d8e0eb;
   border-radius: 7px;
@@ -390,12 +533,32 @@ input {
 }
 
 .component-thumb svg {
-  width: 70px;
+  width: 60px;
   height: 52px;
 }
 
 .component-card h2 {
-  margin-bottom: 4px;
+  margin: 0 0 4px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.component-size {
+  margin-top: 3px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.component-id {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.badge.muted {
+  background: #f1f5f9;
+  color: #64748b;
 }
 
 .building-page {
@@ -684,25 +847,32 @@ textarea.code-area.full {
 
 /* Component card tweaks */
 .component-info {
+  grid-area: info;
   flex: 1;
   min-width: 0;
 }
 
 .component-actions {
+  grid-area: actions;
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
 }
 
 .badge {
   display: inline-block;
+  max-width: 100%;
   padding: 2px 8px;
   border-radius: 4px;
   background: #eef2f7;
   color: #2563eb;
   font-size: 11px;
   font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .icon-button.sm,
@@ -903,12 +1073,26 @@ textarea.code-area.full {
     grid-template-columns: 1fr;
   }
 
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 1fr;
+  }
+
   .sidebar {
     position: sticky;
     top: 0;
     z-index: 2;
     flex-direction: row;
     align-items: center;
+  }
+
+  .sidebar.collapsed {
+    flex-direction: row;
+    align-items: center;
+    padding: 12px 14px;
+  }
+
+  .sidebar.collapsed .brand {
+    flex-direction: row;
   }
 
   .tabs {
@@ -924,6 +1108,7 @@ textarea.code-area.full {
 
   .layout-grid,
   .control-strip,
+  .component-filters,
   .building-summary,
   .building-create-form,
   .building-edit-fields,

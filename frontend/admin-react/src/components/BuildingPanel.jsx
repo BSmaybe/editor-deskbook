@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Check, Layers3, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { apiFetch } from '../lib/api.js';
+import { pluralRu } from '../lib/i18n.js';
 import { EmptyState, Metric } from './ui.jsx';
 
 const DEFAULT_FIRST_FLOOR = '1 этаж';
@@ -217,9 +218,9 @@ export default function BuildingPanel({
   return (
     <div className="building-page">
       <section className="building-summary">
-        <Metric label="Buildings" value={offices.length} />
-        <Metric label="Floors" value={floors.length} />
-        <Metric label="Selected" value={selectedFloor?.name || '-'} />
+        <Metric label="Здания" value={offices.length} />
+        <Metric label="Этажи" value={floors.length} />
+        <Metric label="Выбран этаж" value={selectedFloor?.name || '-'} />
       </section>
 
       <section className="building-create-panel">
@@ -299,7 +300,7 @@ export default function BuildingPanel({
                       </>
                     ) : (
                       <>
-                        <span className="badge">{row.floors.length} floors</span>
+                        <span className="badge">{row.floors.length} {pluralRu(row.floors.length, 'этаж', 'этажа', 'этажей')}</span>
                         <button className="icon-button sm" onClick={() => startEditOffice(row.office)} disabled={!!busyAction} title="Редактировать здание">
                           <Pencil size={14} />
                         </button>
@@ -344,7 +345,7 @@ export default function BuildingPanel({
                       ) : (
                         <button className="floor-open-button" onClick={() => openFloor(floor.id)}>
                           <span>{floor.name}</span>
-                          <small>floor #{floor.id}</small>
+                          <small>этаж #{floor.id}</small>
                         </button>
                       )}
                       <div className="component-actions">
@@ -359,7 +360,7 @@ export default function BuildingPanel({
                           </>
                         ) : (
                           <>
-                            {selected && <span className="badge">current</span>}
+                            {selected && <span className="badge">текущий</span>}
                             <button className="icon-button sm" onClick={() => startEditFloor(floor)} disabled={!!busyAction} title="Редактировать этаж">
                               <Pencil size={14} />
                             </button>

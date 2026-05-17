@@ -38,19 +38,45 @@ var builtinComponents = map[string]componentMeta{
 	"chair":                {AssetType: "chair", ViewBox: [4]float64{0, 0, 64, 64}, DefaultW: 64, DefaultH: 64, Source: "system"},
 	"desk-short":           {AssetType: "desk", ViewBox: [4]float64{0, 0, 100, 60}, DefaultW: 100, DefaultH: 60, Source: "system"},
 	"desk-long":            {AssetType: "desk", ViewBox: [4]float64{0, 0, 160, 60}, DefaultW: 160, DefaultH: 60, Source: "system"},
+	"sit-stand-desk":       {AssetType: "desk", ViewBox: [4]float64{0, 0, 120, 70}, DefaultW: 120, DefaultH: 70, Source: "system"},
+	"bench-4":              {AssetType: "desk", ViewBox: [4]float64{0, 0, 220, 120}, DefaultW: 220, DefaultH: 120, Source: "system"},
 	"meeting-table":        {AssetType: "meeting_table", ViewBox: [4]float64{0, 0, 140, 90}, DefaultW: 140, DefaultH: 90, Source: "system"},
+	"round-table":          {AssetType: "meeting_table", ViewBox: [4]float64{0, 0, 110, 110}, DefaultW: 110, DefaultH: 110, Source: "system"},
 	"conference-chair":     {AssetType: "chair", ViewBox: [4]float64{0, 0, 64, 64}, DefaultW: 64, DefaultH: 64, Source: "system"},
 	"conference-set":       {AssetType: "conference_set", ViewBox: [4]float64{0, 0, 220, 150}, DefaultW: 220, DefaultH: 150, Source: "system"},
+	"phone-booth":          {AssetType: "call_room", ViewBox: [4]float64{0, 0, 95, 120}, DefaultW: 95, DefaultH: 120, Source: "system"},
+	"focus-room":           {AssetType: "call_room", ViewBox: [4]float64{0, 0, 150, 115}, DefaultW: 150, DefaultH: 115, Source: "system"},
+	"sofa":                 {AssetType: "sofa", ViewBox: [4]float64{0, 0, 150, 72}, DefaultW: 150, DefaultH: 72, Source: "system"},
+	"lounge-chair":         {AssetType: "chair", ViewBox: [4]float64{0, 0, 82, 82}, DefaultW: 82, DefaultH: 82, Source: "system"},
+	"plant":                {AssetType: "plant", ViewBox: [4]float64{0, 0, 70, 90}, DefaultW: 70, DefaultH: 90, Source: "system"},
+	"storage-cabinet":      {AssetType: "storage", ViewBox: [4]float64{0, 0, 95, 80}, DefaultW: 95, DefaultH: 80, Source: "system"},
+	"locker-bank":          {AssetType: "storage", ViewBox: [4]float64{0, 0, 150, 82}, DefaultW: 150, DefaultH: 82, Source: "system"},
+	"printer":              {AssetType: "printer", ViewBox: [4]float64{0, 0, 90, 75}, DefaultW: 90, DefaultH: 75, Source: "system"},
+	"reception-desk":       {AssetType: "reception", ViewBox: [4]float64{0, 0, 180, 90}, DefaultW: 180, DefaultH: 90, Source: "system"},
+	"column":               {AssetType: "column", ViewBox: [4]float64{0, 0, 64, 64}, DefaultW: 64, DefaultH: 64, Source: "system"},
 }
 
 var builtinOrder = []string{
 	"workplace-desk-chair",
-	"chair",
 	"desk-short",
 	"desk-long",
+	"sit-stand-desk",
+	"bench-4",
+	"chair",
 	"meeting-table",
+	"round-table",
 	"conference-chair",
 	"conference-set",
+	"phone-booth",
+	"focus-room",
+	"sofa",
+	"lounge-chair",
+	"plant",
+	"storage-cabinet",
+	"locker-bank",
+	"printer",
+	"reception-desk",
+	"column",
 }
 
 var (
@@ -325,6 +351,18 @@ func appendBuiltinSymbol(w *xmlWriter, id string) {
 		w.empty("path", append(attrs(a("class", "asset-outline"), a("d", "M80 8v44")), outlineAttrs...)...)
 		w.empty("rect", append(attrs(a("class", "asset-outline"), a("x", "2"), a("y", "2"), a("width", "156"), a("height", "56"), a("rx", "8")), outlineAttrs...)...)
 		w.end("symbol")
+	case "sit-stand-desk":
+		w.start("symbol", a("id", "sit-stand-desk"), a("viewBox", "0 0 120 70"))
+		w.empty("rect", append(attrs(a("class", "asset-fill"), a("x", "6"), a("y", "8"), a("width", "108"), a("height", "48"), a("rx", "8")), fillAttrs...)...)
+		w.empty("rect", append(attrs(a("class", "asset-outline"), a("x", "6"), a("y", "8"), a("width", "108"), a("height", "48"), a("rx", "8")), outlineAttrs...)...)
+		w.empty("path", append(attrs(a("class", "asset-outline"), a("d", "M26 56v10M94 56v10M38 20h44"), a("stroke-linecap", "round")), outlineAttrs...)...)
+		w.end("symbol")
+	case "bench-4":
+		w.start("symbol", a("id", "bench-4"), a("viewBox", "0 0 220 120"))
+		w.empty("rect", append(attrs(a("class", "asset-fill"), a("x", "10"), a("y", "14"), a("width", "200"), a("height", "92"), a("rx", "10")), fillAttrs...)...)
+		w.empty("path", append(attrs(a("class", "asset-outline"), a("d", "M110 14v92M10 60h200")), outlineAttrs...)...)
+		w.empty("rect", append(attrs(a("class", "asset-outline"), a("x", "10"), a("y", "14"), a("width", "200"), a("height", "92"), a("rx", "10")), outlineAttrs...)...)
+		w.end("symbol")
 	case "chair", "conference-chair":
 		w.start("symbol", a("id", id), a("viewBox", "0 0 64 64"))
 		w.empty("rect", append(attrs(a("class", "asset-fill"), a("x", "12"), a("y", "18"), a("width", "40"), a("height", "34"), a("rx", "10")), fillAttrs...)...)
@@ -337,6 +375,14 @@ func appendBuiltinSymbol(w *xmlWriter, id string) {
 		w.empty("rect", append(attrs(a("class", "asset-outline"), a("x", "18"), a("y", "16"), a("width", "104"), a("height", "58"), a("rx", "22")), outlineAttrs...)...)
 		for _, p := range [][2]string{{"22", "10"}, {"70", "8"}, {"118", "10"}, {"22", "80"}, {"70", "82"}, {"118", "80"}} {
 			w.empty("circle", append(attrs(a("class", "asset-outline"), a("cx", p[0]), a("cy", p[1]), a("r", "5")), outlineAttrs...)...)
+		}
+		w.end("symbol")
+	case "round-table":
+		w.start("symbol", a("id", "round-table"), a("viewBox", "0 0 110 110"))
+		w.empty("circle", append(attrs(a("class", "asset-fill"), a("cx", "55"), a("cy", "55"), a("r", "34")), fillAttrs...)...)
+		w.empty("circle", append(attrs(a("class", "asset-outline"), a("cx", "55"), a("cy", "55"), a("r", "34")), outlineAttrs...)...)
+		for _, p := range [][2]string{{"55", "12"}, {"55", "98"}, {"12", "55"}, {"98", "55"}} {
+			w.empty("circle", append(attrs(a("class", "asset-outline"), a("cx", p[0]), a("cy", p[1]), a("r", "6")), outlineAttrs...)...)
 		}
 		w.end("symbol")
 	case "workplace-desk-chair":
@@ -354,6 +400,64 @@ func appendBuiltinSymbol(w *xmlWriter, id string) {
 			w.empty("use", a("href", "#conference-chair"), a("width", "64"), a("height", "64"))
 			w.end("g")
 		}
+		w.end("symbol")
+	case "phone-booth":
+		w.start("symbol", a("id", "phone-booth"), a("viewBox", "0 0 95 120"))
+		w.empty("rect", a("class", "asset-fill"), a("x", "8"), a("y", "6"), a("width", "79"), a("height", "108"), a("rx", "12"), a("fill", "#ecfeff"))
+		w.empty("rect", a("class", "asset-outline"), a("x", "8"), a("y", "6"), a("width", "79"), a("height", "108"), a("rx", "12"), a("fill", "none"), a("stroke", "#0891b2"), a("stroke-width", "1.8"))
+		w.empty("path", a("d", "M28 34h39M28 52h39M64 92h8"), a("fill", "none"), a("stroke", "#0891b2"), a("stroke-width", "1.5"), a("stroke-linecap", "round"))
+		w.end("symbol")
+	case "focus-room":
+		w.start("symbol", a("id", "focus-room"), a("viewBox", "0 0 150 115"))
+		w.empty("rect", a("class", "asset-fill"), a("x", "8"), a("y", "8"), a("width", "134"), a("height", "99"), a("rx", "10"), a("fill", "#ecfeff"))
+		w.empty("rect", a("class", "asset-outline"), a("x", "8"), a("y", "8"), a("width", "134"), a("height", "99"), a("rx", "10"), a("fill", "none"), a("stroke", "#0891b2"), a("stroke-width", "1.8"))
+		w.empty("rect", a("x", "38"), a("y", "36"), a("width", "74"), a("height", "38"), a("rx", "8"), a("fill", "none"), a("stroke", "#0891b2"), a("stroke-width", "1.5"))
+		w.empty("path", a("d", "M112 58h18"), a("fill", "none"), a("stroke", "#0891b2"), a("stroke-width", "1.5"), a("stroke-linecap", "round"))
+		w.end("symbol")
+	case "sofa":
+		w.start("symbol", a("id", "sofa"), a("viewBox", "0 0 150 72"))
+		w.empty("rect", a("class", "asset-fill"), a("x", "14"), a("y", "24"), a("width", "122"), a("height", "34"), a("rx", "12"), a("fill", "#fce7f3"))
+		w.empty("path", a("class", "asset-outline"), a("d", "M22 24V12h106v12M14 44H4v18h142V44h-10M52 24v34M98 24v34"), a("fill", "none"), a("stroke", "#be185d"), a("stroke-width", "1.5"), a("stroke-linejoin", "round"))
+		w.empty("rect", a("class", "asset-outline"), a("x", "14"), a("y", "24"), a("width", "122"), a("height", "34"), a("rx", "12"), a("fill", "none"), a("stroke", "#be185d"), a("stroke-width", "1.5"))
+		w.end("symbol")
+	case "lounge-chair":
+		w.start("symbol", a("id", "lounge-chair"), a("viewBox", "0 0 82 82"))
+		w.empty("circle", a("class", "asset-fill"), a("cx", "41"), a("cy", "42"), a("r", "28"), a("fill", "#fce7f3"))
+		w.empty("path", a("class", "asset-outline"), a("d", "M18 42c0-14 10-24 23-24s23 10 23 24v18H18V42zM24 62l-6 12M58 62l6 12"), a("fill", "none"), a("stroke", "#be185d"), a("stroke-width", "1.5"), a("stroke-linecap", "round"), a("stroke-linejoin", "round"))
+		w.end("symbol")
+	case "plant":
+		w.start("symbol", a("id", "plant"), a("viewBox", "0 0 70 90"))
+		w.empty("path", a("d", "M18 36c-8-18 6-28 17-8C42 8 60 13 48 36c18-8 22 12 4 20H18C0 48 3 28 18 36z"), a("fill", "#dcfce7"), a("stroke", "#16a34a"), a("stroke-width", "1.5"), a("stroke-linejoin", "round"))
+		w.empty("path", a("d", "M35 32v30"), a("fill", "none"), a("stroke", "#16a34a"), a("stroke-width", "1.5"))
+		w.empty("rect", a("x", "20"), a("y", "60"), a("width", "30"), a("height", "22"), a("rx", "5"), a("fill", "#fef3c7"), a("stroke", "#a16207"), a("stroke-width", "1.5"))
+		w.end("symbol")
+	case "storage-cabinet":
+		w.start("symbol", a("id", "storage-cabinet"), a("viewBox", "0 0 95 80"))
+		w.empty("rect", a("class", "asset-fill"), a("x", "8"), a("y", "8"), a("width", "79"), a("height", "64"), a("rx", "6"), a("fill", "#f1f5f9"))
+		w.empty("rect", a("class", "asset-outline"), a("x", "8"), a("y", "8"), a("width", "79"), a("height", "64"), a("rx", "6"), a("fill", "none"), a("stroke", "#64748b"), a("stroke-width", "1.5"))
+		w.empty("path", a("d", "M47.5 8v64M18 24h20M57 24h20M18 44h20M57 44h20"), a("fill", "none"), a("stroke", "#64748b"), a("stroke-width", "1.5"), a("stroke-linecap", "round"))
+		w.end("symbol")
+	case "locker-bank":
+		w.start("symbol", a("id", "locker-bank"), a("viewBox", "0 0 150 82"))
+		w.empty("rect", a("class", "asset-fill"), a("x", "8"), a("y", "8"), a("width", "134"), a("height", "66"), a("rx", "6"), a("fill", "#f1f5f9"))
+		w.empty("rect", a("class", "asset-outline"), a("x", "8"), a("y", "8"), a("width", "134"), a("height", "66"), a("rx", "6"), a("fill", "none"), a("stroke", "#64748b"), a("stroke-width", "1.5"))
+		w.empty("path", a("d", "M41 8v66M74 8v66M107 8v66M22 22h8M55 22h8M88 22h8M121 22h8"), a("fill", "none"), a("stroke", "#64748b"), a("stroke-width", "1.5"), a("stroke-linecap", "round"))
+		w.end("symbol")
+	case "printer":
+		w.start("symbol", a("id", "printer"), a("viewBox", "0 0 90 75"))
+		w.empty("rect", a("class", "asset-fill"), a("x", "14"), a("y", "28"), a("width", "62"), a("height", "30"), a("rx", "6"), a("fill", "#f1f5f9"))
+		w.empty("path", a("class", "asset-outline"), a("d", "M24 28V10h42v18M24 52v14h42V52M20 40h8"), a("fill", "none"), a("stroke", "#64748b"), a("stroke-width", "1.5"), a("stroke-linecap", "round"), a("stroke-linejoin", "round"))
+		w.empty("rect", a("class", "asset-outline"), a("x", "14"), a("y", "28"), a("width", "62"), a("height", "30"), a("rx", "6"), a("fill", "none"), a("stroke", "#64748b"), a("stroke-width", "1.5"))
+		w.end("symbol")
+	case "reception-desk":
+		w.start("symbol", a("id", "reception-desk"), a("viewBox", "0 0 180 90"))
+		w.empty("path", a("class", "asset-fill"), a("d", "M14 66c12-34 40-52 76-52s64 18 76 52v10H14V66z"), a("fill", "#fef3c7"))
+		w.empty("path", a("class", "asset-outline"), a("d", "M14 66c12-34 40-52 76-52s64 18 76 52v10H14V66zM52 54h76"), a("fill", "none"), a("stroke", "#a16207"), a("stroke-width", "1.7"), a("stroke-linecap", "round"), a("stroke-linejoin", "round"))
+		w.end("symbol")
+	case "column":
+		w.start("symbol", a("id", "column"), a("viewBox", "0 0 64 64"))
+		w.empty("rect", a("x", "8"), a("y", "8"), a("width", "48"), a("height", "48"), a("rx", "6"), a("fill", "#e2e8f0"), a("stroke", "#475569"), a("stroke-width", "1.8"))
+		w.empty("path", a("d", "M16 48L48 16M18 18l28 28"), a("fill", "none"), a("stroke", "#64748b"), a("stroke-width", "1.2"), a("stroke-linecap", "round"))
 		w.end("symbol")
 	}
 }
@@ -723,7 +827,8 @@ func safeClassList(value string) string {
 
 func safeAssetType(value string) string {
 	switch strings.TrimSpace(value) {
-	case "workplace", "desk", "chair", "meeting_table", "conference_set", "asset":
+	case "workplace", "desk", "chair", "meeting_table", "conference_set", "call_room",
+		"lounge", "sofa", "plant", "storage", "printer", "reception", "column", "asset":
 		return strings.TrimSpace(value)
 	default:
 		return "asset"

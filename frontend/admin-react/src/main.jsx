@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Boxes, Building2, Layers3, LogOut, RefreshCw } from 'lucide-react';
+import { Boxes, Building2, Layers3, LogOut, PanelLeftClose, PanelLeftOpen, RefreshCw } from 'lucide-react';
 import { apiFetch, login, logout, tokenFromStorage, usernameFromStorage } from './lib/api.js';
 import { LoginScreen, Notice } from './components/ui.jsx';
 import LayoutPanel from './components/LayoutPanel.jsx';
 import ComponentPanel from './components/ComponentPanel.jsx';
 import BuildingPanel from './components/BuildingPanel.jsx';
+import { mergeComponentCatalog } from './lib/componentCatalog.js';
 import './styles.css';
 
 function App() {
@@ -21,16 +22,24 @@ function App() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem('deskbook_sidebar_collapsed') === '1',
+  );
 
   const selectedFloor = useMemo(
     () => floors.find((f) => String(f.id) === String(selectedFloorId)),
     [floors, selectedFloorId],
   );
 
+  const componentCatalog = useMemo(
+    () => mergeComponentCatalog(components),
+    [components],
+  );
+
   const floorsByOffice = useMemo(() => {
     const names = new Map(offices.map((o) => [o.id, o.name]));
     return floors.reduce((acc, f) => {
-      const key = names.get(f.office_id) || `Office ${f.office_id}`;
+      const key = names.get(f.office_id) || `Здание ${f.office_id}`;
       (acc[key] ||= []).push(f);
       return acc;
     }, {});
@@ -94,6 +103,10 @@ function App() {
     loadLayout(selectedFloorId);
   }, [selectedFloorId, loadLayout]);
 
+  useEffect(() => {
+    localStorage.setItem('deskbook_sidebar_collapsed', sidebarCollapsed ? '1' : '0');
+  }, [sidebarCollapsed]);
+
   async function handleLogin(event) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -132,7 +145,7 @@ function App() {
     try {
       await apiFetch(`/floors/${selectedFloorId}/layout/publish`, { method: 'POST' });
       await loadLayout(selectedFloorId);
-      setNotice('Черновик опубликован через Go API');
+      setNotice('Черновик опубликован');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -186,29 +199,39 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="brand">
           <Building2 size={22} />
-          <div>
+          <div className="brand-copy">
             <strong>DeskBook</strong>
-            <span>Editor Admin</span>
+            <span>Админ редактора</span>
           </div>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setSidebarCollapsed((value) => !value)}
+            title={sidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
+            aria-label={sidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
+            aria-expanded={!sidebarCollapsed}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
         </div>
         <nav className="tabs">
-          <button className={activeTab === 'layout' ? 'active' : ''} onClick={() => setActiveTab('layout')}>
-            <Layers3 size={18} /> Layout
+          <button type="button" className={activeTab === 'layout' ? 'active' : ''} onClick={() => setActiveTab('layout')} title="План">
+            <Layers3 size={18} /> <span>План</span>
           </button>
-          <button className={activeTab === 'buildings' ? 'active' : ''} onClick={() => setActiveTab('buildings')}>
-            <Building2 size={18} /> Buildings
+          <button type="button" className={activeTab === 'buildings' ? 'active' : ''} onClick={() => setActiveTab('buildings')} title="Здания">
+            <Building2 size={18} /> <span>Здания</span>
           </button>
-          <button className={activeTab === 'components' ? 'active' : ''} onClick={() => setActiveTab('components')}>
-            <Boxes size={18} /> Components
+          <button type="button" className={activeTab === 'components' ? 'active' : ''} onClick={() => setActiveTab('components')} title="Компоненты">
+            <Boxes size={18} /> <span>Компоненты</span>
           </button>
         </nav>
         <div className="session">
           <span>{username}</span>
-          <button className="icon-button" onClick={handleLogout} title="Выйти">
+          <button type="button" className="icon-button" onClick={handleLogout} title="Выйти">
             <LogOut size={18} />
           </button>
         </div>
@@ -218,7 +241,7 @@ function App() {
         <header className="topbar">
           <div>
             <h1>Редактор карт</h1>
-            <p>{selectedFloor ? `${selectedFloor.name} · floor #${selectedFloor.id}` : 'Создайте или выберите этаж'}</p>
+            <p>{selectedFloor ? `${selectedFloor.name} · этаж #${selectedFloor.id}` : 'Создайте или выберите этаж'}</p>
           </div>
           <div className="toolbar">
             <select
@@ -238,7 +261,7 @@ function App() {
             </select>
             <button className="tool-button" onClick={refreshAll} disabled={busy} title="Обновить">
               <RefreshCw size={18} />
-              <span>Refresh</span>
+              <span>Обновить</span>
             </button>
           </div>
         </header>
@@ -251,7 +274,7 @@ function App() {
             layout={layout}
             svgPreview={svgPreview}
             busy={busy}
-            components={components}
+            components={componentCatalog}
             onPublish={publishDraft}
             onSync={syncDesks}
             onDownload={downloadSvg}
@@ -274,7 +297,7 @@ function App() {
         )}
         {activeTab === 'components' && (
           <ComponentPanel
-            components={components}
+            components={componentCatalog}
             onRefresh={loadReferenceData}
             onNotice={setNotice}
             onError={setError}

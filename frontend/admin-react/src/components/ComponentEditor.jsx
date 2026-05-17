@@ -16,18 +16,34 @@ import React, {
   useEffect,
 } from 'react';
 import { X, Check, MousePointer, Square, Circle, Minus, RectangleHorizontal } from 'lucide-react';
+import { assetTypeLabel } from '../lib/i18n.js';
 import './ComponentEditor.css';
 
 /* ─── Constants ──────────────────────────────────────────────────────────── */
 
-const ASSET_TYPES = ['desk', 'chair', 'monitor', 'plant', 'partition', 'misc', 'asset'];
+const ASSET_TYPES = [
+  'workplace',
+  'desk',
+  'chair',
+  'meeting_table',
+  'conference_set',
+  'call_room',
+  'lounge',
+  'sofa',
+  'plant',
+  'storage',
+  'printer',
+  'reception',
+  'column',
+  'asset',
+];
 
 const TOOLS = [
-  { id: 'select',    label: 'Select (V)',      Icon: MousePointer },
-  { id: 'rect',      label: 'Rectangle (R)',   Icon: Square },
-  { id: 'roundrect', label: 'Rounded rect (U)', Icon: RectangleHorizontal },
-  { id: 'ellipse',   label: 'Ellipse (O)',     Icon: Circle },
-  { id: 'line',      label: 'Line (L)',        Icon: Minus },
+  { id: 'select',    label: 'Выбор (V)', Icon: MousePointer },
+  { id: 'rect',      label: 'Прямоугольник (R)', Icon: Square },
+  { id: 'roundrect', label: 'Скруглённый прямоугольник (U)', Icon: RectangleHorizontal },
+  { id: 'ellipse',   label: 'Эллипс (O)', Icon: Circle },
+  { id: 'line',      label: 'Линия (L)', Icon: Minus },
 ];
 
 const MIN_DRAG = 3; // px — minimum size to register a draw
@@ -152,6 +168,12 @@ function isSafeSvgMarkup(markup) {
 
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9_.:−-]+/g, '-').replace(/^[^a-z_]/, '_').replace(/-+$/, '').slice(0, 120) || 'custom-component';
+}
+
+function shapeTypeLabel(type) {
+  if (type === 'line') return 'Линия';
+  if (type === 'ellipse') return 'Эллипс';
+  return 'Прямоугольник';
 }
 
 /* ─── SVG shape renderer (pure JSX) ─────────────────────────────────────── */
@@ -577,17 +599,17 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
       svgMarkup = codeMarkup.trim();
     }
 
-    if (!svgMarkup) { setValidationError('Draw shapes or enter SVG markup.'); return; }
-    if (!isSafeSvgMarkup(svgMarkup)) { setValidationError('SVG contains unsafe elements (script, event handlers, etc.)'); return; }
-    if (!meta.label.trim()) { setValidationError('Label is required.'); return; }
+    if (!svgMarkup) { setValidationError('Нарисуйте фигуры или вставьте SVG-разметку.'); return; }
+    if (!isSafeSvgMarkup(svgMarkup)) { setValidationError('SVG содержит небезопасные элементы: script, обработчики событий и т.п.'); return; }
+    if (!meta.label.trim()) { setValidationError('Название обязательно.'); return; }
 
     const id = meta.id.trim();
     if (!id || !/^[A-Za-z_][A-Za-z0-9_.:-]{0,119}$/.test(id)) {
-      setValidationError('ID must start with a letter or underscore and contain only A-Z, 0-9, _, ., :, -');
+      setValidationError('ID должен начинаться с буквы или подчёркивания и содержать только A-Z, 0-9, _, ., :, -');
       return;
     }
     if (isNew && existingIds.includes(id)) {
-      setValidationError(`Component ID "${id}" already exists.`);
+      setValidationError(`Компонент с ID "${id}" уже существует.`);
       return;
     }
 
@@ -614,15 +636,15 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
     <div className="ce-root">
       {/* Header */}
       <div className="ce-header">
-        <h2 className="ce-title">{isNew ? 'New Component' : `Edit: ${form.id}`}</h2>
+        <h2 className="ce-title">{isNew ? 'Новый компонент' : `Редактирование: ${form.id}`}</h2>
         <div className="ce-header-actions">
-          <button type="button" className="ce-btn ce-btn-ghost" onClick={onCancel} title="Cancel">
+          <button type="button" className="ce-btn ce-btn-ghost" onClick={onCancel} title="Отмена">
             <X size={18} />
-            Cancel
+            Отмена
           </button>
           <button type="button" className="ce-btn ce-btn-primary" onClick={handleSave} disabled={busy}>
             <Check size={18} />
-            {busy ? 'Saving…' : 'Save Component'}
+            {busy ? 'Сохранение…' : 'Сохранить компонент'}
           </button>
         </div>
       </div>
@@ -635,9 +657,9 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
         {/* ── Left sidebar: metadata + toolbar ── */}
         <aside className="ce-sidebar">
           <section className="ce-section">
-            <h3 className="ce-section-title">Metadata</h3>
+            <h3 className="ce-section-title">Метаданные</h3>
             <div className="ce-field">
-              <label htmlFor="ce-label">Label</label>
+              <label htmlFor="ce-label">Название</label>
               <input
                 id="ce-label"
                 value={meta.label}
@@ -649,37 +671,37 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
                     id: prev._idTouched ? prev.id : slugify(label),
                   }));
                 }}
-                placeholder="My Custom Desk"
+                placeholder="Мой стол"
                 maxLength={120}
               />
             </div>
             <div className="ce-field">
-              <label htmlFor="ce-id">Component ID</label>
+              <label htmlFor="ce-id">ID компонента</label>
               <input
                 id="ce-id"
                 value={meta.id}
                 onChange={(e) => setMeta((prev) => ({ ...prev, id: e.target.value, _idTouched: true }))}
                 disabled={!isNew}
-                placeholder="my-custom-desk"
+                placeholder="moy-stol"
                 pattern="^[A-Za-z_][A-Za-z0-9_.:-]{0,119}$"
-                title="Start with letter/underscore, then A-Z 0-9 _ . : -"
+                title="Начинается с буквы/подчёркивания, далее A-Z 0-9 _ . : -"
               />
-              {!isNew && <span className="ce-field-hint">ID is locked to avoid breaking placed instances.</span>}
+              {!isNew && <span className="ce-field-hint">ID заблокирован, чтобы не сломать уже размещённые объекты.</span>}
             </div>
             <div className="ce-field">
-              <label htmlFor="ce-asset-type">Asset type</label>
+              <label htmlFor="ce-asset-type">Тип объекта</label>
               <select id="ce-asset-type" value={meta.asset_type} onChange={(e) => setMeta((prev) => ({ ...prev, asset_type: e.target.value }))}>
-                {ASSET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                {ASSET_TYPES.map((t) => <option key={t} value={t}>{assetTypeLabel(t)}</option>)}
               </select>
             </div>
             <div className="ce-field-row">
               <div className="ce-field">
-                <label htmlFor="ce-dw">Default W</label>
+                <label htmlFor="ce-dw">Ширина по умолчанию</label>
                 <input id="ce-dw" type="number" min={1} max={10000} value={meta.default_w}
                   onChange={(e) => setMeta((prev) => ({ ...prev, default_w: Number(e.target.value), _wTouched: true }))} />
               </div>
               <div className="ce-field">
-                <label htmlFor="ce-dh">Default H</label>
+                <label htmlFor="ce-dh">Высота по умолчанию</label>
                 <input id="ce-dh" type="number" min={1} max={10000} value={meta.default_h}
                   onChange={(e) => setMeta((prev) => ({ ...prev, default_h: Number(e.target.value), _hTouched: true }))} />
               </div>
@@ -690,7 +712,7 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
             <>
               {/* Tool palette */}
               <section className="ce-section">
-                <h3 className="ce-section-title">Tools</h3>
+                <h3 className="ce-section-title">Инструменты</h3>
                 <div className="ce-tool-palette">
                   {TOOLS.map(({ id: tid, label, Icon }) => (
                     <button
@@ -708,10 +730,10 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
 
               {/* Style controls */}
               <section className="ce-section">
-                <h3 className="ce-section-title">Style</h3>
+                <h3 className="ce-section-title">Стиль</h3>
                 <div className="ce-style-grid">
                   <div className="ce-field">
-                    <label>Fill</label>
+                    <label>Заливка</label>
                     <div className="ce-color-row">
                       <div className="ce-swatch" style={{ background: fillColor }} onClick={() => document.getElementById('ce-fill-input').click()} />
                       <input id="ce-fill-input" type="color" value={fillColor} onChange={(e) => onFillChange(e.target.value)} className="ce-color-hidden" />
@@ -719,7 +741,7 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
                     </div>
                   </div>
                   <div className="ce-field">
-                    <label>Stroke</label>
+                    <label>Обводка</label>
                     <div className="ce-color-row">
                       <div className="ce-swatch" style={{ background: strokeColor }} onClick={() => document.getElementById('ce-stroke-input').click()} />
                       <input id="ce-stroke-input" type="color" value={strokeColor} onChange={(e) => onStrokeChange(e.target.value)} className="ce-color-hidden" />
@@ -727,14 +749,14 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
                     </div>
                   </div>
                   <div className="ce-field">
-                    <label htmlFor="ce-sw">Stroke width</label>
+                    <label htmlFor="ce-sw">Толщина обводки</label>
                     <div className="ce-slider-row">
                       <input id="ce-sw" type="range" min={0.5} max={8} step={0.5} value={strokeWidth} onChange={(e) => onStrokeWidthChange(parseFloat(e.target.value))} />
                       <span className="ce-slider-val">{strokeWidth}</span>
                     </div>
                   </div>
                   <div className="ce-field">
-                    <label htmlFor="ce-rx">Border radius</label>
+                    <label htmlFor="ce-rx">Скругление</label>
                     <div className="ce-slider-row">
                       <input id="ce-rx" type="range" min={0} max={40} step={1} value={borderRadius} onChange={(e) => onBorderRadiusChange(parseFloat(e.target.value))} />
                       <span className="ce-slider-val">{borderRadius}</span>
@@ -747,10 +769,10 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
               <section className="ce-section">
                 <h3 className="ce-section-title">
                   {selectedShape
-                    ? `${selectedShape.type === 'line' ? 'Line' : selectedShape.type === 'ellipse' ? 'Ellipse' : 'Rectangle'} #${selectedIdx + 1}`
-                    : 'Shape Properties'}
+                    ? `${shapeTypeLabel(selectedShape.type)} #${selectedIdx + 1}`
+                    : 'Свойства фигуры'}
                 </h3>
-                {!selectedShape && <p className="ce-empty-hint">Select a shape to edit its properties.</p>}
+                {!selectedShape && <p className="ce-empty-hint">Выберите фигуру, чтобы редактировать свойства.</p>}
                 {selectedShape && selectedShape.type === 'line' && (
                   <div className="ce-props-grid">
                     {(['x1','y1','x2','y2']).map((f) => (
@@ -771,7 +793,7 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
                     ))}
                     {selectedShape.type === 'rect' && (
                       <div className="ce-field ce-field-full">
-                        <label>Corner Radius</label>
+                        <label>Скругление углов</label>
                         <input type="number" min={0} value={shapeProps.rx ?? 0} onChange={(e) => applyShapePropsField('rx', e.target.value)} />
                       </div>
                     )}
@@ -779,9 +801,9 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
                 )}
                 {selectedShape && (
                   <div className="ce-shape-actions">
-                    <button type="button" className="ce-btn ce-btn-sm" onClick={bringToFront} title="Bring to front">↑ Front</button>
-                    <button type="button" className="ce-btn ce-btn-sm" onClick={sendToBack} title="Send to back">↓ Back</button>
-                    <button type="button" className="ce-btn ce-btn-sm ce-btn-danger" onClick={deleteSelected} title="Delete shape">Delete</button>
+                    <button type="button" className="ce-btn ce-btn-sm" onClick={bringToFront} title="На передний план">↑ Вперёд</button>
+                    <button type="button" className="ce-btn ce-btn-sm" onClick={sendToBack} title="На задний план">↓ Назад</button>
+                    <button type="button" className="ce-btn ce-btn-sm ce-btn-danger" onClick={deleteSelected} title="Удалить фигуру">Удалить</button>
                   </div>
                 )}
               </section>
@@ -798,14 +820,14 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
               className={`ce-tab${mode === 'draw' ? ' active' : ''}`}
               onClick={() => switchMode('draw')}
             >
-              Draw
+              Рисовать
             </button>
             <button
               type="button"
               className={`ce-tab${mode === 'code' ? ' active' : ''}`}
               onClick={() => switchMode('code')}
             >
-              Code
+              Код
             </button>
           </div>
 
@@ -845,7 +867,7 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
               </svg>
               {!shapes.length && !previewShape && (
                 <div className="ce-canvas-empty">
-                  Click and drag on the canvas to draw a shape
+                  Зажмите и протяните на холсте, чтобы нарисовать фигуру
                 </div>
               )}
             </div>
@@ -858,7 +880,7 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
                 value={codeMarkup}
                 onChange={(e) => {
                   setCodeMarkup(e.target.value);
-                  setCodeError(!isSafeSvgMarkup(e.target.value) ? 'SVG contains unsafe elements.' : '');
+                  setCodeError(!isSafeSvgMarkup(e.target.value) ? 'SVG содержит небезопасные элементы.' : '');
                 }}
                 spellCheck={false}
                 placeholder={'<rect x="0" y="0" width="100" height="60" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>'}
@@ -866,7 +888,7 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
               />
               {codeError && <p className="ce-code-error">{codeError}</p>}
               <div className="ce-code-preview">
-                <span className="ce-preview-label">Live preview</span>
+                <span className="ce-preview-label">Живой предпросмотр</span>
                 {codePreviewSafe && codeMarkup.trim() ? (
                   <div
                     className="ce-preview-box"
@@ -876,7 +898,7 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
                   />
                 ) : (
                   <div className="ce-preview-box ce-preview-empty">
-                    {!codeMarkup.trim() ? 'Enter SVG markup above' : 'SVG contains unsafe content'}
+                    {!codeMarkup.trim() ? 'Введите SVG-разметку выше' : 'SVG содержит небезопасное содержимое'}
                   </div>
                 )}
               </div>
@@ -886,8 +908,8 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
 
         {/* ── Right preview panel ── */}
         <aside className="ce-right-panel">
-          <h3 className="ce-section-title">Preview</h3>
-          <p className="ce-empty-hint" style={{ marginBottom: 8 }}>At actual size ({meta.default_w}×{meta.default_h})</p>
+          <h3 className="ce-section-title">Предпросмотр</h3>
+          <p className="ce-empty-hint" style={{ marginBottom: 8 }}>В реальном размере ({meta.default_w}×{meta.default_h})</p>
           {mode === 'draw' ? (
             <DrawPreview shapes={shapes} preview={previewShape} viewBox={meta.view_box} />
           ) : (
@@ -899,7 +921,7 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
                 }}
               />
             ) : (
-              <div className="ce-preview-box ce-preview-empty">No preview</div>
+              <div className="ce-preview-box ce-preview-empty">Нет предпросмотра</div>
             )
           )}
           <div className="ce-viewbox-display">

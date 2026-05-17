@@ -32,15 +32,15 @@ export function LoginScreen({ busy, error, onSubmit }) {
           <Building2 size={22} />
           <div>
             <strong>DeskBook</strong>
-            <span>Editor Admin</span>
+            <span>Админ редактора</span>
           </div>
         </div>
         <label>
-          <span>Username</span>
+          <span>Логин</span>
           <input name="username" autoComplete="username" required />
         </label>
         <label>
-          <span>Password</span>
+          <span>Пароль</span>
           <input name="password" type="password" autoComplete="current-password" required />
         </label>
         {error && (
@@ -50,7 +50,7 @@ export function LoginScreen({ busy, error, onSubmit }) {
           </div>
         )}
         <button className="primary-button" disabled={busy}>
-          {busy ? 'Signing in...' : 'Sign in'}
+          {busy ? 'Вход...' : 'Войти'}
         </button>
       </form>
     </main>

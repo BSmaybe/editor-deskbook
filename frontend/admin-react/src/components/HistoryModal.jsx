@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Clock, RotateCcw, X } from 'lucide-react';
 import { apiFetch } from '../lib/api.js';
+import { statusLabel } from '../lib/i18n.js';
 
 export default function HistoryModal({ floorId, open, onClose, onRestored, onError }) {
   const [revisions, setRevisions] = useState([]);
@@ -45,21 +46,21 @@ export default function HistoryModal({ floorId, open, onClose, onRestored, onErr
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content history-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2><Clock size={18} /> Revision History</h2>
-          <button className="icon-button" onClick={onClose}><X size={18} /></button>
+          <h2><Clock size={18} /> История версий</h2>
+          <button className="icon-button" onClick={onClose} title="Закрыть"><X size={18} /></button>
         </div>
 
         {loading ? (
-          <p className="modal-loading">Loading revisions...</p>
+          <p className="modal-loading">Загружаем версии...</p>
         ) : revisions.length === 0 ? (
-          <p className="modal-empty">No revisions yet</p>
+          <p className="modal-empty">Версий пока нет</p>
         ) : (
           <div className="revision-list">
             {revisions.map((rev) => (
               <div key={rev.revision_id || rev.id} className="revision-row">
                 <div className="revision-info">
                   <strong>v{rev.version}</strong>
-                  <span className={`revision-status ${rev.status}`}>{rev.status}</span>
+                  <span className={`revision-status ${rev.status}`}>{statusLabel(rev.status)}</span>
                   <span className="revision-date">
                     {rev.published_at
                       ? new Date(rev.published_at).toLocaleString()
@@ -72,10 +73,10 @@ export default function HistoryModal({ floorId, open, onClose, onRestored, onErr
                   className="tool-button sm"
                   onClick={() => restore(rev.revision_id || rev.id)}
                   disabled={restoring === (rev.revision_id || rev.id)}
-                  title="Restore this revision"
+                  title="Восстановить эту версию"
                 >
                   <RotateCcw size={14} />
-                  <span>{restoring === (rev.revision_id || rev.id) ? '...' : 'Restore'}</span>
+                  <span>{restoring === (rev.revision_id || rev.id) ? '...' : 'Восстановить'}</span>
                 </button>
               </div>
             ))}

@@ -57,6 +57,15 @@ import { useGrid } from '../lib/canvas/useGrid.js';
 import { useSelection } from '../lib/canvas/useSelection.js';
 import { useUndoRedo } from '../lib/canvas/useUndoRedo.js';
 import { findObjectAtPoint } from '../lib/canvas/hitTest.js';
+import {
+  componentMarkup,
+  groupComponents,
+  labelPrefixForComponent,
+  mergeComponentCatalog,
+  shouldShowObjectLabel,
+  viewBoxString,
+} from '../lib/componentCatalog.js';
+import { pluralRu, structureLabel } from '../lib/i18n.js';
 import PropertiesPanel from './PropertiesPanel.jsx';
 import './CanvasEditor.css';
 
@@ -102,6 +111,10 @@ function deskStroke(desk, selected) {
   if (!desk.bookable) return DESK_COLORS.disabled.stroke;
   if (desk.fixed) return DESK_COLORS.fixed.stroke;
   return DEFAULT_DESK_COLOR.stroke;
+}
+
+function rotationOf(desk) {
+  return Number(desk.r ?? desk.rotation ?? 0) || 0;
 }
 
 function boundingBoxOf(desks, ids) {
@@ -150,7 +163,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   /* ── tool mode: 'select' | 'pan' | 'place' | 'draw_wall' | 'draw_boundary' | 'draw_partition' | 'draw_door' ── */
   const [tool, setTool] = useState('select');
-  const [placeComponentId, setPlaceComponentId] = useState('');
+  const [placeComponentId, setPlaceComponentId] = useState('workplace-desk-chair');
 
   /* ── drawing state for structure polylines ── */
   const [drawPoints, setDrawPoints] = useState([]);
@@ -207,13 +220,24 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const [saving, setSaving] = useState(false);
 
   /* ── component size lookup ── */
+  const componentCatalog = useMemo(() => mergeComponentCatalog(components), [components]);
+  const componentGroups = useMemo(() => groupComponents(componentCatalog), [componentCatalog]);
   const compMap = useMemo(() => {
     const m = new Map();
-    for (const c of (components || [])) m.set(c.id, c);
+    for (const c of componentCatalog) m.set(c.id, c);
     if (!m.has('desk-short'))           m.set('desk-short', { default_w: 100, default_h: 60 });
     if (!m.has('workplace-desk-chair')) m.set('workplace-desk-chair', { default_w: 140, default_h: 125 });
     return m;
-  }, [components]);
+  }, [componentCatalog]);
+
+  const selectedPlaceComponent = compMap.get(placeComponentId) || componentCatalog[0] || compMap.get('desk-short');
+
+  useEffect(() => {
+    if (!componentCatalog.length) return;
+    if (!componentCatalog.some((c) => c.id === placeComponentId)) {
+      setPlaceComponentId(componentCatalog[0].id);
+    }
+  }, [componentCatalog, placeComponentId]);
 
   function deskW(d) { return d.w || compMap.get(d.component_id)?.default_w || 100; }
   function deskH(d) { return d.h || compMap.get(d.component_id)?.default_h || 60; }
@@ -399,21 +423,28 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   }
 
   function addDeskAt(svgPt) {
-    const comp = placeComponentId ? compMap.get(placeComponentId) : null;
+    const comp = selectedPlaceComponent || compMap.get('desk-short');
+    const componentId = comp?.id || 'desk-short';
+    const assetType = comp?.asset_type || 'desk';
     const dw = comp?.default_w || 100;
     const dh = comp?.default_h || 60;
     const px = grid.snapOn ? Math.round(svgPt.x / grid.gridSize) * grid.gridSize : Math.round(svgPt.x);
     const py = grid.snapOn ? Math.round(svgPt.y / grid.gridSize) * grid.gridSize : Math.round(svgPt.y);
     const usedLabels = new Set(desks.map((d) => d.label));
+    const labelPrefix = labelPrefixForComponent(comp);
     let num = desks.length + 1;
-    while (usedLabels.has(`D${num}`)) num++;
+    while (usedLabels.has(`${labelPrefix}${num}`)) num++;
     const newDesk = {
       id: uid('desk'),
-      label: `D${num}`,
+      label: `${labelPrefix}${num}`,
       x: px, y: py, w: dw, h: dh,
       type: 'flex',
-      asset_type: 'desk',
-      component_id: placeComponentId || undefined,
+      asset_type: assetType,
+      space_type: assetType,
+      bookable: assetType === 'workplace',
+      component_id: componentId,
+      symbol_id: componentId,
+      workplace_id: assetType === 'workplace' ? uid('wp') : undefined,
     };
     modifyDesks((prev) => [...prev, newDesk]);
     sel.selectIds(new Set([newDesk.id]));
@@ -626,14 +657,21 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     if (bb) viewport.zoomToFit(bb, 60);
   }
 
-  const currentLayoutDoc = useCallback(() => ({
-    ...(layout?.layout || {}),
-    desks,
-    walls,
-    boundaries,
-    partitions,
-    doors,
-  }), [layout, desks, walls, boundaries, partitions, doors]);
+  const currentLayoutDoc = useCallback(() => {
+    const usedComponentIds = new Set(desks.map((d) => d.component_id || d.symbol_id).filter(Boolean));
+    const customComponents = componentCatalog
+      .filter((c) => !c.is_system && usedComponentIds.has(c.id))
+      .map(({ is_system, palette_group, ...component }) => component);
+    return {
+      ...(layout?.layout || {}),
+      components: customComponents,
+      desks,
+      walls,
+      boundaries,
+      partitions,
+      doors,
+    };
+  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors]);
 
   /* ── save ── */
   const saveDraft = useCallback(async ({ silent = false } = {}) => {
@@ -687,6 +725,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     if (!sel.selectedIds.size) return null;
     return boundingBoxOf(desks, sel.selectedIds);
   }, [desks, sel.selectedIds]);
+  const structureCount = walls.length + boundaries.length + partitions.length + doors.length;
 
   /* ── cursor class ── */
   const cursorClass = isPanningRef.current
@@ -713,37 +752,40 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       <div className="ce-toolbar">
         <button
           className={`ce-tool-btn ${tool === 'select' ? 'active' : ''}`}
-          title="Select (V)"
+          title="Выбор (V)"
           onClick={() => setTool('select')}
         >
           <MousePointer size={14} />
-          <span>Select</span>
+          <span>Выбор</span>
         </button>
         <button
           className={`ce-tool-btn ${tool === 'pan' ? 'active' : ''}`}
-          title="Pan (Space+drag or middle-click)"
+          title="Двигать холст (Space+drag или средняя кнопка)"
           onClick={() => setTool('pan')}
         >
           <Move size={14} />
-          <span>Pan</span>
+          <span>Холст</span>
         </button>
         <button
           className={`ce-tool-btn ${tool === 'place' ? 'active' : ''}`}
-          title="Place desk (P)"
+          title="Добавить объект (P)"
           onClick={() => setTool(tool === 'place' ? 'select' : 'place')}
         >
-          <span>+ Desk</span>
+          <span>+ Объект</span>
         </button>
         {tool === 'place' && (
           <select
             className="ce-place-select"
             value={placeComponentId}
             onChange={(e) => setPlaceComponentId(e.target.value)}
-            title="Component to place"
+            title="Компонент для вставки"
           >
-            <option value="">Default desk</option>
-            {(components || []).map((c) => (
-              <option key={c.id} value={c.id}>{c.label || c.id}</option>
+            {componentGroups.map((group) => (
+              <optgroup label={group.label} key={group.id}>
+                {group.items.map((c) => (
+                  <option key={c.id} value={c.id}>{c.label || c.id}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
         )}
@@ -752,43 +794,43 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
         <button
           className={`ce-tool-btn ${tool === 'draw_wall' ? 'active' : ''}`}
-          title="Draw wall (W)"
+          title="Нарисовать стену (W)"
           onClick={() => { cancelDraw(); setTool(tool === 'draw_wall' ? 'select' : 'draw_wall'); }}
         >
-          <Minus size={14} /> Wall
+          <Minus size={14} /> Стена
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_boundary' ? 'active' : ''}`}
-          title="Draw boundary (B)"
+          title="Нарисовать контур (B)"
           onClick={() => { cancelDraw(); setTool(tool === 'draw_boundary' ? 'select' : 'draw_boundary'); }}
         >
-          <Square size={14} /> Boundary
+          <Square size={14} /> Контур
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_partition' ? 'active' : ''}`}
-          title="Draw partition"
+          title="Нарисовать перегородку"
           onClick={() => { cancelDraw(); setTool(tool === 'draw_partition' ? 'select' : 'draw_partition'); }}
         >
-          <Minus size={14} /> Partition
+          <Minus size={14} /> Перегородка
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_door' ? 'active' : ''}`}
-          title="Draw door"
+          title="Нарисовать дверь"
           onClick={() => { cancelDraw(); setTool(tool === 'draw_door' ? 'select' : 'draw_door'); }}
         >
-          <Pencil size={14} /> Door
+          <Pencil size={14} /> Дверь
         </button>
 
         <div className="ce-toolbar-sep" />
 
-        <button className="ce-tool-btn" title="Zoom in" onClick={() => viewport.zoomBy(1 / 1.25)}>
+        <button className="ce-tool-btn" title="Приблизить" onClick={() => viewport.zoomBy(1 / 1.25)}>
           <ZoomIn size={14} />
         </button>
-        <button className="ce-tool-btn" title="Zoom out" onClick={() => viewport.zoomBy(1.25)}>
+        <button className="ce-tool-btn" title="Отдалить" onClick={() => viewport.zoomBy(1.25)}>
           <ZoomOut size={14} />
         </button>
         <span className="ce-zoom-label">{Math.round(viewport.zoom * 100)}%</span>
-        <button className="ce-tool-btn" title="Zoom to fit (F)" onClick={handleZoomToFit}>
+        <button className="ce-tool-btn" title="Показать всё (F)" onClick={handleZoomToFit}>
           <Maximize size={14} />
         </button>
 
@@ -796,17 +838,17 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
         <button
           className={`ce-tool-btn ${grid.gridVisible ? 'active' : ''}`}
-          title={`Grid (${grid.gridSize}px) — click to toggle`}
+          title={`Сетка (${grid.gridSize}px) — показать или скрыть`}
           onClick={grid.toggleVisible}
         >
           <Grid3X3 size={14} />
         </button>
         <button
           className={`ce-tool-btn ${grid.snapOn ? 'active' : ''}`}
-          title="Snap to grid"
+          title="Привязка к сетке"
           onClick={grid.toggleSnap}
         >
-          Snap
+          Привязка
         </button>
 
         {/* Selection actions */}
@@ -815,7 +857,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             <div className="ce-toolbar-sep" />
             <button
               className="ce-tool-btn danger"
-              title="Delete selected (Del)"
+              title="Удалить выбранное (Del)"
               onClick={selectedStruct ? deleteSelectedStruct : deleteSelected}
             >
               <Trash2 size={14} />
@@ -828,7 +870,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         {/* Undo / Redo */}
         <button
           className="ce-tool-btn"
-          title="Undo (Ctrl+Z)"
+          title="Отменить (Ctrl+Z)"
           disabled={!undoRedo.canUndo}
           onClick={() => undoRedo.undo({ desks })}
         >
@@ -836,7 +878,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         </button>
         <button
           className="ce-tool-btn"
-          title="Redo (Ctrl+Shift+Z)"
+          title="Повторить (Ctrl+Shift+Z)"
           disabled={!undoRedo.canRedo}
           onClick={() => undoRedo.redo({ desks })}
         >
@@ -845,29 +887,55 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
         {dirty && (
           <>
-            <button className="ce-tool-btn" title="Discard changes" onClick={resetChanges}>
+            <button className="ce-tool-btn" title="Сбросить изменения" onClick={resetChanges}>
               <RotateCcw size={14} />
             </button>
             <button
               className="ce-tool-btn active"
-              title="Save draft"
+              title="Сохранить черновик"
               onClick={() => saveDraft()}
               disabled={saving}
               style={{ gap: 6 }}
             >
               <Save size={14} />
-              <span>{saving ? 'Saving…' : 'Save draft'}</span>
+              <span>{saving ? 'Сохранение…' : 'Сохранить'}</span>
             </button>
           </>
         )}
       </div>
 
+      {tool === 'place' && (
+        <div className="ce-place-rail">
+          <span className="ce-place-rail-label">Вставка объекта</span>
+          <div className="ce-place-cards">
+            {componentCatalog.map((component) => (
+              <button
+                key={component.id}
+                className={`ce-place-card ${placeComponentId === component.id ? 'active' : ''}`}
+                onClick={() => setPlaceComponentId(component.id)}
+                title={component.label || component.id}
+              >
+                <span className="ce-place-thumb">
+                  <svg
+                    viewBox={viewBoxString(component)}
+                    xmlns="http://www.w3.org/2000/svg"
+                    dangerouslySetInnerHTML={{ __html: componentMarkup(component) }}
+                  />
+                </span>
+                <span>{component.label || component.id}</span>
+              </button>
+            ))}
+          </div>
+          <span className="ce-place-rail-hint">Нажмите на холст, чтобы вставить</span>
+        </div>
+      )}
+
       {/* ── Hint bar ── */}
       {isDrawMode && (
         <div className="ce-hint-bar">
-          Drawing <strong>{drawStructType}</strong> — click to add points
-          {drawPoints.length >= 2 && ', double-click or Enter to finish'}
-          {drawPoints.length > 0 && ', Escape to cancel'}
+          Рисование: <strong>{structureLabel(drawStructType).toLowerCase()}</strong> — кликом добавляйте точки
+          {drawPoints.length >= 2 && ', двойной клик или Enter завершит линию'}
+          {drawPoints.length > 0 && ', Escape отменит'}
         </div>
       )}
 
@@ -1050,8 +1118,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             const h = deskH(desk);
             const x = desk.x || 0;
             const y = desk.y || 0;
+            const component = compMap.get(desk.component_id || desk.symbol_id) || compMap.get('desk-short');
+            const markup = componentMarkup(component);
             const isSelected = sel.selectedIds.has(desk.id);
-            const rotate = desk.r ? ` rotate(${desk.r} ${w / 2} ${h / 2})` : '';
+            const r = rotationOf(desk);
+            const rotate = r ? ` rotate(${r} ${w / 2} ${h / 2})` : '';
+            const showLabel = shouldShowObjectLabel(component, desk);
             return (
               <g
                 key={desk.id}
@@ -1059,26 +1131,48 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                 transform={`translate(${x},${y})${rotate}`}
                 data-id={desk.id}
               >
+                {markup ? (
+                  <svg
+                    className="ce-desk-art"
+                    width={w}
+                    height={h}
+                    viewBox={viewBoxString(component)}
+                    preserveAspectRatio="none"
+                    dangerouslySetInnerHTML={{ __html: markup }}
+                  />
+                ) : (
+                  <rect
+                    className="ce-desk-body"
+                    width={w}
+                    height={h}
+                    rx={3}
+                    fill={isSelected ? '#dbeafe' : deskFill(desk)}
+                    stroke={deskStroke(desk, isSelected)}
+                    strokeWidth={isSelected ? 2 : 1}
+                  />
+                )}
                 <rect
-                  className="ce-desk-body"
+                  className="ce-desk-hit"
                   width={w}
                   height={h}
-                  rx={3}
-                  fill={isSelected ? '#dbeafe' : deskFill(desk)}
-                  stroke={deskStroke(desk, isSelected)}
+                  rx={5}
+                  fill={isSelected ? 'rgba(37,99,235,0.08)' : 'transparent'}
+                  stroke={isSelected ? '#2563eb' : 'transparent'}
                   strokeWidth={isSelected ? 2 : 1}
                 />
-                <text
-                  className="ce-desk-label"
-                  x={w / 2}
-                  y={h / 2}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fontSize={Math.min(11, w / 7)}
-                  fill="#334155"
-                >
-                  {desk.label || desk.id}
-                </text>
+                {showLabel && (
+                  <text
+                    className="ce-desk-label"
+                    x={w / 2}
+                    y={h / 2}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize={Math.max(8, Math.min(12, w / 8, h / 3))}
+                    fill="#334155"
+                  >
+                    {desk.label || desk.id}
+                  </text>
+                )}
               </g>
             );
           })}
@@ -1091,7 +1185,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               .map((desk) => {
                 const w = deskW(desk);
                 const h = deskH(desk);
-                const rotate = desk.r ? ` rotate(${desk.r} ${w / 2} ${h / 2})` : '';
+                const r = rotationOf(desk);
+                const rotate = r ? ` rotate(${r} ${w / 2} ${h / 2})` : '';
                 return (
                   <rect
                     key={`sel-${desk.id}`}
@@ -1125,8 +1220,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               const h = deskH(selectedDesk);
               const x = selectedDesk.x || 0;
               const y = selectedDesk.y || 0;
-              const rotate = selectedDesk.r
-                ? ` rotate(${selectedDesk.r} ${x + w / 2} ${y + h / 2})`
+              const r = rotationOf(selectedDesk);
+              const rotate = r
+                ? ` rotate(${r} ${x + w / 2} ${y + h / 2})`
                 : '';
               const handles = [
                 [x,     y,     'nwse-resize'],
@@ -1210,15 +1306,15 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         </span>
         <span className="ce-statusbar-sep">·</span>
         <span className="ce-statusbar-item">
-          {desks.length} desk{desks.length !== 1 ? 's' : ''}
-          {(walls.length + boundaries.length + partitions.length + doors.length) > 0 &&
-            ` · ${walls.length + boundaries.length + partitions.length + doors.length} struct`}
+          {desks.length} {pluralRu(desks.length, 'объект', 'объекта', 'объектов')}
+          {structureCount > 0 &&
+            ` · ${structureCount} ${pluralRu(structureCount, 'конструкция', 'конструкции', 'конструкций')}`}
         </span>
         {sel.selectedIds.size > 0 && (
           <>
             <span className="ce-statusbar-sep">·</span>
             <span className="ce-statusbar-item" style={{ color: '#2563eb' }}>
-              {sel.selectedIds.size} selected
+              выбрано: {sel.selectedIds.size}
             </span>
           </>
         )}
@@ -1226,14 +1322,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           <>
             <span className="ce-statusbar-sep">·</span>
             <span className="ce-statusbar-item" style={{ color: '#2563eb' }}>
-              {selectedStruct.type}
+              {structureLabel(selectedStruct.type)}
             </span>
           </>
         )}
         {dirty && (
           <>
             <span className="ce-statusbar-sep">·</span>
-            <span className="ce-statusbar-item" style={{ color: '#d97706' }}>unsaved</span>
+            <span className="ce-statusbar-item" style={{ color: '#d97706' }}>не сохранено</span>
           </>
         )}
       </div>

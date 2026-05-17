@@ -1,6 +1,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { FileUp, Upload, X } from 'lucide-react';
 import { apiFetch } from '../lib/api.js';
+import { structureLabel } from '../lib/i18n.js';
 
 export default function ImportModal({ floorId, layoutVersion = 0, open, onClose, onImported, onError }) {
   const [file, setFile] = useState(null);
@@ -51,18 +52,18 @@ export default function ImportModal({ floorId, layoutVersion = 0, open, onClose,
     <div className="modal-overlay" onClick={handleClose}>
       <div className="modal-content import-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2><FileUp size={18} /> SVG Import</h2>
-          <button className="icon-button" onClick={handleClose}><X size={18} /></button>
+          <h2><FileUp size={18} /> Импорт SVG</h2>
+          <button className="icon-button" onClick={handleClose} title="Закрыть"><X size={18} /></button>
         </div>
 
         {!result ? (
           <div className="import-drop-zone" onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
             {importing ? (
-              <p>Classifying SVG elements...</p>
+              <p>Распознаём элементы SVG...</p>
             ) : (
               <>
                 <Upload size={32} />
-                <p>Drop an SVG file here or click to browse</p>
+                <p>Перетащите SVG сюда или выберите файл</p>
                 <input
                   ref={inputRef}
                   type="file"
@@ -71,7 +72,7 @@ export default function ImportModal({ floorId, layoutVersion = 0, open, onClose,
                   onChange={(e) => handleFile(e.target.files?.[0])}
                 />
                 <button className="tool-button" onClick={() => inputRef.current?.click()}>
-                  Choose file
+                  Выбрать файл
                 </button>
               </>
             )}
@@ -132,7 +133,7 @@ function buildImportedLayout(result, items) {
     .filter((el) => el.type === 'workplace' || el.type === 'desk')
     .map((el) => ({
       id: el.id || `imp-${Math.random().toString(36).slice(2, 8)}`,
-      label: el.label || el.id || 'Desk',
+      label: el.label || el.id || 'Объект',
       x: el.x || el.cx || 0,
       y: el.y || el.cy || 0,
       w: el.width || el.w || 100,
@@ -176,7 +177,7 @@ function ImportResults({ result, floorId, layoutVersion, onImported, onClose, on
         layout.partitions.length ||
         layout.doors.length;
       if (!hasImportableElements) {
-        onError('No importable floor plan elements found in SVG');
+        onError('В SVG не найдены элементы плана, которые можно импортировать');
         setApplying(false);
         return;
       }
@@ -196,29 +197,29 @@ function ImportResults({ result, floorId, layoutVersion, onImported, onClose, on
 
   return (
     <div className="import-results">
-      <h3>Classification Results</h3>
+      <h3>Результаты распознавания</h3>
       <div className="import-summary">
         {Object.entries(typeCounts).map(([type, count]) => (
           <div key={type} className="import-type-row">
-            <span className={`import-badge ${type}`}>{type}</span>
+            <span className={`import-badge ${type}`}>{structureLabel(type)}</span>
             <span>{count}</span>
           </div>
         ))}
         <div className="import-type-row total">
-          <span>Total elements</span>
+          <span>Всего элементов</span>
           <strong>{totalElements}</strong>
         </div>
         <div className="import-type-row total">
-          <span>Importable</span>
+          <span>Можно импортировать</span>
           <strong>{recognizedElements}</strong>
         </div>
       </div>
 
       <div className="import-actions">
         <button className="tool-button" onClick={applyImport} disabled={applying}>
-          {applying ? 'Applying...' : 'Apply as draft'}
+          {applying ? 'Применение...' : 'Применить как черновик'}
         </button>
-        <button className="tool-button secondary" onClick={onClose}>Cancel</button>
+        <button className="tool-button secondary" onClick={onClose}>Отмена</button>
       </div>
     </div>
   );

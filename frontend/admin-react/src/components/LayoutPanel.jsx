@@ -12,6 +12,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api.js';
+import { statusLabel } from '../lib/i18n.js';
 import { EmptyState, Metric } from './ui.jsx';
 import CanvasEditor from './CanvasEditor.jsx';
 import ImportModal from './ImportModal.jsx';
@@ -137,7 +138,7 @@ export default function LayoutPanel({
       const saved = await saveCanvasIfNeeded();
       const savedDraft = saved && saved.saved !== false;
       if (!savedDraft && layout?.status !== 'draft') {
-        onError('Нет черновика для публикации. Измените карту или создайте Blank draft.');
+        onError('Нет черновика для публикации. Измените карту или создайте пустой черновик.');
         return;
       }
       await onPublish();
@@ -159,13 +160,13 @@ export default function LayoutPanel({
         <div className="panel-title">
           <div className="tab-bar">
             <button className={`tab-btn ${mode === 'preview' ? 'active' : ''}`} onClick={() => switchMode('preview')}>
-              <Eye size={16} /> Preview
+              <Eye size={16} /> Предпросмотр
             </button>
             <button className={`tab-btn ${mode === 'canvas' ? 'active' : ''}`} onClick={() => switchMode('canvas')}>
-              <Move size={16} /> Canvas
+              <Move size={16} /> Холст
             </button>
             <button className={`tab-btn ${mode === 'json' ? 'active' : ''}`} onClick={() => switchMode('json')}>
-              <FileJson size={16} /> Draft JSON
+              <FileJson size={16} /> JSON черновика
             </button>
           </div>
           <div className="toolbar">
@@ -174,29 +175,29 @@ export default function LayoutPanel({
                 className="tool-button secondary"
                 onClick={createBlankDraft}
                 disabled={!floorId || creatingBlank}
-                title="Create blank draft"
+                title="Создать пустой черновик"
               >
                 <FilePlus2 size={18} />
-                <span>{creatingBlank ? 'Creating...' : 'Blank draft'}</span>
+                <span>{creatingBlank ? 'Создание...' : 'Пустой черновик'}</span>
               </button>
             )}
-            <button className="icon-button" onClick={() => setImportOpen(true)} title="Import SVG">
+            <button className="icon-button" onClick={() => setImportOpen(true)} title="Импорт SVG">
               <FileUp size={18} />
             </button>
-            <button className="icon-button" onClick={() => setHistoryOpen(true)} title="History">
+            <button className="icon-button" onClick={() => setHistoryOpen(true)} title="История">
               <Clock size={18} />
             </button>
-            <button className="icon-button" onClick={handleDownload} disabled={!layout && !svgPreview} title="Download current SVG">
+            <button className="icon-button" onClick={handleDownload} disabled={!layout && !svgPreview} title="Скачать текущий SVG">
               <Download size={18} />
             </button>
             <button
               className="tool-button"
               onClick={handlePublish}
               disabled={busy || !layout || (layout.status !== 'draft' && !canvasDirty)}
-              title="Publish"
+              title="Опубликовать"
             >
               <Rocket size={18} />
-              <span>Publish</span>
+              <span>Опубликовать</span>
             </button>
           </div>
         </div>
@@ -225,14 +226,14 @@ export default function LayoutPanel({
         layoutVersion={layout?.version || 0}
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onImported={() => { onLayoutChange(); onNotice('SVG imported as draft'); }}
+        onImported={() => { onLayoutChange(); onNotice('SVG импортирован как черновик'); }}
         onError={onError}
       />
       <HistoryModal
         floorId={floorId}
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
-        onRestored={() => { onLayoutChange(); onNotice('Revision restored'); }}
+        onRestored={() => { onLayoutChange(); onNotice('Версия восстановлена'); }}
         onError={onError}
       />
     </div>
@@ -249,13 +250,13 @@ function SvgPreview({ svgPreview, layout, onOpenCanvas }) {
       ) : layout ? (
         <div className="empty-state">
           <div className="empty-stack">
-            <strong>Published SVG is not available</strong>
-            <span>Draft exists. Open Canvas to edit it or publish the draft to generate preview.</span>
-            <button className="tool-button secondary" onClick={onOpenCanvas}>Open Canvas</button>
+            <strong>Опубликованный SVG недоступен</strong>
+            <span>Черновик есть. Откройте холст для редактирования или опубликуйте черновик, чтобы создать предпросмотр.</span>
+            <button className="tool-button secondary" onClick={onOpenCanvas}>Открыть холст</button>
           </div>
         </div>
       ) : (
-        <EmptyState text="No published preview yet" />
+        <EmptyState text="Опубликованного предпросмотра пока нет" />
       )}
     </div>
   );
@@ -284,7 +285,7 @@ function DraftJsonEditor({ layout, floorId, onLayoutChange, onNotice, onError })
     try {
       parsed = JSON.parse(jsonText);
     } catch {
-      onError('Invalid JSON');
+      onError('Некорректный JSON');
       return;
     }
     setSaving(true);
@@ -325,13 +326,13 @@ function DraftJsonEditor({ layout, floorId, onLayoutChange, onNotice, onError })
         {dirty && (
           <button className="tool-button sm" onClick={saveDraft} disabled={saving}>
             <Save size={16} />
-            <span>{saving ? 'Saving...' : 'Save draft'}</span>
+            <span>{saving ? 'Сохранение...' : 'Сохранить черновик'}</span>
           </button>
         )}
         {layout?.status === 'draft' && (
           <button className="tool-button sm secondary" onClick={discardDraft} disabled={saving}>
             <Trash2 size={16} />
-            <span>Discard draft</span>
+            <span>Удалить черновик</span>
           </button>
         )}
       </div>
@@ -340,7 +341,7 @@ function DraftJsonEditor({ layout, floorId, onLayoutChange, onNotice, onError })
         value={jsonText}
         onChange={(e) => { setJsonText(e.target.value); setDirty(true); }}
         spellCheck={false}
-        placeholder="No layout data"
+        placeholder="Нет данных карты"
       />
     </div>
   );
@@ -361,21 +362,21 @@ function LayoutInspector({ layout, busy, onSync }) {
     <aside className="inspector">
       <div className="panel-title">
         <div>
-          <h2>Layout info</h2>
-          <p>Draft/published metadata</p>
+          <h2>Информация о плане</h2>
+          <p>Метаданные черновика и публикации</p>
         </div>
       </div>
       <div className="summary-list">
-        <Metric label="Status" value={layout?.status || 'No layout'} />
-        <Metric label="Desks" value={desks.length} />
-        <Metric label="Groups" value={groups.length} />
-        <Metric label="Structure" value={structures} />
-        <Metric label="Version" value={layout?.version || '-'} />
-        <Metric label="Published" value={layout?.published_at ? new Date(layout.published_at).toLocaleString() : '-'} />
+        <Metric label="Статус" value={statusLabel(layout?.status)} />
+        <Metric label="Объекты" value={desks.length} />
+        <Metric label="Группы" value={groups.length} />
+        <Metric label="Конструкции" value={structures} />
+        <Metric label="Версия" value={layout?.version || '-'} />
+        <Metric label="Опубликовано" value={layout?.published_at ? new Date(layout.published_at).toLocaleString() : '-'} />
       </div>
       <button className="tool-button wide" onClick={onSync} disabled={!layout || busy}>
         <Save size={18} />
-        <span>Sync desks</span>
+        <span>Синхронизировать объекты</span>
       </button>
     </aside>
   );

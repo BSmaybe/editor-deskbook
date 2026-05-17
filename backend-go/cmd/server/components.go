@@ -21,11 +21,16 @@ var (
 	errForbidden  = errors.New("admin role required")
 	componentIDRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.:-]{0,119}$`)
 	assetTypes    = map[string]bool{
-		"workplace": true, "desk": true, "chair": true, "meeting_table": true, "conference_set": true, "asset": true,
+		"workplace": true, "desk": true, "chair": true, "meeting_table": true, "conference_set": true,
+		"call_room": true, "lounge": true, "sofa": true, "plant": true, "storage": true,
+		"printer": true, "reception": true, "column": true, "asset": true,
 	}
 	builtinComponentIDs = map[string]bool{
 		"workplace-desk-chair": true, "chair": true, "desk-short": true, "desk-long": true,
-		"meeting-table": true, "conference-chair": true, "conference-set": true,
+		"sit-stand-desk": true, "bench-4": true, "meeting-table": true, "round-table": true,
+		"conference-chair": true, "conference-set": true, "phone-booth": true, "focus-room": true,
+		"sofa": true, "lounge-chair": true, "plant": true, "storage-cabinet": true,
+		"locker-bank": true, "printer": true, "reception-desk": true, "column": true,
 	}
 )
 

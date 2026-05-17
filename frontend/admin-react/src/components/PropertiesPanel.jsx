@@ -1,8 +1,28 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { RotateCcw, Trash2 } from 'lucide-react';
+import { assetTypeLabel } from '../lib/i18n.js';
 
 const DESK_TYPES = ['flex', 'fixed'];
-const SPACE_TYPES = ['desk', 'meeting_room', 'call_room', 'open_space', 'lounge'];
+const DESK_TYPE_LABELS = {
+  flex: 'Гибкое',
+  fixed: 'Закреплённое',
+};
+const SPACE_TYPES = [
+  'workplace',
+  'desk',
+  'chair',
+  'meeting_table',
+  'conference_set',
+  'call_room',
+  'lounge',
+  'sofa',
+  'plant',
+  'storage',
+  'printer',
+  'reception',
+  'column',
+  'asset',
+];
 
 export default function PropertiesPanel({
   desks,
@@ -16,7 +36,7 @@ export default function PropertiesPanel({
   if (!selected.length) {
     return (
       <div className="properties-panel empty">
-        <p className="muted">Select a desk to edit properties</p>
+        <p className="muted">Выберите объект, чтобы редактировать свойства</p>
       </div>
     );
   }
@@ -49,7 +69,7 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
   const [deskType, setDeskType] = useState(desk.type || 'flex');
   const [spaceType, setSpaceType] = useState(desk.space_type || desk.asset_type || 'desk');
   const [componentId, setComponentId] = useState(desk.component_id || '');
-  const [rotation, setRotation] = useState(desk.rotation || 0);
+  const [rotation, setRotation] = useState(desk.r ?? desk.rotation ?? 0);
   const [w, setW] = useState(desk.w || 100);
   const [h, setH] = useState(desk.h || 60);
   const [x, setX] = useState(Math.round(desk.x || 0));
@@ -60,7 +80,7 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
     setDeskType(desk.type || 'flex');
     setSpaceType(desk.space_type || desk.asset_type || 'desk');
     setComponentId(desk.component_id || '');
-    setRotation(desk.rotation || 0);
+    setRotation(desk.r ?? desk.rotation ?? 0);
     setW(desk.w || 100);
     setH(desk.h || 60);
     setX(Math.round(desk.x || 0));
@@ -75,18 +95,18 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
   return (
     <div className="properties-panel">
       <div className="prop-header">
-        <h3>Properties</h3>
+        <h3>Свойства</h3>
         <button
           className="icon-button danger"
           onClick={() => onDelete([desk.id])}
-          title="Delete"
+          title="Удалить"
         >
           <Trash2 size={16} />
         </button>
       </div>
 
       <div className="prop-group">
-        <label>Label</label>
+        <label>Название</label>
         <input
           type="text"
           value={label}
@@ -119,7 +139,7 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
 
       <div className="prop-row">
         <div className="prop-group half">
-          <label>Width</label>
+          <label>Ширина</label>
           <input
             type="number"
             value={w}
@@ -129,7 +149,7 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
           />
         </div>
         <div className="prop-group half">
-          <label>Height</label>
+          <label>Высота</label>
           <input
             type="number"
             value={h}
@@ -141,7 +161,7 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
       </div>
 
       <div className="prop-group">
-        <label>Rotation</label>
+        <label>Поворот</label>
         <div className="prop-row">
           <input
             type="number"
@@ -150,13 +170,13 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
             onChange={(e) => {
               const v = Number(e.target.value) % 360;
               setRotation(v);
-              commit({ rotation: v });
+              commit({ r: v });
             }}
           />
           <button
             className="icon-button"
-            onClick={() => { setRotation(0); commit({ rotation: 0 }); }}
-            title="Reset rotation"
+            onClick={() => { setRotation(0); commit({ r: 0 }); }}
+            title="Сбросить поворот"
           >
             <RotateCcw size={14} />
           </button>
@@ -164,23 +184,42 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
       </div>
 
       <div className="prop-group">
-        <label>Desk type</label>
+        <label>Тип места</label>
         <select value={deskType} onChange={(e) => { setDeskType(e.target.value); commit({ type: e.target.value }); }}>
-          {DESK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          {DESK_TYPES.map((t) => <option key={t} value={t}>{DESK_TYPE_LABELS[t] || t}</option>)}
         </select>
       </div>
 
       <div className="prop-group">
-        <label>Space type</label>
+        <label>Тип объекта</label>
         <select value={spaceType} onChange={(e) => { setSpaceType(e.target.value); commit({ space_type: e.target.value, asset_type: e.target.value }); }}>
-          {SPACE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          {SPACE_TYPES.map((t) => <option key={t} value={t}>{assetTypeLabel(t)}</option>)}
         </select>
       </div>
 
       <div className="prop-group">
-        <label>Component</label>
-        <select value={componentId} onChange={(e) => { setComponentId(e.target.value); commit({ component_id: e.target.value }); }}>
-          <option value="">— default —</option>
+        <label>Компонент</label>
+        <select value={componentId} onChange={(e) => {
+          const nextId = e.target.value;
+          const component = (components || []).find((c) => c.id === nextId);
+          setComponentId(nextId);
+          if (component) {
+            setSpaceType(component.asset_type || 'asset');
+            setW(component.default_w || w);
+            setH(component.default_h || h);
+            commit({
+              component_id: nextId,
+              symbol_id: nextId,
+              asset_type: component.asset_type || 'asset',
+              space_type: component.asset_type || 'asset',
+              w: component.default_w || w,
+              h: component.default_h || h,
+            });
+          } else {
+            commit({ component_id: nextId, symbol_id: nextId });
+          }
+        }}>
+          <option value="">— по умолчанию —</option>
           {(components || []).map((c) => (
             <option key={c.id} value={c.id}>{c.label || c.id}</option>
           ))}
@@ -194,24 +233,34 @@ function MultiSelectPanel({ count, components, onBulkUpdate, onDelete }) {
   return (
     <div className="properties-panel">
       <div className="prop-header">
-        <h3>{count} selected</h3>
-        <button className="icon-button danger" onClick={onDelete} title="Delete all">
+        <h3>Выбрано: {count}</h3>
+        <button className="icon-button danger" onClick={onDelete} title="Удалить выбранные">
           <Trash2 size={16} />
         </button>
       </div>
 
       <div className="prop-group">
-        <label>Desk type</label>
+        <label>Тип места</label>
         <select defaultValue="" onChange={(e) => { if (e.target.value) onBulkUpdate({ type: e.target.value }); }}>
-          <option value="">— no change —</option>
-          {DESK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          <option value="">— без изменений —</option>
+          {DESK_TYPES.map((t) => <option key={t} value={t}>{DESK_TYPE_LABELS[t] || t}</option>)}
         </select>
       </div>
 
       <div className="prop-group">
-        <label>Component</label>
-        <select defaultValue="" onChange={(e) => { if (e.target.value) onBulkUpdate({ component_id: e.target.value }); }}>
-          <option value="">— no change —</option>
+        <label>Компонент</label>
+        <select defaultValue="" onChange={(e) => {
+          if (!e.target.value) return;
+          const component = (components || []).find((c) => c.id === e.target.value);
+          onBulkUpdate({
+            component_id: e.target.value,
+            symbol_id: e.target.value,
+            asset_type: component?.asset_type || 'asset',
+            space_type: component?.asset_type || 'asset',
+            ...(component ? { w: component.default_w, h: component.default_h } : {}),
+          });
+        }}>
+          <option value="">— без изменений —</option>
           {(components || []).map((c) => (
             <option key={c.id} value={c.id}>{c.label || c.id}</option>
           ))}
