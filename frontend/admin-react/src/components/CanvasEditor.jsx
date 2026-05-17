@@ -36,17 +36,21 @@ import React, {
   useState,
 } from 'react';
 import {
+  DoorOpen,
   Grid3X3,
+  Group,
   Maximize,
   Minus,
   Move,
   MousePointer,
   Pencil,
+  Plus,
   Redo2,
   RotateCcw,
   Save,
   Square,
   Trash2,
+  Ungroup,
   Undo2,
   ZoomIn,
   ZoomOut,
@@ -182,6 +186,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const [boundaries, setBoundaries] = useState([]);
   const [partitions, setPartitions] = useState([]);
   const [doors, setDoors] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [dirty, setDirty] = useState(false);
 
   /* ── selection ── */
@@ -196,6 +201,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       if (snapshot.boundaries) setBoundaries(snapshot.boundaries);
       if (snapshot.partitions) setPartitions(snapshot.partitions);
       if (snapshot.doors) setDoors(snapshot.doors);
+      if (snapshot.groups) setGroups(snapshot.groups);
       sel.clearSelection();
       setDirty(true);
     }, [sel]),
@@ -249,6 +255,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setBoundaries(layout?.layout?.boundaries || []);
     setPartitions(layout?.layout?.partitions || []);
     setDoors(layout?.layout?.doors || []);
+    setGroups(layout?.layout?.groups || []);
     sel.clearSelection();
     setDirty(false);
     setDrawPoints([]);
@@ -320,6 +327,17 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         }
       }
 
+      if (meta && e.key === 'g' && !e.shiftKey && !inInput) {
+        e.preventDefault();
+        groupSelected();
+        return;
+      }
+      if (meta && e.key === 'g' && e.shiftKey && !inInput) {
+        e.preventDefault();
+        ungroupSelected();
+        return;
+      }
+
       if (meta && e.key === 'z' && !e.shiftKey && !inInput) {
         e.preventDefault();
         undoRedo.undo({ desks });
@@ -373,7 +391,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       return;
     }
     const newStruct = { id: uid(drawStructType), pts: drawPoints.map((p) => [p.x, p.y]) };
-    undoRedo.push({ desks, walls, boundaries, partitions, doors });
+    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
     switch (drawStructType) {
       case 'wall':      setWalls((prev) => [...prev, newStruct]); break;
       case 'boundary':  setBoundaries((prev) => [...prev, newStruct]); break;
@@ -393,7 +411,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   /* ── data mutations ── */
 
   function modifyDesks(updater) {
-    undoRedo.push({ desks, walls, boundaries, partitions, doors });
+    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
     setDesks(updater);
     setDirty(true);
   }
@@ -406,7 +424,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   function deleteSelectedStruct() {
     if (!selectedStruct) return;
-    undoRedo.push({ desks, walls, boundaries, partitions, doors });
+    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
     const { type, id } = selectedStruct;
     switch (type) {
       case 'wall':      setWalls((prev) => prev.filter((s) => s.id !== id)); break;
@@ -421,6 +439,61 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   function updateDesk(id, patch) {
     modifyDesks((prev) => prev.map((d) => d.id === id ? { ...d, ...patch } : d));
   }
+
+  /* ── group operations ── */
+
+  const GROUP_COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2'];
+
+  function groupSelected() {
+    if (sel.selectedIds.size < 2) return;
+    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+    const deskIds = [...sel.selectedIds];
+    const colorIdx = groups.length % GROUP_COLORS.length;
+    const newGroup = {
+      id: uid('group'),
+      label: `Группа ${groups.length + 1}`,
+      desk_ids: deskIds,
+      locked: false,
+      color: GROUP_COLORS[colorIdx],
+    };
+    setGroups((prev) => [...prev, newGroup]);
+    setDirty(true);
+  }
+
+  function ungroupSelected() {
+    const idsToUngroup = [...sel.selectedIds];
+    const matching = groups.filter((g) => g.desk_ids.some((did) => idsToUngroup.includes(did)));
+    if (!matching.length) return;
+    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+    setGroups((prev) => prev.filter((g) => !matching.includes(g)));
+    setDirty(true);
+  }
+
+  function updateGroup(groupId, patch) {
+    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+    setGroups((prev) => prev.map((g) => g.id === groupId ? { ...g, ...patch } : g));
+    setDirty(true);
+  }
+
+  function deleteGroup(groupId) {
+    undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
+    setGroups((prev) => prev.filter((g) => g.id !== groupId));
+    setDirty(true);
+  }
+
+  function selectGroup(groupId) {
+    const group = groups.find((g) => g.id === groupId);
+    if (group) sel.selectIds(group.desk_ids);
+  }
+
+  const selectedInGroup = useMemo(() => {
+    if (!sel.selectedIds.size) return null;
+    const ids = [...sel.selectedIds];
+    return groups.find((g) => ids.some((id) => g.desk_ids.includes(id))) || null;
+  }, [groups, sel.selectedIds]);
+
+  const canGroup = sel.selectedIds.size >= 2;
+  const canUngroup = !!selectedInGroup;
 
   function addDeskAt(svgPt) {
     const comp = selectedPlaceComponent || compMap.get('desk-short');
@@ -670,8 +743,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       boundaries,
       partitions,
       doors,
+      groups,
     };
-  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors]);
+  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors, groups]);
 
   /* ── save ── */
   const saveDraft = useCallback(async ({ silent = false } = {}) => {
@@ -709,6 +783,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setBoundaries(layout?.layout?.boundaries || []);
     setPartitions(layout?.layout?.partitions || []);
     setDoors(layout?.layout?.doors || []);
+    setGroups(layout?.layout?.groups || []);
     sel.clearSelection();
     setDrawPoints([]);
     setDrawPreviewPt(null);
@@ -756,22 +831,20 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           onClick={() => setTool('select')}
         >
           <MousePointer size={14} />
-          <span>Выбор</span>
         </button>
         <button
           className={`ce-tool-btn ${tool === 'pan' ? 'active' : ''}`}
-          title="Двигать холст (Space+drag или средняя кнопка)"
+          title="Двигать холст (Space+drag)"
           onClick={() => setTool('pan')}
         >
           <Move size={14} />
-          <span>Холст</span>
         </button>
         <button
           className={`ce-tool-btn ${tool === 'place' ? 'active' : ''}`}
           title="Добавить объект (P)"
           onClick={() => setTool(tool === 'place' ? 'select' : 'place')}
         >
-          <span>+ Объект</span>
+          <Plus size={14} />
         </button>
         {tool === 'place' && (
           <select
@@ -794,31 +867,31 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
         <button
           className={`ce-tool-btn ${tool === 'draw_wall' ? 'active' : ''}`}
-          title="Нарисовать стену (W)"
+          title="Стена (W)"
           onClick={() => { cancelDraw(); setTool(tool === 'draw_wall' ? 'select' : 'draw_wall'); }}
         >
-          <Minus size={14} /> Стена
+          <Minus size={14} />
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_boundary' ? 'active' : ''}`}
-          title="Нарисовать контур (B)"
+          title="Контур (B)"
           onClick={() => { cancelDraw(); setTool(tool === 'draw_boundary' ? 'select' : 'draw_boundary'); }}
         >
-          <Square size={14} /> Контур
+          <Square size={14} />
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_partition' ? 'active' : ''}`}
-          title="Нарисовать перегородку"
+          title="Перегородка"
           onClick={() => { cancelDraw(); setTool(tool === 'draw_partition' ? 'select' : 'draw_partition'); }}
         >
-          <Minus size={14} /> Перегородка
+          <Pencil size={14} />
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_door' ? 'active' : ''}`}
-          title="Нарисовать дверь"
+          title="Дверь"
           onClick={() => { cancelDraw(); setTool(tool === 'draw_door' ? 'select' : 'draw_door'); }}
         >
-          <Pencil size={14} /> Дверь
+          <DoorOpen size={14} />
         </button>
 
         <div className="ce-toolbar-sep" />
@@ -838,23 +911,40 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
         <button
           className={`ce-tool-btn ${grid.gridVisible ? 'active' : ''}`}
-          title={`Сетка (${grid.gridSize}px) — показать или скрыть`}
+          title={`Сетка (${grid.gridSize}px)`}
           onClick={grid.toggleVisible}
         >
           <Grid3X3 size={14} />
         </button>
         <button
-          className={`ce-tool-btn ${grid.snapOn ? 'active' : ''}`}
+          className={`ce-tool-btn icon-text ${grid.snapOn ? 'active' : ''}`}
           title="Привязка к сетке"
           onClick={grid.toggleSnap}
         >
-          Привязка
+          Snap
         </button>
 
-        {/* Selection actions */}
         {(sel.selectedIds.size > 0 || selectedStruct) && (
           <>
             <div className="ce-toolbar-sep" />
+            {canGroup && (
+              <button
+                className="ce-tool-btn"
+                title="Объединить в группу (Ctrl+G)"
+                onClick={groupSelected}
+              >
+                <Group size={14} />
+              </button>
+            )}
+            {canUngroup && (
+              <button
+                className="ce-tool-btn"
+                title="Разгруппировать (Ctrl+Shift+G)"
+                onClick={ungroupSelected}
+              >
+                <Ungroup size={14} />
+              </button>
+            )}
             <button
               className="ce-tool-btn danger"
               title="Удалить выбранное (Del)"
@@ -867,7 +957,6 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
         <div className="ce-toolbar-spacer" />
 
-        {/* Undo / Redo */}
         <button
           className="ce-tool-btn"
           title="Отменить (Ctrl+Z)"
@@ -891,14 +980,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               <RotateCcw size={14} />
             </button>
             <button
-              className="ce-tool-btn active"
+              className="ce-tool-btn save-btn"
               title="Сохранить черновик"
               onClick={() => saveDraft()}
               disabled={saving}
-              style={{ gap: 6 }}
             >
               <Save size={14} />
-              <span>{saving ? 'Сохранение…' : 'Сохранить'}</span>
+              <span>{saving ? '…' : 'Сохранить'}</span>
             </button>
           </>
         )}
@@ -1177,6 +1265,50 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             );
           })}
 
+          {/* Group bounding boxes */}
+          <g className="ce-group-bbox">
+            {groups.map((group) => {
+              const gDesks = desks.filter((d) => group.desk_ids.includes(d.id));
+              if (!gDesks.length) return null;
+              let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+              for (const d of gDesks) {
+                const dx = d.x || 0, dy = d.y || 0;
+                const dw = deskW(d), dh = deskH(d);
+                if (dx < minX) minX = dx;
+                if (dy < minY) minY = dy;
+                if (dx + dw > maxX) maxX = dx + dw;
+                if (dy + dh > maxY) maxY = dy + dh;
+              }
+              if (!Number.isFinite(minX)) return null;
+              const pad = 8;
+              const color = group.color || '#2563eb';
+              return (
+                <g key={group.id} className="ce-group-visual" onClick={() => selectGroup(group.id)}>
+                  <rect
+                    x={minX - pad} y={minY - pad}
+                    width={maxX - minX + pad * 2} height={maxY - minY + pad * 2}
+                    rx={6}
+                    fill={color}
+                    fillOpacity={0.04}
+                    stroke={color}
+                    strokeWidth={1.5}
+                    strokeDasharray="8 4"
+                    style={{ cursor: 'pointer', pointerEvents: 'all' }}
+                  />
+                  <text
+                    x={minX - pad + 4} y={minY - pad - 4}
+                    fontSize={10}
+                    fill={color}
+                    fontWeight={600}
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    {group.label}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+
           {/* Selection overlay */}
           <g className="ce-selection-overlay">
             {/* Per-desk selected dashes when multi-select */}
@@ -1232,7 +1364,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               ];
               function onHandleDown(corner, e) {
                 e.stopPropagation();
-                undoRedo.push({ desks, walls, boundaries, partitions, doors });
+                undoRedo.push({ desks, walls, boundaries, partitions, doors, groups });
                 resizeRef.current = {
                   deskId: selectedDesk.id,
                   corner,
@@ -1287,12 +1419,21 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         desks={desks}
         selectedIds={sel.selectedIds}
         components={components}
+        groups={groups}
+        selectedInGroup={selectedInGroup}
         onUpdate={updateDesk}
         onDelete={(ids) => {
           const idSet = Array.isArray(ids) ? new Set(ids) : sel.selectedIds;
           modifyDesks((prev) => prev.filter((d) => !idSet.has(d.id)));
           sel.clearSelection();
         }}
+        onGroupSelected={groupSelected}
+        onUngroupSelected={ungroupSelected}
+        onUpdateGroup={updateGroup}
+        onDeleteGroup={deleteGroup}
+        onSelectGroup={selectGroup}
+        canGroup={canGroup}
+        canUngroup={canUngroup}
       />
 
       {/* ── Status bar ── */}

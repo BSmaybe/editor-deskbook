@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { RotateCcw, Trash2 } from 'lucide-react';
+import { Group, RotateCcw, Trash2, Ungroup } from 'lucide-react';
 import { assetTypeLabel } from '../lib/i18n.js';
 
 const DESK_TYPES = ['flex', 'fixed'];
@@ -28,8 +28,17 @@ export default function PropertiesPanel({
   desks,
   selectedIds,
   components,
+  groups = [],
+  selectedInGroup,
   onUpdate,
   onDelete,
+  onGroupSelected,
+  onUngroupSelected,
+  onUpdateGroup,
+  onDeleteGroup,
+  onSelectGroup,
+  canGroup,
+  canUngroup,
 }) {
   const selected = desks.filter((d) => selectedIds.has(d.id));
 
@@ -46,26 +55,38 @@ export default function PropertiesPanel({
       <MultiSelectPanel
         count={selected.length}
         components={components}
+        selectedInGroup={selectedInGroup}
         onBulkUpdate={(patch) => {
           for (const desk of selected) onUpdate(desk.id, patch);
         }}
         onDelete={onDelete}
+        onGroupSelected={onGroupSelected}
+        onUngroupSelected={onUngroupSelected}
+        onUpdateGroup={onUpdateGroup}
+        onDeleteGroup={onDeleteGroup}
+        canGroup={canGroup}
+        canUngroup={canUngroup}
       />
     );
   }
+
+  const deskGroup = groups.find((g) => g.desk_ids.includes(selected[0].id));
 
   return (
     <SingleDeskPanel
       desk={selected[0]}
       components={components}
+      group={deskGroup}
       onUpdate={onUpdate}
       onDelete={onDelete}
+      onSelectGroup={onSelectGroup}
     />
   );
 }
 
-function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
+function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelectGroup }) {
   const [label, setLabel] = useState(desk.label || '');
+  const [inventoryNo, setInventoryNo] = useState(desk.inventory_number || '');
   const [deskType, setDeskType] = useState(desk.type || 'flex');
   const [spaceType, setSpaceType] = useState(desk.space_type || desk.asset_type || 'desk');
   const [componentId, setComponentId] = useState(desk.component_id || '');
@@ -77,6 +98,7 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
 
   useEffect(() => {
     setLabel(desk.label || '');
+    setInventoryNo(desk.inventory_number || '');
     setDeskType(desk.type || 'flex');
     setSpaceType(desk.space_type || desk.asset_type || 'desk');
     setComponentId(desk.component_id || '');
@@ -113,6 +135,18 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
           onChange={(e) => setLabel(e.target.value)}
           onBlur={() => commit({ label })}
           onKeyDown={(e) => e.key === 'Enter' && commit({ label })}
+        />
+      </div>
+
+      <div className="prop-group">
+        <label>Инв. номер</label>
+        <input
+          type="text"
+          value={inventoryNo}
+          onChange={(e) => setInventoryNo(e.target.value)}
+          onBlur={() => commit({ inventory_number: inventoryNo })}
+          onKeyDown={(e) => e.key === 'Enter' && commit({ inventory_number: inventoryNo })}
+          placeholder="—"
         />
       </div>
 
@@ -225,11 +259,26 @@ function SingleDeskPanel({ desk, components, onUpdate, onDelete }) {
           ))}
         </select>
       </div>
+
+      {group && (
+        <div className="prop-group">
+          <label>Группа</label>
+          <button
+            className="prop-group-badge"
+            style={{ borderColor: group.color, color: group.color }}
+            onClick={() => onSelectGroup?.(group.id)}
+            title="Выделить всю группу"
+          >
+            <Group size={12} />
+            {group.label}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-function MultiSelectPanel({ count, components, onBulkUpdate, onDelete }) {
+function MultiSelectPanel({ count, components, selectedInGroup, onBulkUpdate, onDelete, onGroupSelected, onUngroupSelected, onUpdateGroup, onDeleteGroup, canGroup, canUngroup }) {
   return (
     <div className="properties-panel">
       <div className="prop-header">
@@ -265,6 +314,66 @@ function MultiSelectPanel({ count, components, onBulkUpdate, onDelete }) {
             <option key={c.id} value={c.id}>{c.label || c.id}</option>
           ))}
         </select>
+      </div>
+
+      <div className="prop-group">
+        <label>Группировка</label>
+        <div className="prop-group-actions">
+          {canGroup && (
+            <button className="prop-group-btn" onClick={onGroupSelected} title="Объединить в группу">
+              <Group size={12} /> Объединить
+            </button>
+          )}
+          {canUngroup && selectedInGroup && (
+            <button className="prop-group-btn" onClick={onUngroupSelected} title="Разгруппировать">
+              <Ungroup size={12} /> Разгруппировать
+            </button>
+          )}
+        </div>
+        {selectedInGroup && (
+          <GroupInlineEditor
+            group={selectedInGroup}
+            onUpdate={onUpdateGroup}
+            onDelete={onDeleteGroup}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GroupInlineEditor({ group, onUpdate, onDelete }) {
+  const [label, setLabel] = useState(group.label);
+  const [color, setColor] = useState(group.color || '#2563eb');
+
+  useEffect(() => {
+    setLabel(group.label);
+    setColor(group.color || '#2563eb');
+  }, [group]);
+
+  return (
+    <div className="prop-group-editor">
+      <input
+        type="text"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        onBlur={() => onUpdate(group.id, { label })}
+        onKeyDown={(e) => e.key === 'Enter' && onUpdate(group.id, { label })}
+        placeholder="Название группы"
+      />
+      <div className="prop-group-color-row">
+        <input
+          type="color"
+          value={color}
+          onChange={(e) => { setColor(e.target.value); onUpdate(group.id, { color: e.target.value }); }}
+        />
+        <button
+          className="icon-button danger"
+          onClick={() => onDelete(group.id)}
+          title="Удалить группу"
+        >
+          <Trash2 size={13} />
+        </button>
       </div>
     </div>
   );

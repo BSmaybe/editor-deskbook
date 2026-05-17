@@ -45,6 +45,7 @@ export default function ComponentPanel({ components, onRefresh, onNotice, onErro
       default_h: c.default_h || 60,
       svg_markup: c.svg_markup || '',
       _isNew: false,
+      _isSystem: !!c.is_system,
     });
   }
 
@@ -60,6 +61,13 @@ export default function ComponentPanel({ components, onRefresh, onNotice, onErro
       if (editing._isNew) {
         await apiFetch('/components', { method: 'POST', body: JSON.stringify(payload) });
         onNotice(`Компонент "${payload.label}" создан`);
+      } else if (editing._isSystem) {
+        try {
+          await apiFetch(`/components/${encodeURIComponent(payload.id)}`, { method: 'PUT', body: JSON.stringify(payload) });
+        } catch {
+          await apiFetch('/components', { method: 'POST', body: JSON.stringify(payload) });
+        }
+        onNotice(`Компонент "${payload.label}" обновлён`);
       } else {
         await apiFetch(`/components/${encodeURIComponent(payload.id)}`, { method: 'PUT', body: JSON.stringify(payload) });
         onNotice(`Компонент "${payload.label}" обновлён`);
@@ -157,25 +165,23 @@ export default function ComponentPanel({ components, onRefresh, onNotice, onErro
             <div className="component-actions">
               <span className="badge">{assetTypeLabel(c.asset_type)}</span>
               {c.is_system && <span className="badge muted">системный</span>}
+              <button
+                className="icon-button sm"
+                onClick={() => openEdit(c)}
+                title="Редактировать компонент"
+                disabled={busy}
+              >
+                <Pencil size={14} />
+              </button>
               {!c.is_system && (
-                <>
-                  <button
-                    className="icon-button sm"
-                    onClick={() => openEdit(c)}
-                    title="Редактировать компонент"
-                    disabled={busy}
-                  >
-                    <Pencil size={14} />
-                  </button>
-                  <button
-                    className="icon-button sm danger"
-                    onClick={() => handleDelete(c)}
-                    title="Удалить компонент"
-                    disabled={busy}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </>
+                <button
+                  className="icon-button sm danger"
+                  onClick={() => handleDelete(c)}
+                  title="Удалить компонент"
+                  disabled={busy}
+                >
+                  <Trash2 size={14} />
+                </button>
               )}
             </div>
           </article>

@@ -5,11 +5,14 @@
 .ce-root {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 0;
+  height: calc(100vh - 160px);
+  min-height: 400px;
   background: #f8fafc;
   font-size: 13px;
   color: #1e293b;
+  border-radius: 8px;
+  border: 1px solid #d8e0eb;
+  overflow: hidden;
 }
 
 /* ─── Header ───────────────────────────────────────────────────────────────── */
@@ -53,7 +56,7 @@
 
 .ce-layout {
   display: grid;
-  grid-template-columns: 220px 1fr 200px;
+  grid-template-columns: 230px 1fr 200px;
   flex: 1;
   min-height: 0;
   overflow: hidden;

@@ -2,18 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "backend",
-      "runtimeExecutable": "/Users/bccuser/Desktop/Deskbook/backend/.venv/bin/uvicorn",
-      "runtimeArgs": ["app.main:app", "--reload", "--port", "8000", "--app-dir", "/Users/bccuser/Desktop/Deskbook/backend"],
-      "port": 8000,
-      "autoPort": false
-    },
-    {
-      "name": "admin-react",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "--port", "5176"],
+      "name": "admin",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
       "port": 5176,
-      "cwd": "/Users/bccuser/Desktop/Deskbook/frontend/admin-react"
+      "cwd": "frontend/admin-react"
     }
   ]
 }
