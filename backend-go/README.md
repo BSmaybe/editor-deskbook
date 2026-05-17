@@ -1,6 +1,6 @@
-# DeskBook Go Renderer
+# DeskBook Go API
 
-This module is the first Go migration step. It mirrors the current Python semantic map export contract and starts moving editor-focused APIs out of FastAPI.
+This module owns the current DeskBook editor API: auth, offices, floors, components, layout draft/publish, SVG import, and semantic SVG/HTML export.
 
 ## Contract
 
@@ -26,13 +26,23 @@ If Go is not installed locally, use Docker:
 docker run --rm -v "$PWD/backend-go:/src" -w /src golang:1.23-alpine go test ./...
 ```
 
-## HTTP Renderer
+## HTTP API
 
-The optional service exposes:
+The service exposes:
 
 - `GET /health`
 - `POST /render/svg`
 - `POST /render/html`
+- `POST /auth/register`
+- `POST /auth/login`
+- `GET /offices`
+- `POST /offices`
+- `PATCH /offices/{office_id}`
+- `DELETE /offices/{office_id}`
+- `GET /floors`
+- `POST /floors`
+- `PATCH /floors/{floor_id}`
+- `DELETE /floors/{floor_id}`
 - `GET /components`
 - `POST /components`
 - `PUT /components/{component_id}`
@@ -54,7 +64,7 @@ The optional service exposes:
 - `POST /floors/{floor_id}/lock`
 - `DELETE /floors/{floor_id}/lock`
 
-Component write operations, draft/publish layout operations, and floor lock writes validate FastAPI-compatible HS256 JWTs using `SECRET_KEY` and require `role=admin`. Published layout/SVG/HTML reads and floor lock reads require a valid JWT with any role.
+Admin write operations validate HS256 JWTs using `SECRET_KEY` and require `role=admin`. Frozen booking/client modules return `501 Not Implemented` placeholders during the editor migration.
 
 Request body can be either raw `LayoutDocument` JSON or wrapped:
 
@@ -69,12 +79,12 @@ Request body can be either raw `LayoutDocument` JSON or wrapped:
 }
 ```
 
-Run through compose without affecting the normal Python backend:
+Run through compose:
 
 ```bash
-docker compose up -d --build renderer-go
-curl http://localhost:8010/health
-curl -X POST http://localhost:8010/render/svg \
+docker compose up -d --build
+curl http://localhost:8000/health
+curl -X POST http://localhost:8000/render/svg \
   -H 'Content-Type: application/json' \
   --data-binary @layout.json > published.svg
 bash ../tests/go_renderer_contract.sh
@@ -84,8 +94,4 @@ bash ../tests/go_layout_contract.sh
 
 ## Migration Plan
 
-1. Keep Python API as the runtime owner.
-2. Use this Go renderer as a parity target for `layout_json -> semantic_svg/html`.
-3. Run the Go HTTP service in Compose for parity checks and incremental routing.
-4. FastAPI publish/export can use the Go renderer by setting `GO_RENDERER_URL=http://renderer-go:8080`.
-5. Move editor/component APIs to Go behind the same contracts before replacing FastAPI.
+The active migration target is an editor-only product with one Go API and one React admin UI. Booking, reservations, policies, analytics, landing, and client app remain frozen until they are re-scoped.

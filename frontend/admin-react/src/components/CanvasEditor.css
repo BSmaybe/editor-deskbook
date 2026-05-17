@@ -1,6 +1,6 @@
 /* ── CanvasEditor layout ──────────────────────────────────────────────────── */
 
-.ce-root {
+.floor-canvas-editor {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -12,103 +12,110 @@
 
 /* ── Toolbar ───────────────────────────────────────────────────────────────── */
 
-.ce-toolbar {
+.floor-canvas-editor .ce-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
+  gap: 6px;
+  padding: 8px 10px;
   background: #fff;
   border-bottom: 1px solid #e2e8f0;
   flex-shrink: 0;
   flex-wrap: wrap;
-  min-height: 36px;
+  min-height: 48px;
   user-select: none;
 }
 
-.ce-toolbar-sep {
+.floor-canvas-editor .ce-toolbar-sep {
   width: 1px;
-  height: 18px;
+  height: 26px;
   background: #e2e8f0;
-  margin: 0 4px;
+  margin: 0 3px;
 }
 
-.ce-toolbar-spacer {
+.floor-canvas-editor .ce-toolbar-spacer {
   flex: 1;
 }
 
-.ce-tool-btn {
+.floor-canvas-editor .ce-tool-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  height: auto;
+  min-height: 34px;
+  min-width: 34px;
+  box-sizing: border-box;
+  padding: 0 10px;
   border: 1px solid #e2e8f0;
-  border-radius: 5px;
+  border-radius: 7px;
   background: #f8fafc;
   color: #374151;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   font-family: inherit;
-  line-height: 1;
+  line-height: 1.2;
   transition: background 0.12s, border-color 0.12s;
   white-space: nowrap;
 }
 
-.ce-tool-btn:hover {
+.floor-canvas-editor .ce-tool-btn:hover {
   background: #f1f5f9;
   border-color: #cbd5e1;
 }
 
-.ce-tool-btn.active {
+.floor-canvas-editor .ce-tool-btn.active {
   background: #dbeafe;
   border-color: #2563eb;
   color: #1d4ed8;
 }
 
-.ce-tool-btn:disabled {
+.floor-canvas-editor .ce-tool-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.ce-tool-btn.danger {
+.floor-canvas-editor .ce-tool-btn.danger {
   color: #dc2626;
   border-color: #fecaca;
 }
 
-.ce-tool-btn.danger:hover {
+.floor-canvas-editor .ce-tool-btn.danger:hover {
   background: #fee2e2;
   border-color: #dc2626;
 }
 
-.ce-zoom-label {
-  font-size: 11px;
+.floor-canvas-editor .ce-zoom-label {
+  font-size: 12px;
   color: #64748b;
-  min-width: 36px;
+  min-width: 42px;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
 /* ── Viewport (SVG stage) ──────────────────────────────────────────────────── */
 
-.ce-viewport {
+.floor-canvas-editor .ce-viewport {
   flex: 1;
   overflow: hidden;
   position: relative;
   cursor: default;
 }
 
-.ce-viewport.cursor-pan {
+.floor-canvas-editor .ce-viewport.cursor-pan {
   cursor: grab;
 }
 
-.ce-viewport.cursor-panning {
+.floor-canvas-editor .ce-viewport.cursor-panning {
   cursor: grabbing;
 }
 
-.ce-viewport.cursor-crosshair {
+.floor-canvas-editor .ce-viewport.cursor-crosshair {
   cursor: crosshair;
 }
 
-.ce-svg {
+.floor-canvas-editor .ce-svg {
   display: block;
   width: 100%;
   height: 100%;
@@ -121,7 +128,7 @@
 
 /* ── Canvas background rect ────────────────────────────────────────────────── */
 
-.ce-bg {
+.floor-canvas-editor .ce-bg {
   fill: #ffffff;
   stroke: #cbd5e1;
   stroke-width: 1;
@@ -129,37 +136,37 @@
 
 /* ── Grid ──────────────────────────────────────────────────────────────────── */
 
-.ce-grid {
+.floor-canvas-editor .ce-grid {
   pointer-events: none;
 }
 
 /* ── Desk elements ─────────────────────────────────────────────────────────── */
 
-.ce-desk {
+.floor-canvas-editor .ce-desk {
   cursor: move;
 }
 
-.ce-desk:hover .ce-desk-body {
+.floor-canvas-editor .ce-desk:hover .ce-desk-body {
   filter: brightness(0.96);
 }
 
-.ce-desk-body {
+.floor-canvas-editor .ce-desk-body {
   transition: filter 0.1s;
 }
 
-.ce-desk-label {
+.floor-canvas-editor .ce-desk-label {
   pointer-events: none;
   user-select: none;
 }
 
 /* ── Selection overlay ─────────────────────────────────────────────────────── */
 
-.ce-selection-overlay {
+.floor-canvas-editor .ce-selection-overlay {
   pointer-events: none;
 }
 
 /* Selection dashed bounding box */
-.ce-sel-bbox {
+.floor-canvas-editor .ce-sel-bbox {
   fill: none;
   stroke: #2563eb;
   stroke-width: 1.5;
@@ -168,7 +175,7 @@
 }
 
 /* Corner resize handles */
-.ce-sel-handle {
+.floor-canvas-editor .ce-sel-handle {
   fill: #ffffff;
   stroke: #2563eb;
   stroke-width: 1.5;
@@ -177,7 +184,7 @@
 }
 
 /* Rotation handle */
-.ce-sel-rotate {
+.floor-canvas-editor .ce-sel-rotate {
   fill: #2563eb;
   cursor: crosshair;
   pointer-events: all;
@@ -185,7 +192,7 @@
 
 /* ── Marquee selection rectangle ───────────────────────────────────────────── */
 
-.ce-marquee {
+.floor-canvas-editor .ce-marquee {
   fill: rgba(37, 99, 235, 0.06);
   stroke: #2563eb;
   stroke-width: 1;
@@ -195,7 +202,7 @@
 
 /* ── Status bar ────────────────────────────────────────────────────────────── */
 
-.ce-statusbar {
+.floor-canvas-editor .ce-statusbar {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -209,37 +216,37 @@
   min-height: 22px;
 }
 
-.ce-statusbar-item {
+.floor-canvas-editor .ce-statusbar-item {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-variant-numeric: tabular-nums;
 }
 
-.ce-statusbar-sep {
+.floor-canvas-editor .ce-statusbar-sep {
   color: #cbd5e1;
 }
 
 /* ── Structure layers ──────────────────────────────────────────────────────── */
 
-.ce-structure {
+.floor-canvas-editor .ce-structure {
   pointer-events: none;
 }
 
-.ce-structure-selectable {
+.floor-canvas-editor .ce-structure-selectable {
   pointer-events: stroke;
   cursor: pointer;
 }
 
 /* ── Group bounding boxes ──────────────────────────────────────────────────── */
 
-.ce-group-bbox {
+.floor-canvas-editor .ce-group-bbox {
   pointer-events: none;
 }
 
 /* ── Mode indicator (top-left overlay badge) ───────────────────────────────── */
 
-.ce-mode-badge {
+.floor-canvas-editor .ce-mode-badge {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -255,7 +262,7 @@
 
 /* ── Hint bar (below toolbar when a draw mode is active) ───────────────────── */
 
-.ce-hint-bar {
+.floor-canvas-editor .ce-hint-bar {
   padding: 3px 10px;
   font-size: 11px;
   color: #475569;
@@ -266,19 +273,19 @@
 
 /* ── Place tool component select ──────────────────────────────────────────── */
 
-.ce-place-select {
-  height: 26px;
-  font-size: 11px;
+.floor-canvas-editor .ce-place-select {
+  min-height: 34px;
+  font-size: 13px;
   border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  padding: 0 6px;
+  border-radius: 7px;
+  padding: 0 8px;
   background: #fff;
-  max-width: 140px;
+  max-width: 190px;
 }
 
 /* ── Properties Panel ─────────────────────────────────────────────────────── */
 
-.properties-panel {
+.floor-canvas-editor .properties-panel {
   position: absolute;
   top: 40px;
   right: 0;
@@ -292,36 +299,36 @@
   font-size: 12px;
 }
 
-.properties-panel.empty {
+.floor-canvas-editor .properties-panel.empty {
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.properties-panel .muted {
+.floor-canvas-editor .properties-panel .muted {
   color: #94a3b8;
   font-size: 11px;
   text-align: center;
 }
 
-.prop-header {
+.floor-canvas-editor .prop-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
 }
 
-.prop-header h3 {
+.floor-canvas-editor .prop-header h3 {
   font-size: 13px;
   font-weight: 600;
   margin: 0;
 }
 
-.prop-group {
+.floor-canvas-editor .prop-group {
   margin-bottom: 10px;
 }
 
-.prop-group label {
+.floor-canvas-editor .prop-group label {
   display: block;
   font-size: 10px;
   font-weight: 600;
@@ -330,8 +337,8 @@
   margin-bottom: 3px;
 }
 
-.prop-group input,
-.prop-group select {
+.floor-canvas-editor .prop-group input,
+.floor-canvas-editor .prop-group select {
   width: 100%;
   height: 28px;
   border: 1px solid #e2e8f0;
@@ -340,32 +347,32 @@
   font-size: 12px;
 }
 
-.prop-group input:focus,
-.prop-group select:focus {
+.floor-canvas-editor .prop-group input:focus,
+.floor-canvas-editor .prop-group select:focus {
   outline: none;
   border-color: #2563eb;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
 }
 
-.prop-row {
+.floor-canvas-editor .prop-row {
   display: flex;
   gap: 8px;
 }
 
-.prop-group.half {
+.floor-canvas-editor .prop-group.half {
   flex: 1;
 }
 
 /* ── Draw preview layer ──────────────────────────────────────────────────── */
 
-.ce-draw-preview {
+.floor-canvas-editor .ce-draw-preview {
   pointer-events: none;
 }
 
-.icon-button.danger {
+.floor-canvas-editor .icon-button.danger {
   color: #dc2626;
 }
 
-.icon-button.danger:hover {
+.floor-canvas-editor .icon-button.danger:hover {
   background: #fef2f2;
 }

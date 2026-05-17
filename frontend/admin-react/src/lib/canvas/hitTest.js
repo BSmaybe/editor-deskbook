@@ -153,16 +153,9 @@ export function findObjectAtPoint(pt, layout, thresholdWorldUnits = 14) {
       const pts = Array.isArray(el.pts) ? el.pts : [];
       if (pts.length < 2) continue;
 
-      // Filled closed polygon — inside check wins immediately
-      if (el.closed && pointInPolygon(pt.x, pt.y, pts)) {
-        if (bestDist > 0) {
-          bestDist = 0;
-          best = { type, id: el.id };
-        }
-        continue;
-      }
-
-      // Stroke proximity
+      // Stroke proximity. Imported SVG walls often arrive as very thin closed
+      // polygons; using point-in-polygon as an immediate hit makes large or
+      // early polygons win even when the click is closer to another object.
       let minDist = Infinity;
       const lim = el.closed ? pts.length : pts.length - 1;
       for (let i = 0; i < lim; i++) {

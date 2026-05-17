@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Contract check for the optional Go semantic SVG/HTML renderer.
+# Contract check for the Go semantic SVG/HTML renderer.
 # Usage:
-#   docker compose --profile go up -d --build renderer-go
+#   docker compose up -d --build
 #   bash tests/go_renderer_contract.sh [BASE_URL]
 
 set -euo pipefail

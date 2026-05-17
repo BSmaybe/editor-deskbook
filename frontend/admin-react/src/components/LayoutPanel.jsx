@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Clock,
   Download,
   Eye,
+  FilePlus2,
   FileJson,
   FileUp,
   Move,
@@ -43,6 +44,23 @@ function boundingBox(desks, ids) {
 
 const UNDO_LIMIT = 30;
 
+function createBlankLayout(floorId) {
+  const suffix = String(floorId || 'new').replace(/[^A-Za-z0-9_-]+/g, '-');
+  return {
+    v: 2,
+    vb: [0, 0, 1200, 800],
+    building_id: `building-${suffix}`,
+    storey_id: suffix,
+    zone_id: 'main',
+    components: [],
+    boundaries: [],
+    walls: [],
+    partitions: [],
+    doors: [],
+    desks: [],
+  };
+}
+
 /* ───────────── main export ───────────── */
 
 export default function LayoutPanel({
@@ -61,45 +79,136 @@ export default function LayoutPanel({
   const [mode, setMode] = useState('preview');
   const [importOpen, setImportOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [creatingBlank, setCreatingBlank] = useState(false);
+  const [canvasDirty, setCanvasDirty] = useState(false);
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    setCanvasDirty(false);
+  }, [floorId, layout?.id]);
+
+  useEffect(() => {
+    if (mode !== 'canvas') setCanvasDirty(false);
+  }, [mode]);
+
+  async function createBlankDraft() {
+    if (!floorId) return;
+    if (layout && !confirm('Заменить текущий черновик пустой картой?')) return;
+    setCreatingBlank(true);
+    onError('');
+    try {
+      await apiFetch(`/floors/${floorId}/layout/draft`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          version: layout?.version || 0,
+          layout: createBlankLayout(floorId),
+        }),
+      });
+      onNotice('Пустой черновик создан');
+      await onLayoutChange?.();
+      setMode('canvas');
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setCreatingBlank(false);
+    }
+  }
+
+  async function saveCanvasIfNeeded() {
+    if (mode !== 'canvas' || !canvasRef.current?.saveIfDirty) return null;
+    return canvasRef.current.saveIfDirty();
+  }
+
+  async function switchMode(nextMode) {
+    if (nextMode === mode) return;
+    if (mode === 'canvas' && canvasRef.current?.hasDirty?.()) {
+      try {
+        await canvasRef.current.saveIfDirty();
+      } catch {
+        return;
+      }
+    }
+    setMode(nextMode);
+  }
+
+  async function handlePublish() {
+    onError('');
+    try {
+      const saved = await saveCanvasIfNeeded();
+      const savedDraft = saved && saved.saved !== false;
+      if (!savedDraft && layout?.status !== 'draft') {
+        onError('Нет черновика для публикации. Измените карту или создайте Blank draft.');
+        return;
+      }
+      await onPublish();
+    } catch {
+      // CanvasEditor already surfaced the specific save error.
+    }
+  }
+
+  async function handleDownload() {
+    const currentLayout = mode === 'canvas' && canvasRef.current?.getCurrentLayout
+      ? canvasRef.current.getCurrentLayout()
+      : layout?.layout;
+    await onDownload(currentLayout || null);
+  }
 
   return (
     <div className="layout-grid">
       <section className="preview-panel">
         <div className="panel-title">
           <div className="tab-bar">
-            <button className={`tab-btn ${mode === 'preview' ? 'active' : ''}`} onClick={() => setMode('preview')}>
+            <button className={`tab-btn ${mode === 'preview' ? 'active' : ''}`} onClick={() => switchMode('preview')}>
               <Eye size={16} /> Preview
             </button>
-            <button className={`tab-btn ${mode === 'canvas' ? 'active' : ''}`} onClick={() => setMode('canvas')}>
+            <button className={`tab-btn ${mode === 'canvas' ? 'active' : ''}`} onClick={() => switchMode('canvas')}>
               <Move size={16} /> Canvas
             </button>
-            <button className={`tab-btn ${mode === 'json' ? 'active' : ''}`} onClick={() => setMode('json')}>
+            <button className={`tab-btn ${mode === 'json' ? 'active' : ''}`} onClick={() => switchMode('json')}>
               <FileJson size={16} /> Draft JSON
             </button>
           </div>
           <div className="toolbar">
+            {!layout && (
+              <button
+                className="tool-button secondary"
+                onClick={createBlankDraft}
+                disabled={!floorId || creatingBlank}
+                title="Create blank draft"
+              >
+                <FilePlus2 size={18} />
+                <span>{creatingBlank ? 'Creating...' : 'Blank draft'}</span>
+              </button>
+            )}
             <button className="icon-button" onClick={() => setImportOpen(true)} title="Import SVG">
               <FileUp size={18} />
             </button>
             <button className="icon-button" onClick={() => setHistoryOpen(true)} title="History">
               <Clock size={18} />
             </button>
-            <button className="icon-button" onClick={onDownload} disabled={!svgPreview} title="Download SVG">
+            <button className="icon-button" onClick={handleDownload} disabled={!layout && !svgPreview} title="Download current SVG">
               <Download size={18} />
             </button>
-            <button className="tool-button" onClick={onPublish} disabled={busy || !layout} title="Publish">
+            <button
+              className="tool-button"
+              onClick={handlePublish}
+              disabled={busy || !layout || (layout.status !== 'draft' && !canvasDirty)}
+              title="Publish"
+            >
               <Rocket size={18} />
               <span>Publish</span>
             </button>
           </div>
         </div>
-        {mode === 'preview' && <SvgPreview svgPreview={svgPreview} />}
+        {mode === 'preview' && <SvgPreview svgPreview={svgPreview} layout={layout} onOpenCanvas={() => switchMode('canvas')} />}
         {mode === 'canvas' && (
           <CanvasEditor
+            ref={canvasRef}
             layout={layout}
             floorId={floorId}
             components={components}
             onLayoutChange={onLayoutChange}
+            onDirtyChange={setCanvasDirty}
             onNotice={onNotice}
             onError={onError}
           />
@@ -113,6 +222,7 @@ export default function LayoutPanel({
 
       <ImportModal
         floorId={floorId}
+        layoutVersion={layout?.version || 0}
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onImported={() => { onLayoutChange(); onNotice('SVG imported as draft'); }}
@@ -131,13 +241,21 @@ export default function LayoutPanel({
 
 /* ───────────── SVG preview ───────────── */
 
-function SvgPreview({ svgPreview }) {
+function SvgPreview({ svgPreview, layout, onOpenCanvas }) {
   return (
     <div className="svg-stage">
       {svgPreview ? (
         <div className="svg-preview" dangerouslySetInnerHTML={{ __html: svgPreview }} />
+      ) : layout ? (
+        <div className="empty-state">
+          <div className="empty-stack">
+            <strong>Published SVG is not available</strong>
+            <span>Draft exists. Open Canvas to edit it or publish the draft to generate preview.</span>
+            <button className="tool-button secondary" onClick={onOpenCanvas}>Open Canvas</button>
+          </div>
+        </div>
       ) : (
-        <EmptyState text="Published SVG is not available" />
+        <EmptyState text="No published preview yet" />
       )}
     </div>
   );
@@ -259,16 +377,6 @@ function LayoutInspector({ layout, busy, onSync }) {
         <Save size={18} />
         <span>Sync desks</span>
       </button>
-      <div className="object-list">
-        {desks.slice(0, 20).map((desk) => (
-          <div className="object-row" key={desk.id}>
-            <span>{desk.label || desk.id}</span>
-            <strong>{desk.asset_type || 'workplace'}</strong>
-          </div>
-        ))}
-        {desks.length > 20 && <div className="object-row muted"><span>+{desks.length - 20} more</span></div>}
-        {!desks.length && <EmptyState text="No layout objects" />}
-      </div>
     </aside>
   );
 }

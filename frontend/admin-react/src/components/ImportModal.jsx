@@ -2,7 +2,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { FileUp, Upload, X } from 'lucide-react';
 import { apiFetch } from '../lib/api.js';
 
-export default function ImportModal({ floorId, open, onClose, onImported, onError }) {
+export default function ImportModal({ floorId, layoutVersion = 0, open, onClose, onImported, onError }) {
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -77,49 +77,113 @@ export default function ImportModal({ floorId, open, onClose, onImported, onErro
             )}
           </div>
         ) : (
-          <ImportResults result={result} floorId={floorId} onImported={onImported} onClose={handleClose} onError={onError} />
+          <ImportResults
+            result={result}
+            floorId={floorId}
+            layoutVersion={layoutVersion}
+            onImported={onImported}
+            onClose={handleClose}
+            onError={onError}
+          />
         )}
       </div>
     </div>
   );
 }
 
-function ImportResults({ result, floorId, onImported, onClose, onError }) {
-  const [applying, setApplying] = useState(false);
+function typedStructures(result, type) {
+  return (result?.[type] || []).map((item) => ({ ...item, type }));
+}
 
-  const items = result?.elements || result?.items || [];
-  const typeCounts = items.reduce((acc, el) => {
+function normalizeImportResult(result) {
+  const structures = [
+    ...typedStructures(result, 'walls'),
+    ...typedStructures(result, 'boundaries'),
+    ...typedStructures(result, 'partitions'),
+    ...typedStructures(result, 'doors'),
+    ...typedStructures(result, 'uncertain'),
+  ];
+  const legacyItems = result?.elements || result?.items || [];
+  return legacyItems.length ? legacyItems : structures;
+}
+
+function buildTypeCounts(result, items) {
+  const stats = result?.stats || {};
+  const fromStats = {
+    walls: stats.walls || 0,
+    boundaries: stats.boundaries || 0,
+    partitions: stats.partitions || 0,
+    doors: stats.doors || 0,
+    uncertain: stats.uncertain || 0,
+    skipped: stats.skipped || 0,
+  };
+  if (Object.values(fromStats).some((count) => count > 0)) {
+    return Object.fromEntries(Object.entries(fromStats).filter(([, count]) => count > 0));
+  }
+  return items.reduce((acc, el) => {
     const t = el.type || el.classified_as || 'unknown';
     acc[t] = (acc[t] || 0) + 1;
     return acc;
   }, {});
+}
+
+function buildImportedLayout(result, items) {
+  const desks = items
+    .filter((el) => el.type === 'workplace' || el.type === 'desk')
+    .map((el) => ({
+      id: el.id || `imp-${Math.random().toString(36).slice(2, 8)}`,
+      label: el.label || el.id || 'Desk',
+      x: el.x || el.cx || 0,
+      y: el.y || el.cy || 0,
+      w: el.width || el.w || 100,
+      h: el.height || el.h || 60,
+      type: 'flex',
+      asset_type: 'desk',
+    }));
+
+  return {
+    v: 2,
+    vb: Array.isArray(result?.vb) && result.vb.length === 4 ? result.vb : [0, 0, 1000, 1000],
+    building_id: 'imported-building',
+    storey_id: 'imported-floor',
+    zone_id: 'main',
+    components: [],
+    boundaries: result?.boundaries || [],
+    walls: result?.walls || [],
+    partitions: result?.partitions || [],
+    doors: result?.doors || [],
+    desks,
+  };
+}
+
+function ImportResults({ result, floorId, layoutVersion, onImported, onClose, onError }) {
+  const [applying, setApplying] = useState(false);
+
+  const items = normalizeImportResult(result);
+  const typeCounts = buildTypeCounts(result, items);
+  const totalElements = result?.stats?.total_elements ?? items.length;
+  const recognizedElements = items.filter((item) => item.type !== 'uncertain').length;
 
   async function applyImport() {
     setApplying(true);
     onError('');
     try {
-      const desks = items
-        .filter((el) => el.type === 'workplace' || el.type === 'desk')
-        .map((el) => ({
-          id: el.id || `imp-${Math.random().toString(36).slice(2, 8)}`,
-          label: el.label || el.id || 'Desk',
-          x: el.x || el.cx || 0,
-          y: el.y || el.cy || 0,
-          w: el.width || el.w || 100,
-          h: el.height || el.h || 60,
-          type: 'flex',
-          asset_type: 'desk',
-        }));
-
-      if (!desks.length) {
-        onError('No workplace elements found in SVG');
+      const layout = buildImportedLayout(result, items);
+      const hasImportableElements =
+        layout.desks.length ||
+        layout.walls.length ||
+        layout.boundaries.length ||
+        layout.partitions.length ||
+        layout.doors.length;
+      if (!hasImportableElements) {
+        onError('No importable floor plan elements found in SVG');
         setApplying(false);
         return;
       }
 
       await apiFetch(`/floors/${floorId}/layout/draft`, {
         method: 'PUT',
-        body: JSON.stringify({ version: 0, layout: { desks } }),
+        body: JSON.stringify({ version: layoutVersion || 0, layout }),
       });
       onImported();
       onClose();
@@ -142,7 +206,11 @@ function ImportResults({ result, floorId, onImported, onClose, onError }) {
         ))}
         <div className="import-type-row total">
           <span>Total elements</span>
-          <strong>{items.length}</strong>
+          <strong>{totalElements}</strong>
+        </div>
+        <div className="import-type-row total">
+          <span>Importable</span>
+          <strong>{recognizedElements}</strong>
         </div>
       </div>
 

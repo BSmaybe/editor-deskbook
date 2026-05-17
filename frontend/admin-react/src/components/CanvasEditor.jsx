@@ -21,13 +21,16 @@
  *  floorId         {string}
  *  components      {Array}    — component catalog for default sizes
  *  onLayoutChange  {Function} — called after a successful save
+ *  onDirtyChange   {Function}
  *  onNotice        {Function}
  *  onError         {Function}
  */
 
 import React, {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -122,14 +125,15 @@ function ptFromArr(p) {
 
 /* ── component ── */
 
-export default function CanvasEditor({
+const CanvasEditor = forwardRef(function CanvasEditor({
   layout,
   floorId,
   components,
   onLayoutChange,
+  onDirtyChange,
   onNotice,
   onError,
-}) {
+}, ref) {
   /* ── canvas dimensions from layout ── */
   const canvasW = useMemo(() => {
     const vb = layout?.layout?.vb;
@@ -230,6 +234,10 @@ export default function CanvasEditor({
     setTimeout(() => viewport.zoomToFit({ x: 0, y: 0, w: canvasW, h: canvasH }, 60), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   /* ── wheel zoom — must be non-passive ── */
   useEffect(() => {
@@ -409,6 +417,8 @@ export default function CanvasEditor({
     };
     modifyDesks((prev) => [...prev, newDesk]);
     sel.selectIds(new Set([newDesk.id]));
+    setSelectedStruct(null);
+    setTool('select');
   }
 
   /* ── pointer handlers ── */
@@ -451,7 +461,15 @@ export default function CanvasEditor({
       return;
     }
 
-    // Select tool — hit test
+    // Select tool — prefer the actual SVG target for imported structures.
+    const structEl = e.target?.closest?.('[data-struct-id]');
+    if (structEl) {
+      sel.clearSelection();
+      setSelectedStruct({ type: structEl.dataset.structType, id: structEl.dataset.structId });
+      return;
+    }
+
+    // Select tool — geometry fallback
     const layout = buildLayoutForHitTest();
     const hit = findObjectAtPoint(pt, layout, viewport.worldUnitsForPx(14));
 
@@ -608,26 +626,44 @@ export default function CanvasEditor({
     if (bb) viewport.zoomToFit(bb, 60);
   }
 
+  const currentLayoutDoc = useCallback(() => ({
+    ...(layout?.layout || {}),
+    desks,
+    walls,
+    boundaries,
+    partitions,
+    doors,
+  }), [layout, desks, walls, boundaries, partitions, doors]);
+
   /* ── save ── */
-  async function saveDraft() {
-    if (!floorId || !dirty) return;
+  const saveDraft = useCallback(async ({ silent = false } = {}) => {
+    if (!floorId) return null;
+    if (!dirty) return { saved: false, layout: currentLayoutDoc() };
     setSaving(true);
     onError('');
     try {
-      const doc = { ...(layout?.layout || {}), desks, walls, boundaries, partitions, doors };
-      await apiFetch(`/floors/${floorId}/layout/draft`, {
+      const doc = currentLayoutDoc();
+      const response = await apiFetch(`/floors/${floorId}/layout/draft`, {
         method: 'PUT',
         body: JSON.stringify({ version: layout?.version || 0, layout: doc }),
       });
       setDirty(false);
-      onNotice('Черновик сохранён');
-      onLayoutChange();
+      if (!silent) onNotice('Черновик сохранён');
+      await onLayoutChange?.();
+      return response;
     } catch (err) {
       onError(err.message);
+      throw err;
     } finally {
       setSaving(false);
     }
-  }
+  }, [currentLayoutDoc, dirty, floorId, layout?.version, onError, onLayoutChange, onNotice]);
+
+  useImperativeHandle(ref, () => ({
+    hasDirty: () => dirty,
+    getCurrentLayout: currentLayoutDoc,
+    saveIfDirty: () => saveDraft({ silent: true }),
+  }), [currentLayoutDoc, dirty, saveDraft]);
 
   function resetChanges() {
     setDesks(layout?.layout?.desks || []);
@@ -671,7 +707,7 @@ export default function CanvasEditor({
 
   /* ── render ── */
   return (
-    <div className="ce-root" tabIndex={0}>
+    <div className="floor-canvas-editor" tabIndex={0}>
 
       {/* ── Toolbar ── */}
       <div className="ce-toolbar">
@@ -681,6 +717,7 @@ export default function CanvasEditor({
           onClick={() => setTool('select')}
         >
           <MousePointer size={14} />
+          <span>Select</span>
         </button>
         <button
           className={`ce-tool-btn ${tool === 'pan' ? 'active' : ''}`}
@@ -688,14 +725,14 @@ export default function CanvasEditor({
           onClick={() => setTool('pan')}
         >
           <Move size={14} />
+          <span>Pan</span>
         </button>
         <button
           className={`ce-tool-btn ${tool === 'place' ? 'active' : ''}`}
           title="Place desk (P)"
           onClick={() => setTool(tool === 'place' ? 'select' : 'place')}
-          style={{ fontSize: 11 }}
         >
-          + Desk
+          <span>+ Desk</span>
         </button>
         {tool === 'place' && (
           <select
@@ -732,7 +769,7 @@ export default function CanvasEditor({
           title="Draw partition"
           onClick={() => { cancelDraw(); setTool(tool === 'draw_partition' ? 'select' : 'draw_partition'); }}
         >
-          <Minus size={14} />
+          <Minus size={14} /> Partition
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_door' ? 'active' : ''}`}
@@ -768,7 +805,6 @@ export default function CanvasEditor({
           className={`ce-tool-btn ${grid.snapOn ? 'active' : ''}`}
           title="Snap to grid"
           onClick={grid.toggleSnap}
-          style={{ fontSize: 11 }}
         >
           Snap
         </button>
@@ -815,7 +851,7 @@ export default function CanvasEditor({
             <button
               className="ce-tool-btn active"
               title="Save draft"
-              onClick={saveDraft}
+              onClick={() => saveDraft()}
               disabled={saving}
               style={{ gap: 6 }}
             >
@@ -882,6 +918,8 @@ export default function CanvasEditor({
                 <polygon
                   key={`b${i}`}
                   className="ce-structure-selectable"
+                  data-struct-type="boundary"
+                  data-struct-id={b.id}
                   points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
                   fill={STRUCT_COLORS.boundary}
                   fillOpacity={STRUCT_OPACITY.boundary}
@@ -898,6 +936,8 @@ export default function CanvasEditor({
                 <polyline
                   key={`p${i}`}
                   className="ce-structure-selectable"
+                  data-struct-type="partition"
+                  data-struct-id={p.id}
                   points={pts.map((pt) => `${pt.x},${pt.y}`).join(' ')}
                   fill="none"
                   stroke={isSel ? '#2563eb' : STRUCT_COLORS.partition}
@@ -916,6 +956,8 @@ export default function CanvasEditor({
                   <polyline
                     key={`w${i}`}
                     className="ce-structure-selectable"
+                    data-struct-type="wall"
+                    data-struct-id={w.id}
                     points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
                     fill="none"
                     stroke={isSel ? '#2563eb' : STRUCT_COLORS.wall}
@@ -929,6 +971,8 @@ export default function CanvasEditor({
                 <line
                   key={`w${i}`}
                   className="ce-structure-selectable"
+                  data-struct-type="wall"
+                  data-struct-id={w.id}
                   x1={w.x1 || 0} y1={w.y1 || 0}
                   x2={w.x2 || 0} y2={w.y2 || 0}
                   stroke={isSel ? '#2563eb' : STRUCT_COLORS.wall}
@@ -945,6 +989,8 @@ export default function CanvasEditor({
                   <polyline
                     key={`d${i}`}
                     className="ce-structure-selectable"
+                    data-struct-type="door"
+                    data-struct-id={d.id}
                     points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
                     fill="none"
                     stroke={isSel ? '#2563eb' : STRUCT_COLORS.door}
@@ -958,6 +1004,8 @@ export default function CanvasEditor({
                 <line
                   key={`d${i}`}
                   className="ce-structure-selectable"
+                  data-struct-type="door"
+                  data-struct-id={d.id}
                   x1={d.x1 || 0} y1={d.y1 || 0}
                   x2={d.x2 || 0} y2={d.y2 || 0}
                   stroke={isSel ? '#2563eb' : STRUCT_COLORS.door}
@@ -1191,4 +1239,6 @@ export default function CanvasEditor({
       </div>
     </div>
   );
-}
+});
+
+export default CanvasEditor;
