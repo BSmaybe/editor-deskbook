@@ -4,7 +4,8 @@
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 420px;
+  height: clamp(420px, calc(100vh - 260px), 860px);
+  min-height: 360px;
   overflow: hidden;
   background: #f8fafc;
   position: relative;
@@ -98,31 +99,6 @@
   position: relative;
 }
 
-/* Custom tooltip for canvas toolbar buttons */
-.floor-canvas-editor .ce-tool-btn[title]::after {
-  content: attr(title);
-  position: absolute;
-  bottom: calc(100% + 7px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: #1e293b;
-  color: #f8fafc;
-  font-size: 11px;
-  font-weight: 400;
-  padding: 4px 8px;
-  border-radius: 5px;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.12s;
-  z-index: 9999;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-}
-
-.floor-canvas-editor .ce-tool-btn[title]:hover::after {
-  opacity: 1;
-}
-
 .floor-canvas-editor .ce-tool-btn:hover {
   background: #f1f5f9;
   border-color: #cbd5e1;
@@ -165,6 +141,28 @@
   padding: 0 8px;
 }
 
+.floor-canvas-editor .ce-floating-tooltip {
+  position: fixed;
+  z-index: 10000;
+  max-width: min(260px, calc(100vw - 24px));
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #f8fafc;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: normal;
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.24);
+  transform: translateX(-50%);
+}
+
+.floor-canvas-editor .ce-floating-tooltip.above {
+  transform: translate(-50%, -100%);
+}
+
 /* Background opacity slider */
 .floor-canvas-editor .ce-bg-opacity-slider {
   -webkit-appearance: none;
@@ -186,6 +184,26 @@
   cursor: pointer;
 }
 
+.floor-canvas-editor .ce-pdf-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.floor-canvas-editor .ce-pdf-page-label {
+  font-size: 11px;
+  color: #64748b;
+  min-width: 32px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.floor-canvas-editor .ce-pdf-loading {
+  font-size: 11px;
+  color: #94a3b8;
+  padding: 0 4px;
+}
+
 .floor-canvas-editor .ce-zoom-label {
   font-size: 12px;
   color: #64748b;
@@ -201,6 +219,16 @@
   overflow: hidden;
   position: relative;
   cursor: default;
+  min-width: 0;
+  transition: margin-right 0.16s ease, margin-bottom 0.16s ease;
+}
+
+.floor-canvas-editor.props-open .ce-viewport {
+  margin-right: clamp(188px, 22vw, 220px);
+}
+
+.floor-canvas-editor.props-collapsed .ce-viewport {
+  margin-right: 40px;
 }
 
 .floor-canvas-editor .ce-viewport.cursor-pan {
@@ -633,7 +661,7 @@
   position: absolute;
   top: 40px;
   right: 0;
-  width: 220px;
+  width: clamp(188px, 22vw, 220px);
   bottom: 24px;
   background: #fff;
   border-left: 1px solid #e2e8f0;
@@ -641,12 +669,23 @@
   padding: 12px;
   z-index: 5;
   font-size: 12px;
+  transition: width 0.16s ease, padding 0.16s ease, border-color 0.16s ease;
+}
+
+.floor-canvas-editor .properties-panel.collapsed {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 40px;
+  padding: 8px 4px;
+  overflow: hidden;
 }
 
 .floor-canvas-editor .properties-panel.empty {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding-top: 38px;
 }
 
 .floor-canvas-editor .properties-panel .muted {
@@ -659,13 +698,47 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   margin-bottom: 12px;
+}
+
+.floor-canvas-editor .prop-header-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .floor-canvas-editor .prop-header h3 {
   font-size: 13px;
   font-weight: 600;
   margin: 0;
+}
+
+.floor-canvas-editor .prop-panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  flex: 0 0 auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  background: #f8fafc;
+  color: #475569;
+  cursor: pointer;
+}
+
+.floor-canvas-editor .prop-panel-toggle:hover {
+  background: #eef2ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.floor-canvas-editor .properties-panel.empty > .prop-panel-toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
 }
 
 .floor-canvas-editor .prop-group {
@@ -1119,6 +1192,14 @@
   display: block;
 }
 
+.floor-canvas-editor.props-open .ce-minimap {
+  right: calc(clamp(188px, 22vw, 220px) + 12px);
+}
+
+.floor-canvas-editor.props-collapsed .ce-minimap {
+  right: 52px;
+}
+
 /* ── Hotkeys panel ── */
 
 .ce-kbd-panel {
@@ -1255,4 +1336,50 @@
   margin-left: 3px;
   vertical-align: middle;
   pointer-events: none;
+}
+
+@media (max-width: 760px) {
+  .floor-canvas-editor {
+    height: clamp(420px, calc(100vh - 220px), 720px);
+  }
+
+  .floor-canvas-editor.props-open .ce-viewport,
+  .floor-canvas-editor.props-collapsed .ce-viewport {
+    margin-right: 0;
+  }
+
+  .floor-canvas-editor.props-open .ce-viewport {
+    margin-bottom: 190px;
+  }
+
+  .floor-canvas-editor .properties-panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 24px;
+    width: 100%;
+    height: 190px;
+    border-left: 0;
+    border-top: 1px solid #e2e8f0;
+  }
+
+  .floor-canvas-editor .properties-panel.collapsed {
+    left: auto;
+    right: 8px;
+    bottom: 32px;
+    width: 40px;
+    height: 40px;
+    border: 1px solid #e2e8f0;
+    border-radius: 7px;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+  }
+
+  .floor-canvas-editor.props-open .ce-minimap,
+  .floor-canvas-editor.props-collapsed .ce-minimap {
+    right: 12px;
+  }
+
+  .floor-canvas-editor.props-open .ce-minimap {
+    bottom: 214px;
+  }
 }

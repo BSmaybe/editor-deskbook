@@ -80,6 +80,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api.js';
+import { loadPdfPage, renderPdfPage } from '../lib/pdfBackground.js';
 import { useViewport } from '../lib/canvas/useViewport.js';
 import { useGrid } from '../lib/canvas/useGrid.js';
 import { useSelection } from '../lib/canvas/useSelection.js';
@@ -183,6 +184,42 @@ function firstFinite(values, fallback) {
   return fallback;
 }
 
+function sameNumber(a, b) {
+  const left = finiteNumber(a);
+  const right = finiteNumber(b);
+  return left !== null && right !== null && Math.abs(left - right) < 0.01;
+}
+
+function componentDefaultSize(component, fallback = { w: 100, h: 60 }) {
+  return {
+    w: Math.max(1, finiteNumber(component?.default_w) ?? fallback.w),
+    h: Math.max(1, finiteNumber(component?.default_h) ?? fallback.h),
+  };
+}
+
+function componentSizeMap(catalog) {
+  const sizes = new Map();
+  for (const component of catalog || []) {
+    if (!component?.id) continue;
+    sizes.set(component.id, componentDefaultSize(component));
+  }
+  return sizes;
+}
+
+function backgroundFromLayout(layoutDoc) {
+  const legacyBackground = layoutDoc?.bg_url ? { image: layoutDoc.bg_url, opacity: 0.3, visible: true } : null;
+  const raw = layoutDoc?.background || layoutDoc?.tracing_background || legacyBackground;
+  const image = typeof raw?.image === 'string'
+    ? raw.image
+    : (typeof raw?.src === 'string' ? raw.src : (typeof raw?.href === 'string' ? raw.href : null));
+  const opacity = finiteNumber(raw?.opacity);
+  return {
+    image: image || null,
+    opacity: opacity === null ? 0.3 : Math.max(0.05, Math.min(1, opacity)),
+    visible: raw?.visible === false ? false : true,
+  };
+}
+
 function componentForDesk(desk, compMap) {
   return compMap.get(desk?.component_id || desk?.symbol_id) || compMap.get('desk-short');
 }
@@ -256,6 +293,9 @@ function normalizeDesk(raw, index, compMap) {
     symbol_id: raw?.symbol_id || nextComponentId,
     type: raw?.type || (raw?.fixed ? 'fixed' : 'flex'),
     bookable: raw?.bookable ?? (assetType === 'workplace'),
+    size_mode: raw?.size_mode || raw?.component_size_mode,
+    component_default_w: finiteNumber(raw?.component_default_w) ?? component?.default_w,
+    component_default_h: finiteNumber(raw?.component_default_h) ?? component?.default_h,
   };
   if (assetType === 'workplace' && !normalized.workplace_id) {
     normalized.workplace_id = uid('wp');
@@ -540,6 +580,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   /* ── selection ── */
   const sel = useSelection();
+  const [propertiesCollapsed, setPropertiesCollapsed] = useState(true);
+  const previousDeskSelectionCountRef = useRef(0);
 
   /* ── undo / redo ── */
   const undoRedo = useUndoRedo({
@@ -553,6 +595,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       if (snapshot.groups) setGroups(snapshot.groups);
       if (snapshot.zones) setZones(snapshot.zones);
       if (snapshot.infraLayers) setInfraLayers(snapshot.infraLayers);
+      if (snapshot.background) {
+        setBgImage(snapshot.background.image || null);
+        setBgOpacity(snapshot.background.opacity ?? 0.3);
+        setBgVisible(snapshot.background.visible !== false);
+      }
       setStructureLocked(
         snapshot.structureLocked ??
           structuresLocked(snapshot.walls || [], snapshot.boundaries || [], snapshot.partitions || [], snapshot.doors || []),
@@ -613,19 +660,112 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const [bgImage, setBgImage] = useState(null);       // data URL or null
   const [bgOpacity, setBgOpacity] = useState(0.3);    // 0–1
   const [bgVisible, setBgVisible] = useState(true);
+  const [bgPdfData, setBgPdfData] = useState(null);   // Uint8Array for page switching
+  const [bgPdfPages, setBgPdfPages] = useState(0);    // total pages in loaded PDF
+  const [bgPdfPage, setBgPdfPage] = useState(1);      // current page (1-indexed)
+  const [bgPdfLoading, setBgPdfLoading] = useState(false);
   const bgFileRef = useRef(null);
+  const toolbarTipTargetRef = useRef(null);
+  const [toolbarTip, setToolbarTip] = useState(null);
 
   function onBgFileChange(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = '';
+
+    if (file.type === 'application/pdf') {
+      setBgPdfLoading(true);
+      loadPdfPage(file, 1)
+        .then(({ dataUrl, totalPages, pdfData }) => {
+          undoRedo.push(snapshot());
+          setBgPdfData(pdfData);
+          setBgPdfPages(totalPages);
+          setBgPdfPage(1);
+          setBgImage(dataUrl);
+          setBgVisible(true);
+          setDirty(true);
+        })
+        .catch((err) => onError?.(`PDF: ${err.message}`))
+        .finally(() => setBgPdfLoading(false));
+      return;
+    }
+
+    // Regular image (PNG / JPEG / WebP / SVG)
     const reader = new FileReader();
     reader.onload = (ev) => {
+      undoRedo.push(snapshot());
+      setBgPdfData(null);
+      setBgPdfPages(0);
+      setBgPdfPage(1);
       setBgImage(ev.target.result);
       setBgVisible(true);
+      setDirty(true);
     };
     reader.readAsDataURL(file);
-    e.target.value = '';
   }
+
+  function navigatePdfPage(delta) {
+    const next = bgPdfPage + delta;
+    if (next < 1 || next > bgPdfPages || !bgPdfData || bgPdfLoading) return;
+    setBgPdfLoading(true);
+    renderPdfPage(bgPdfData, next)
+      .then((dataUrl) => {
+        setBgPdfPage(next);
+        setBgImage(dataUrl);
+        setDirty(true);
+      })
+      .catch((err) => onError?.(`PDF: ${err.message}`))
+      .finally(() => setBgPdfLoading(false));
+  }
+
+  function restoreTooltipTitle(node) {
+    if (!node?.dataset?.ceTitle) return;
+    node.setAttribute('title', node.dataset.ceTitle);
+    delete node.dataset.ceTitle;
+  }
+
+  const hideToolbarTip = useCallback(() => {
+    restoreTooltipTitle(toolbarTipTargetRef.current);
+    toolbarTipTargetRef.current = null;
+    setToolbarTip(null);
+  }, []);
+
+  const showToolbarTip = useCallback((event) => {
+    const target = event.target?.closest?.('[title],[data-ce-title]');
+    if (!target || !event.currentTarget.contains(target) || target === event.currentTarget) return;
+    if (target.disabled) return;
+
+    if (toolbarTipTargetRef.current && toolbarTipTargetRef.current !== target) {
+      restoreTooltipTitle(toolbarTipTargetRef.current);
+    }
+
+    const text = target.getAttribute('title') || target.dataset.ceTitle || '';
+    if (!text.trim()) return;
+    if (target.getAttribute('title')) {
+      target.dataset.ceTitle = text;
+      target.removeAttribute('title');
+    }
+
+    const rect = target.getBoundingClientRect();
+    const belowY = rect.bottom + 8;
+    const aboveY = rect.top - 8;
+    const placement = belowY + 34 < window.innerHeight ? 'below' : 'above';
+    const halfMax = Math.min(130, Math.max(12, window.innerWidth / 2 - 12));
+    toolbarTipTargetRef.current = target;
+    setToolbarTip({
+      text,
+      x: Math.min(Math.max(rect.left + rect.width / 2, halfMax), window.innerWidth - halfMax),
+      y: placement === 'below' ? belowY : aboveY,
+      placement,
+    });
+  }, []);
+
+  const onToolbarPointerOut = useCallback((event) => {
+    const current = toolbarTipTargetRef.current;
+    if (!current) return;
+    if (event.relatedTarget && current.contains(event.relatedTarget)) return;
+    hideToolbarTip();
+  }, [hideToolbarTip]);
 
   /* ── placement palette ── */
   const [placeSizeMode, setPlaceSizeMode] = useState('m');
@@ -647,6 +787,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   /* ── component size lookup ── */
   const componentCatalog = useMemo(() => mergeComponentCatalog(components), [components]);
   const componentGroups = useMemo(() => groupComponents(componentCatalog), [componentCatalog]);
+  const componentSizeRef = useRef(new Map());
   const compMap = useMemo(() => {
     const m = new Map();
     for (const c of componentCatalog) m.set(c.id, c);
@@ -689,7 +830,22 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   }
 
   function snapshot() {
-    return { desks, walls, boundaries, partitions, doors, groups, zones, infraLayers, structureLocked };
+    return {
+      desks,
+      walls,
+      boundaries,
+      partitions,
+      doors,
+      groups,
+      zones,
+      infraLayers,
+      structureLocked,
+      background: {
+        image: bgImage,
+        opacity: bgOpacity,
+        visible: bgVisible,
+      },
+    };
   }
 
   const visibleWalls = layerVis.walls ? walls : [];
@@ -776,6 +932,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setGroups(layout?.layout?.groups || []);
     setZones(layout?.layout?.zones || []);
     setInfraLayers(layout?.layout?.infra_layers || []);
+    const nextBackground = backgroundFromLayout(layout?.layout);
+    setBgImage(nextBackground.image);
+    setBgOpacity(nextBackground.opacity);
+    setBgVisible(nextBackground.visible);
     setStructureLocked(structuresLocked(nextWalls, nextBoundaries, nextPartitions, nextDoors));
     sel.clearSelection();
     setDirty(false);
@@ -787,11 +947,68 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     undoRedo.clear();
     setTimeout(() => viewport.zoomToFit({ x: 0, y: 0, w: canvasW, h: canvasH }, 60), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, compMap]);
+  }, [layout]);
+
+  useEffect(() => {
+    const nextSizes = componentSizeMap(componentCatalog);
+    const prevSizes = componentSizeRef.current;
+    componentSizeRef.current = nextSizes;
+    if (!prevSizes.size) return;
+
+    setDesks((prevDesks) => {
+      let changed = false;
+      const nextDesks = prevDesks.map((desk) => {
+        const componentId = desk.component_id || desk.symbol_id;
+        const prevSize = prevSizes.get(componentId);
+        const nextSize = nextSizes.get(componentId);
+        if (!prevSize || !nextSize) return desk;
+        if (sameNumber(prevSize.w, nextSize.w) && sameNumber(prevSize.h, nextSize.h)) return desk;
+
+        const currentW = firstFinite([desk?.w, desk?.width, desk?.size?.w, desk?.size?.width, desk?.geometry?.w, desk?.geometry?.width], prevSize.w);
+        const currentH = firstFinite([desk?.h, desk?.height, desk?.size?.h, desk?.size?.height, desk?.geometry?.h, desk?.geometry?.height], prevSize.h);
+        const followsComponentSize =
+          desk.size_mode === 'component' ||
+          desk.component_size_mode === 'component' ||
+          desk.use_component_size === true ||
+          (
+            desk.size_mode !== 'custom' &&
+            desk.component_size_mode !== 'custom' &&
+            sameNumber(currentW, prevSize.w) &&
+            sameNumber(currentH, prevSize.h)
+          );
+
+        if (!followsComponentSize) return desk;
+        changed = true;
+        return {
+          ...desk,
+          w: nextSize.w,
+          h: nextSize.h,
+          size_mode: 'component',
+          component_default_w: nextSize.w,
+          component_default_h: nextSize.h,
+        };
+      });
+      if (changed) {
+        setDirty(true);
+        return nextDesks;
+      }
+      return prevDesks;
+    });
+  }, [componentCatalog]);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    const count = sel.selectedIds.size;
+    if (count === 0) {
+      setPropertiesCollapsed(true);
+    } else if (previousDeskSelectionCountRef.current === 0) {
+      setPropertiesCollapsed(false);
+    }
+    previousDeskSelectionCountRef.current = count;
+  }, [sel.selectedIds.size]);
 
   /* ── wheel zoom — must be non-passive ── */
   useEffect(() => {
@@ -1128,7 +1345,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   }
 
   function updateDesk(id, patch) {
-    modifyDesks((prev) => prev.map((d) => d.id === id ? { ...d, ...patch } : d));
+    const geometryPatch = ('w' in patch || 'h' in patch) && !('component_id' in patch) && !('symbol_id' in patch)
+      ? { ...patch, size_mode: 'custom' }
+      : patch;
+    modifyDesks((prev) => prev.map((d) => d.id === id ? { ...d, ...geometryPatch } : d));
   }
 
   function getStructSetter(type) {
@@ -1347,6 +1567,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     const assetType = comp?.asset_type || 'desk';
     const dw = selectedPlaceSize.w;
     const dh = selectedPlaceSize.h;
+    const defaultSize = componentDefaultSize(comp, { w: dw, h: dh });
+    const followsComponentSize = placeSizeMode === 'm' && sameNumber(dw, defaultSize.w) && sameNumber(dh, defaultSize.h);
     const rawX = svgPt.x - dw / 2;
     const rawY = svgPt.y - dh / 2;
     const px = grid.snapOn ? Math.round(rawX / grid.gridSize) * grid.gridSize : Math.round(rawX);
@@ -1365,6 +1587,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       bookable: assetType === 'workplace',
       component_id: componentId,
       symbol_id: componentId,
+      size_mode: followsComponentSize ? 'component' : 'custom',
+      component_default_w: defaultSize.w,
+      component_default_h: defaultSize.h,
       workplace_id: assetType === 'workplace' ? uid('wp') : undefined,
     };
     modifyDesks((prev) => [...prev, newDesk]);
@@ -1626,7 +1851,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       if (nh < 20) { nh = 20; if (corner === 0 || corner === 1) ny = origY + origH - 20; }
       nx = grid.snap(nx); ny = grid.snap(ny);
       nw = grid.snap(nw); nh = grid.snap(nh);
-      setDesks((prev) => prev.map((d) => d.id === deskId ? { ...d, x: nx, y: ny, w: nw, h: nh } : d));
+      setDesks((prev) => prev.map((d) => d.id === deskId ? { ...d, x: nx, y: ny, w: nw, h: nh, size_mode: 'custom' } : d));
       setDirty(true);
       return;
     }
@@ -1772,8 +1997,15 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       groups,
       zones,
       infra_layers: infraLayers,
+      background: bgImage
+        ? {
+            image: bgImage,
+            opacity: bgOpacity,
+            visible: bgVisible,
+          }
+        : undefined,
     };
-  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors, groups, zones, infraLayers, structureLocked]);
+  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors, groups, zones, infraLayers, structureLocked, bgImage, bgOpacity, bgVisible]);
 
   /* ── save ── */
   const saveDraft = useCallback(async ({ silent = false } = {}) => {
@@ -1893,6 +2125,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setDoors(nextDoors);
     setGroups(layout?.layout?.groups || []);
     setZones(layout?.layout?.zones || []);
+    const nextBackground = backgroundFromLayout(layout?.layout);
+    setBgImage(nextBackground.image);
+    setBgOpacity(nextBackground.opacity);
+    setBgVisible(nextBackground.visible);
     setStructureLocked(structuresLocked(nextWalls, nextBoundaries, nextPartitions, nextDoors));
     sel.clearSelection();
     setDrawPoints([]);
@@ -1938,10 +2174,16 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   /* ── render ── */
   return (
-    <div className="floor-canvas-editor" tabIndex={0}>
+    <div className={`floor-canvas-editor ${propertiesCollapsed ? 'props-collapsed' : 'props-open'}`} tabIndex={0}>
 
       {/* ── Toolbar ── */}
-      <div className="ce-toolbar">
+      <div
+        className="ce-toolbar"
+        onPointerOver={showToolbarTip}
+        onPointerOut={onToolbarPointerOut}
+        onFocus={showToolbarTip}
+        onBlur={hideToolbarTip}
+      >
         <button
           className={`ce-tool-btn ${tool === 'select' ? 'active' : ''}`}
           title="Выбор (V)"
@@ -2183,7 +2425,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         <input
           ref={bgFileRef}
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+          accept="image/png,image/jpeg,image/webp,image/svg+xml,application/pdf"
           style={{ display: 'none' }}
           onChange={onBgFileChange}
         />
@@ -2200,7 +2442,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             <button
               className={`ce-tool-btn mini ${bgVisible ? 'active' : ''}`}
               title={bgVisible ? 'Скрыть фон' : 'Показать фон'}
-              onClick={() => setBgVisible((v) => !v)}
+              onClick={() => {
+                undoRedo.push(snapshot());
+                setBgVisible((v) => !v);
+                setDirty(true);
+              }}
             >
               {bgVisible ? <Eye size={12} /> : <EyeOff size={12} />}
             </button>
@@ -2208,14 +2454,51 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               type="range"
               min={0.05} max={1} step={0.05}
               value={bgOpacity}
-              onChange={(e) => setBgOpacity(Number(e.target.value))}
+              onChange={(e) => {
+                setBgOpacity(Number(e.target.value));
+                setDirty(true);
+              }}
               title={`Прозрачность фона: ${Math.round(bgOpacity * 100)}%`}
               className="ce-bg-opacity-slider"
             />
+            {/* PDF page navigation */}
+            {bgPdfPages > 1 && (
+              <span className="ce-pdf-nav">
+                <button
+                  className="ce-tool-btn mini"
+                  title="Предыдущая страница PDF"
+                  disabled={bgPdfPage <= 1 || bgPdfLoading}
+                  onClick={() => navigatePdfPage(-1)}
+                >
+                  ‹
+                </button>
+                <span className="ce-pdf-page-label">
+                  {bgPdfLoading ? '…' : `${bgPdfPage}/${bgPdfPages}`}
+                </span>
+                <button
+                  className="ce-tool-btn mini"
+                  title="Следующая страница PDF"
+                  disabled={bgPdfPage >= bgPdfPages || bgPdfLoading}
+                  onClick={() => navigatePdfPage(1)}
+                >
+                  ›
+                </button>
+              </span>
+            )}
+            {bgPdfLoading && bgPdfPages === 0 && (
+              <span className="ce-pdf-loading">PDF…</span>
+            )}
             <button
               className="ce-tool-btn mini danger"
               title="Удалить фоновое изображение"
-              onClick={() => setBgImage(null)}
+              onClick={() => {
+                undoRedo.push(snapshot());
+                setBgImage(null);
+                setBgPdfData(null);
+                setBgPdfPages(0);
+                setBgPdfPage(1);
+                setDirty(true);
+              }}
             >
               <Trash2 size={12} />
             </button>
@@ -2258,6 +2541,16 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           </>
         )}
       </div>
+
+      {toolbarTip && (
+        <div
+          className={`ce-floating-tooltip ${toolbarTip.placement}`}
+          style={{ left: toolbarTip.x, top: toolbarTip.y }}
+          role="tooltip"
+        >
+          {toolbarTip.text}
+        </div>
+      )}
 
       {/* ── Layers panel ── */}
       {layerPanelOpen && (
@@ -3300,6 +3593,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         onSelectGroup={selectGroup}
         canGroup={canGroup}
         canUngroup={canUngroup}
+        collapsed={propertiesCollapsed}
+        onToggleCollapsed={() => setPropertiesCollapsed((prev) => !prev)}
       />
 
       {/* ── Status bar ── */}
