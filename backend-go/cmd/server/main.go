@@ -169,6 +169,9 @@ func main() {
 	mux.HandleFunc("PATCH /desks/{desk_id}", app.updateDeskHandler)
 	mux.HandleFunc("DELETE /desks/{desk_id}", app.deleteDeskHandler)
 
+	// Public embed (no auth — read-only published floor plan)
+	mux.HandleFunc("GET /embed/floors/{floor_id}", app.embedFloorHandler)
+
 	// Frozen module placeholders (501)
 	mux.HandleFunc("GET /users/search", placeholder501)
 	mux.HandleFunc("GET /users/me/favorites", placeholder501)

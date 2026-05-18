@@ -1338,6 +1338,150 @@
   pointer-events: none;
 }
 
+/* ── Canvas resize panel ── */
+.ce-canvas-resize-panel {
+  position: absolute;
+  top: 40px;
+  right: 52px;
+  z-index: 60;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.13);
+  padding: 10px 12px;
+  width: 230px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ce-canvas-resize-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.ce-canvas-resize-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.ce-canvas-preset-btn {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  color: #334155;
+  transition: background 0.15s;
+}
+
+.ce-canvas-preset-btn:hover {
+  background: #e2e8f0;
+}
+
+.ce-canvas-preset-btn.active {
+  background: #dbeafe;
+  border-color: #2563eb;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.ce-canvas-resize-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.ce-canvas-resize-custom label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 500;
+}
+
+.ce-canvas-dim-input {
+  width: 60px;
+  padding: 3px 5px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  font-size: 11px;
+  background: #f8fafc;
+  color: #1e293b;
+}
+
+.ce-canvas-dim-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  background: #fff;
+}
+
+.ce-canvas-resize-x {
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.ce-canvas-resize-apply {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.ce-canvas-resize-apply:hover {
+  background: #1d4ed8;
+}
+
+.ce-canvas-resize-current {
+  font-size: 10px;
+  color: #94a3b8;
+  text-align: right;
+}
+
+/* ── Pixels-per-meter indicator ── */
+.ce-scale-indicator {
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+}
+
+.ce-ppm-display {
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #475569;
+  transition: background 0.15s;
+}
+
+.ce-ppm-display:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.ce-ppm-input {
+  border: 1px solid #2563eb;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11px;
+  color: #1e293b;
+  background: #fff;
+  outline: none;
+}
+
 @media (max-width: 760px) {
   .floor-canvas-editor {
     height: clamp(420px, calc(100vh - 220px), 720px);

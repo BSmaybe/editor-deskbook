@@ -59,7 +59,9 @@ import {
   Magnet,
   Map as MapIcon,
   Maximize,
+  Maximize2,
   Package,
+  Ruler,
   Minus,
   Move,
   MousePointer,
@@ -518,6 +520,52 @@ function KBD({ children }) {
   return <kbd className="ce-kbd">{children}</kbd>;
 }
 
+/* ── PpmInlineEdit — inline editable pixels-per-meter indicator ── */
+function PpmInlineEdit({ value, onChange }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+  const inputRef = useRef(null);
+
+  function commit() {
+    const n = Math.max(10, Math.min(2000, Math.round(Number(draft))));
+    if (Number.isFinite(n) && n !== value) onChange(n);
+    setEditing(false);
+  }
+
+  useEffect(() => {
+    if (editing) { setDraft(String(value)); inputRef.current?.select(); }
+  }, [editing]); // eslint-disable-line
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="number"
+        className="ce-ppm-input"
+        value={draft}
+        min={10}
+        max={2000}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        style={{ width: 52, fontSize: 11 }}
+      />
+    );
+  }
+  return (
+    <span
+      className="ce-ppm-display"
+      onClick={() => setEditing(true)}
+      title="Пикселей на метр — кликни чтобы изменить"
+    >
+      1м={value}px
+    </span>
+  );
+}
+
 /* ── component ── */
 
 const CanvasEditor = forwardRef(function CanvasEditor({
@@ -529,15 +577,26 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   onNotice,
   onError,
 }, ref) {
-  /* ── canvas dimensions from layout ── */
+  /* ── canvas dimensions — from layout.vb or overridden via resize UI ── */
+  const [canvasSizeOverride, setCanvasSizeOverride] = useState(null); // {w, h} or null
+  const [canvasResizeOpen, setCanvasResizeOpen] = useState(false);
+  const [canvasResizeInput, setCanvasResizeInput] = useState({ w: 1200, h: 800 });
+
   const canvasW = useMemo(() => {
+    if (canvasSizeOverride) return canvasSizeOverride.w;
     const vb = layout?.layout?.vb;
     return (Array.isArray(vb) ? vb[2] : null) || layout?.layout?.canvas_width || 1200;
-  }, [layout]);
+  }, [layout, canvasSizeOverride]);
   const canvasH = useMemo(() => {
+    if (canvasSizeOverride) return canvasSizeOverride.h;
     const vb = layout?.layout?.vb;
     return (Array.isArray(vb) ? vb[3] : null) || layout?.layout?.canvas_height || 800;
-  }, [layout]);
+  }, [layout, canvasSizeOverride]);
+
+  /* ── scale: pixels per meter ── */
+  const [pixelsPerMeter, setPixelsPerMeter] = useState(
+    () => layout?.layout?.pixels_per_meter || 100
+  );
 
   /* ── hooks ── */
   const viewport = useViewport({ contentW: canvasW, contentH: canvasH });
@@ -932,6 +991,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setGroups(layout?.layout?.groups || []);
     setZones(layout?.layout?.zones || []);
     setInfraLayers(layout?.layout?.infra_layers || []);
+    setCanvasSizeOverride(null); // clear override — use layout vb
+    setPixelsPerMeter(layout?.layout?.pixels_per_meter || 100);
     const nextBackground = backgroundFromLayout(layout?.layout);
     setBgImage(nextBackground.image);
     setBgOpacity(nextBackground.opacity);
@@ -1491,6 +1552,26 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     img.src = url;
   }
 
+  /* ── canvas resize ── */
+
+  const CANVAS_PRESETS = [
+    { label: 'S  1200×800',  w: 1200, h: 800  },
+    { label: 'M  1600×1000', w: 1600, h: 1000 },
+    { label: 'L  2000×1400', w: 2000, h: 1400 },
+    { label: 'XL 2800×2000', w: 2800, h: 2000 },
+  ];
+
+  function applyCanvasResize(w, h) {
+    const nw = Math.max(200, Math.min(8000, Math.round(w)));
+    const nh = Math.max(200, Math.min(8000, Math.round(h)));
+    setCanvasSizeOverride({ w: nw, h: nh });
+    setCanvasResizeInput({ w: nw, h: nh });
+    setCanvasResizeOpen(false);
+    setDirty(true);
+    // Zoom to fit new canvas size after a tick (DOM must update first)
+    setTimeout(() => handleZoomToFit(), 50);
+  }
+
   /* ── group operations ── */
 
   const GROUP_COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2'];
@@ -1988,6 +2069,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       .map(({ is_system, palette_group, ...component }) => component);
     return {
       ...(layout?.layout || {}),
+      vb: [0, 0, canvasW, canvasH],
+      pixels_per_meter: pixelsPerMeter || undefined,
       components: customComponents,
       desks,
       walls: setStructureLockOnItems(walls, structureLocked),
@@ -2314,6 +2397,16 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           onClick={exportPng}
         >
           <Download size={14} />
+        </button>
+        <button
+          className={`ce-tool-btn ${canvasResizeOpen ? 'active' : ''}`}
+          title="Размер холста"
+          onClick={() => {
+            setCanvasResizeInput({ w: canvasW, h: canvasH });
+            setCanvasResizeOpen((prev) => !prev);
+          }}
+        >
+          <Maximize2 size={14} />
         </button>
 
         {(sel.selectedIds.size > 0 || selectedStruct) && (
@@ -2803,6 +2896,67 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                 <span>{label}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Canvas resize panel ── */}
+      {canvasResizeOpen && (
+        <div className="ce-canvas-resize-panel">
+          <div className="ce-canvas-resize-header">
+            <span><Maximize2 size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />Размер холста</span>
+            <button className="ce-tool-btn mini" onClick={() => setCanvasResizeOpen(false)} title="Закрыть">
+              <X size={12} />
+            </button>
+          </div>
+          <div className="ce-canvas-resize-presets">
+            {CANVAS_PRESETS.map((p) => (
+              <button
+                key={p.label}
+                className={`ce-canvas-preset-btn${canvasW === p.w && canvasH === p.h ? ' active' : ''}`}
+                onClick={() => applyCanvasResize(p.w, p.h)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="ce-canvas-resize-custom">
+            <label>
+              W
+              <input
+                type="number"
+                className="ce-canvas-dim-input"
+                value={canvasResizeInput.w}
+                min={200}
+                max={8000}
+                step={100}
+                onChange={(e) => setCanvasResizeInput((prev) => ({ ...prev, w: Number(e.target.value) }))}
+                onKeyDown={(e) => { if (e.key === 'Enter') applyCanvasResize(canvasResizeInput.w, canvasResizeInput.h); }}
+              />
+            </label>
+            <span className="ce-canvas-resize-x">×</span>
+            <label>
+              H
+              <input
+                type="number"
+                className="ce-canvas-dim-input"
+                value={canvasResizeInput.h}
+                min={200}
+                max={8000}
+                step={100}
+                onChange={(e) => setCanvasResizeInput((prev) => ({ ...prev, h: Number(e.target.value) }))}
+                onKeyDown={(e) => { if (e.key === 'Enter') applyCanvasResize(canvasResizeInput.w, canvasResizeInput.h); }}
+              />
+            </label>
+            <button
+              className="ce-canvas-resize-apply"
+              onClick={() => applyCanvasResize(canvasResizeInput.w, canvasResizeInput.h)}
+            >
+              ОК
+            </button>
+          </div>
+          <div className="ce-canvas-resize-current">
+            Текущий: {canvasW}×{canvasH}
           </div>
         </div>
       )}
@@ -3628,6 +3782,22 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             </span>
           </>
         )}
+        <>
+          <span className="ce-statusbar-sep">·</span>
+          <span className="ce-statusbar-item ce-scale-indicator" title="Масштаб: пикселей на метр — кликни чтобы изменить">
+            <Ruler size={11} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+            <PpmInlineEdit
+              value={pixelsPerMeter}
+              onChange={(v) => { setPixelsPerMeter(v); setDirty(true); }}
+            />
+          </span>
+        </>
+        <>
+          <span className="ce-statusbar-sep">·</span>
+          <span className="ce-statusbar-item" style={{ opacity: 0.6 }}>
+            {canvasW}×{canvasH}
+          </span>
+        </>
         {dirty && (
           <>
             <span className="ce-statusbar-sep">·</span>

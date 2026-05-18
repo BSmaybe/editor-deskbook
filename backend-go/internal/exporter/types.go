@@ -1,21 +1,40 @@
 package exporter
 
 type LayoutDocument struct {
-	Version     int                  `json:"v"`
-	ViewBox     []float64            `json:"vb"`
-	BuildingID  string               `json:"building_id"`
-	StoreyID    string               `json:"storey_id"`
-	ZoneID      string               `json:"zone_id"`
-	BgURL       string               `json:"bg_url"`
-	BgTransform *BackgroundTransform `json:"bg_transform"`
-	Components  []LayoutComponent    `json:"components"`
-	Walls       []StructureElement   `json:"walls"`
-	Boundaries  []StructureElement   `json:"boundaries"`
-	Partitions  []StructureElement   `json:"partitions"`
-	Doors       []StructureElement   `json:"doors"`
-	Desks       []LayoutDesk         `json:"desks"`
-	Groups      []LayoutGroup        `json:"groups,omitempty"`
-	Zones       []LayoutZone         `json:"zones,omitempty"`
+	Version           int                  `json:"v"`
+	ViewBox           []float64            `json:"vb"`
+	BuildingID        string               `json:"building_id"`
+	StoreyID          string               `json:"storey_id"`
+	ZoneID            string               `json:"zone_id"`
+	BgURL             string               `json:"bg_url"`
+	BgTransform       *BackgroundTransform `json:"bg_transform"`
+	Background        *LayoutBackground    `json:"background,omitempty"`
+	TracingBackground *LayoutBackground    `json:"tracing_background,omitempty"`
+	Components        []LayoutComponent    `json:"components"`
+	Walls             []StructureElement   `json:"walls"`
+	Boundaries        []StructureElement   `json:"boundaries"`
+	Partitions        []StructureElement   `json:"partitions"`
+	Doors             []StructureElement   `json:"doors"`
+	Desks             []LayoutDesk         `json:"desks"`
+	Groups            []LayoutGroup        `json:"groups,omitempty"`
+	Zones             []LayoutZone         `json:"zones,omitempty"`
+	InfraLayers       []InfraLayer         `json:"infra_layers,omitempty"`
+	PixelsPerMeter    float64              `json:"pixels_per_meter,omitempty"`
+}
+
+// InfraItem — a single polyline within an infrastructure layer.
+type InfraItem struct {
+	ID  string      `json:"id"`
+	PTS [][]float64 `json:"pts"`
+}
+
+// InfraLayer — engineering services layer (cables, water, HVAC, etc.)
+type InfraLayer struct {
+	ID      string      `json:"id"`
+	Name    string      `json:"name"`
+	Color   string      `json:"color"`
+	Visible *bool       `json:"visible,omitempty"`
+	Items   []InfraItem `json:"items"`
 }
 
 // LayoutZone — named coloured area (kitchen, focus, reception, etc.)
@@ -41,6 +60,14 @@ type BackgroundTransform struct {
 	Y float64 `json:"y"`
 	W float64 `json:"w"`
 	H float64 `json:"h"`
+}
+
+type LayoutBackground struct {
+	Image   string  `json:"image,omitempty"`
+	Src     string  `json:"src,omitempty"`
+	Href    string  `json:"href,omitempty"`
+	Opacity float64 `json:"opacity,omitempty"`
+	Visible *bool   `json:"visible,omitempty"`
 }
 
 type LayoutComponent struct {

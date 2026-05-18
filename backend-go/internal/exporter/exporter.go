@@ -137,6 +137,7 @@ func RenderSVG(doc LayoutDocument) (string, error) {
 	}
 	appendBackground(&w, doc, vx, vy, vw, vh)
 	appendZones(&w, doc)
+	appendInfraLayers(&w, doc)
 	appendStructure(&w, doc)
 
 	w.start("g", a("class", "building"), a("id", buildingID), a("data-building", buildingID))
@@ -544,6 +545,52 @@ func appendZones(w *xmlWriter, doc LayoutDocument) {
 			w.text(zone.Label)
 			w.end("text")
 		}
+	}
+	w.end("g")
+}
+
+func appendInfraLayers(w *xmlWriter, doc LayoutDocument) {
+	if len(doc.InfraLayers) == 0 {
+		return
+	}
+	hasVisible := false
+	for _, layer := range doc.InfraLayers {
+		if layer.Visible == nil || *layer.Visible {
+			hasVisible = true
+			break
+		}
+	}
+	if !hasVisible {
+		return
+	}
+	w.start("g", a("class", "infra-layers"), a("data-layer", "infra"))
+	for _, layer := range doc.InfraLayers {
+		if layer.Visible != nil && !*layer.Visible {
+			continue
+		}
+		color := safeColor(layer.Color, "#f59e0b")
+		w.start("g",
+			a("class", "infra-layer"),
+			a("data-layer-id", safeData(layer.ID, "")),
+			a("data-layer-name", safeData(layer.Name, "")),
+		)
+		for _, item := range layer.Items {
+			if len(item.PTS) < 2 {
+				continue
+			}
+			w.empty("polyline",
+				a("class", "infra-line"),
+				a("data-item-id", safeData(item.ID, "")),
+				a("points", points(item.PTS)),
+				a("fill", "none"),
+				a("stroke", color),
+				a("stroke-width", "2.5"),
+				a("stroke-linecap", "round"),
+				a("stroke-linejoin", "round"),
+				a("opacity", "0.85"),
+			)
+		}
+		w.end("g")
 	}
 	w.end("g")
 }

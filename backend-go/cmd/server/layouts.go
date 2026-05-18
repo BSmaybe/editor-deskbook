@@ -297,6 +297,29 @@ func (a *appServer) getPublishedHTMLHandler(w http.ResponseWriter, r *http.Reque
 	_, _ = w.Write([]byte(exporter.RenderHTML(svg, fmt.Sprintf("DeskBook floor %d", floorID))))
 }
 
+// embedFloorHandler serves the published floor plan as a standalone HTML page
+// without requiring authentication — suitable for iframes and public links.
+func (a *appServer) embedFloorHandler(w http.ResponseWriter, r *http.Request) {
+	floorID, ok := floorIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	if a.layouts == nil {
+		http.Error(w, "layout store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	svg, err := a.layouts.getPublishedSemanticSVG(r.Context(), floorID)
+	if err != nil {
+		http.Error(w, "No published layout", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Frame-Options", "ALLOWALL")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(exporter.RenderHTML(svg, fmt.Sprintf("Floor plan — %d", floorID))))
+}
+
 func (a *appServer) saveLayoutDraftHandler(w http.ResponseWriter, r *http.Request) {
 	auth, err := requireAdminContext(r)
 	if err != nil {

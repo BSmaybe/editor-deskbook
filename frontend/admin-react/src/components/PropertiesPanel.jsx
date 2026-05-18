@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Group, RotateCcw, Trash2, Ungroup } from 'lucide-react';
+import { Group, PanelRightClose, PanelRightOpen, RotateCcw, Trash2, Ungroup } from 'lucide-react';
 import { assetTypeLabel } from '../lib/i18n.js';
 
 const DESK_TYPES = ['flex', 'fixed'];
@@ -39,12 +39,37 @@ export default function PropertiesPanel({
   onSelectGroup,
   canGroup,
   canUngroup,
+  collapsed = false,
+  onToggleCollapsed,
 }) {
   const selected = desks.filter((d) => selectedIds.has(d.id));
+
+  if (collapsed) {
+    return (
+      <div className="properties-panel collapsed">
+        <button
+          className="prop-panel-toggle"
+          onClick={onToggleCollapsed}
+          title="Показать свойства"
+          type="button"
+        >
+          <PanelRightOpen size={15} />
+        </button>
+      </div>
+    );
+  }
 
   if (!selected.length) {
     return (
       <div className="properties-panel empty">
+        <button
+          className="prop-panel-toggle"
+          onClick={onToggleCollapsed}
+          title="Скрыть свойства"
+          type="button"
+        >
+          <PanelRightClose size={15} />
+        </button>
         <p className="muted">Выберите объект, чтобы редактировать свойства</p>
       </div>
     );
@@ -66,6 +91,7 @@ export default function PropertiesPanel({
         onDeleteGroup={onDeleteGroup}
         canGroup={canGroup}
         canUngroup={canUngroup}
+        onToggleCollapsed={onToggleCollapsed}
       />
     );
   }
@@ -80,11 +106,12 @@ export default function PropertiesPanel({
       onUpdate={onUpdate}
       onDelete={onDelete}
       onSelectGroup={onSelectGroup}
+      onToggleCollapsed={onToggleCollapsed}
     />
   );
 }
 
-function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelectGroup }) {
+function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelectGroup, onToggleCollapsed }) {
   const [label, setLabel] = useState(desk.label || '');
   const [inventoryNo, setInventoryNo] = useState(desk.inventory_number || '');
   const [assignedTo, setAssignedTo] = useState(desk.assigned_to || '');
@@ -121,12 +148,18 @@ function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelect
   return (
     <div className="properties-panel">
       <div className="prop-header">
-        <h3>Свойства</h3>
-        <button
-          className="icon-button danger"
-          onClick={() => onDelete([desk.id])}
-          title="Удалить"
-        >
+        <div className="prop-header-title">
+          <button
+            className="prop-panel-toggle"
+            onClick={onToggleCollapsed}
+            title="Скрыть свойства"
+            type="button"
+          >
+            <PanelRightClose size={15} />
+          </button>
+          <h3>Свойства</h3>
+        </div>
+        <button className="icon-button danger" onClick={() => onDelete([desk.id])} title="Удалить">
           <Trash2 size={16} />
         </button>
       </div>
@@ -207,7 +240,7 @@ function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelect
             value={w}
             min={10}
             onChange={(e) => setW(Number(e.target.value))}
-            onBlur={() => commit({ w })}
+            onBlur={() => commit({ w, size_mode: 'custom' })}
           />
         </div>
         <div className="prop-group half">
@@ -217,7 +250,7 @@ function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelect
             value={h}
             min={10}
             onChange={(e) => setH(Number(e.target.value))}
-            onBlur={() => commit({ h })}
+            onBlur={() => commit({ h, size_mode: 'custom' })}
           />
         </div>
       </div>
@@ -276,6 +309,9 @@ function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelect
               space_type: component.asset_type || 'asset',
               w: component.default_w || w,
               h: component.default_h || h,
+              size_mode: 'component',
+              component_default_w: component.default_w || w,
+              component_default_h: component.default_h || h,
             });
           } else {
             commit({ component_id: nextId, symbol_id: nextId });
@@ -306,11 +342,21 @@ function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelect
   );
 }
 
-function MultiSelectPanel({ count, components, selectedInGroup, onBulkUpdate, onDelete, onGroupSelected, onUngroupSelected, onUpdateGroup, onDeleteGroup, canGroup, canUngroup }) {
+function MultiSelectPanel({ count, components, selectedInGroup, onBulkUpdate, onDelete, onGroupSelected, onUngroupSelected, onUpdateGroup, onDeleteGroup, canGroup, canUngroup, onToggleCollapsed }) {
   return (
     <div className="properties-panel">
       <div className="prop-header">
-        <h3>Выбрано: {count}</h3>
+        <div className="prop-header-title">
+          <button
+            className="prop-panel-toggle"
+            onClick={onToggleCollapsed}
+            title="Скрыть свойства"
+            type="button"
+          >
+            <PanelRightClose size={15} />
+          </button>
+          <h3>Выбрано: {count}</h3>
+        </div>
         <button className="icon-button danger" onClick={onDelete} title="Удалить выбранные">
           <Trash2 size={16} />
         </button>
@@ -334,7 +380,13 @@ function MultiSelectPanel({ count, components, selectedInGroup, onBulkUpdate, on
             symbol_id: e.target.value,
             asset_type: component?.asset_type || 'asset',
             space_type: component?.asset_type || 'asset',
-            ...(component ? { w: component.default_w, h: component.default_h } : {}),
+            ...(component ? {
+              w: component.default_w,
+              h: component.default_h,
+              size_mode: 'component',
+              component_default_w: component.default_w,
+              component_default_h: component.default_h,
+            } : {}),
           });
         }}>
           <option value="">— без изменений —</option>

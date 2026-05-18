@@ -1,6 +1,7 @@
 package exporter
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -86,6 +87,41 @@ func TestRejectUnsafeCustomSVG(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unsafe custom SVG to be rejected")
 	}
+}
+
+func TestParseLayoutJSONPreservesEditorBackground(t *testing.T) {
+	doc, err := ParseLayoutJSON([]byte(`{
+		"v":1,
+		"vb":[0,0,100,80],
+		"background":{"image":"data:image/png;base64,AAAA","opacity":0.42,"visible":false},
+		"tracing_background":{"src":"/uploads/floor.png","opacity":0.33,"visible":true}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseLayoutJSON failed: %v", err)
+	}
+	if doc.Background == nil {
+		t.Fatal("expected background to be preserved")
+	}
+	if doc.Background.Image != "data:image/png;base64,AAAA" {
+		t.Fatalf("unexpected background image: %q", doc.Background.Image)
+	}
+	if doc.Background.Visible == nil || *doc.Background.Visible {
+		t.Fatalf("expected background.visible=false, got %#v", doc.Background.Visible)
+	}
+	if doc.TracingBackground == nil {
+		t.Fatal("expected tracing_background to be preserved")
+	}
+
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	output := string(encoded)
+	assertContains(t, output, `"background"`)
+	assertContains(t, output, `"image":"data:image/png;base64,AAAA"`)
+	assertContains(t, output, `"visible":false`)
+	assertContains(t, output, `"tracing_background"`)
+	assertContains(t, output, `"src":"/uploads/floor.png"`)
 }
 
 func assertContains(t *testing.T, value string, expected string) {

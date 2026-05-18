@@ -383,13 +383,14 @@ input {
 
 .layout-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: 16px;
+  align-items: stretch;
   min-height: 0;
 }
 
 .layout-grid .inspector:not(.inspector-collapsed) {
-  width: 320px;
+  width: clamp(260px, 22vw, 320px);
 }
 
 .preview-panel,
@@ -411,6 +412,21 @@ input {
   gap: 12px;
   padding: 14px;
   border-bottom: 1px solid #d8e0eb;
+}
+
+.panel-title > * {
+  min-width: 0;
+}
+
+.panel-title .tab-bar {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.panel-title .toolbar {
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .publish-status-strip {
@@ -567,19 +583,36 @@ input {
   flex-direction: column;
   gap: 12px;
   padding-bottom: 14px;
-  transition: all 0.2s ease;
+  overflow: hidden;
+  transition: width 0.18s ease, padding 0.18s ease, border-color 0.18s ease;
 }
 
 .inspector-collapsed {
+  width: 48px;
+  min-width: 48px;
   padding-bottom: 0;
 }
 
 .inspector-collapsed .panel-title {
+  min-height: 100%;
+  padding: 0;
   border-bottom: none;
+  justify-content: center;
 }
 
 .inspector-header {
   gap: 8px;
+}
+
+.inspector-collapsed .inspector-header > div {
+  justify-content: center;
+  gap: 0 !important;
+}
+
+.inspector-collapsed .inspector-header h2,
+.inspector-collapsed .inspector-header p,
+.inspector-collapsed .inspector-mini {
+  display: none;
 }
 
 .inspector-chevron {
@@ -719,7 +752,11 @@ input {
   height: 72px;
   border: 1px solid #d8e0eb;
   border-radius: 7px;
-  background: #f8fafc;
+  background-color: #f8fafc;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.16) 1px, transparent 1px);
+  background-size: 12px 12px;
 }
 
 .component-thumb svg {
@@ -998,7 +1035,11 @@ input {
   min-height: 200px;
   border: 1px solid #d8e0eb;
   border-radius: 8px;
-  background: #f8fafc;
+  background-color: #f8fafc;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.15) 1px, transparent 1px);
+  background-size: 12px 12px;
   padding: 16px;
 }
 
@@ -1209,6 +1250,26 @@ textarea.code-area.full {
 .canvas-desk:hover rect:first-child {
   fill: #dbeafe;
   stroke: #60a5fa;
+}
+
+@media (max-width: 1180px) {
+  .layout-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .layout-grid .inspector:not(.inspector-collapsed),
+  .layout-grid .inspector.inspector-collapsed {
+    width: 100%;
+  }
+
+  .layout-grid .inspector.inspector-collapsed {
+    min-width: 0;
+    min-height: 42px;
+  }
+
+  .layout-grid .inspector-collapsed .panel-title {
+    min-height: 42px;
+  }
 }
 
 /* Properties panel overlay */
