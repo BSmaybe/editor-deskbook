@@ -383,9 +383,13 @@ input {
 
 .layout-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
   min-height: 0;
+}
+
+.layout-grid .inspector:not(.inspector-collapsed) {
+  width: 320px;
 }
 
 .preview-panel,
@@ -563,6 +567,35 @@ input {
   flex-direction: column;
   gap: 12px;
   padding-bottom: 14px;
+  transition: all 0.2s ease;
+}
+
+.inspector-collapsed {
+  padding-bottom: 0;
+}
+
+.inspector-collapsed .panel-title {
+  border-bottom: none;
+}
+
+.inspector-header {
+  gap: 8px;
+}
+
+.inspector-chevron {
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  color: #6b7280;
+}
+
+.inspector-chevron-open {
+  transform: rotate(90deg);
+}
+
+.inspector-mini {
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 400;
 }
 
 .summary-list {

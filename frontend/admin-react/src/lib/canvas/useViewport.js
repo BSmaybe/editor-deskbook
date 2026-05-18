@@ -137,12 +137,37 @@ export function useViewport({ contentW = 1200, contentH = 800 } = {}) {
    */
   const onWheel = useCallback((e) => {
     e.preventDefault();
+
+    // Pinch-zoom on trackpad sends ctrlKey + deltaY
+    if (e.ctrlKey) {
+      const pt = screenToSvg(e);
+      const rawDelta = Number.isFinite(e.deltaY) ? e.deltaY : 0;
+      const delta = Math.max(-120, Math.min(120, rawDelta));
+      const factor = Math.exp(delta * 0.00075);
+      zoomBy(factor, pt.x, pt.y);
+      return;
+    }
+
+    const dx = Number.isFinite(e.deltaX) ? e.deltaX : 0;
+    const dy = Number.isFinite(e.deltaY) ? e.deltaY : 0;
+
+    // Two-finger swipe or Shift+wheel → pan
+    if (Math.abs(dx) > 0 || e.shiftKey) {
+      setVb((prev) => {
+        const scale = prev.w / (svgRef.current?.clientWidth || 1);
+        return {
+          ...prev,
+          x: prev.x + (e.shiftKey ? dy : dx) * scale,
+          y: prev.y + (e.shiftKey ? 0 : dy) * scale,
+        };
+      });
+      return;
+    }
+
+    // Plain scroll wheel → zoom
     const pt = screenToSvg(e);
-    const rawDelta = Number.isFinite(e.deltaY) ? e.deltaY : 0;
-    const delta = Math.max(-120, Math.min(120, rawDelta));
-    // exponential scaling — identical to editor.js onWheelZoom
-    const speed = e.ctrlKey ? 0.00075 : 0.00115;
-    const factor = Math.exp(delta * speed);
+    const delta = Math.max(-120, Math.min(120, dy));
+    const factor = Math.exp(delta * 0.00115);
     zoomBy(factor, pt.x, pt.y);
   }, [screenToSvg, zoomBy]);
 

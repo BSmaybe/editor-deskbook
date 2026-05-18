@@ -44,17 +44,20 @@ import {
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
   AlignVerticalSpaceBetween,
+  Activity,
   Copy,
+  Download,
   DoorOpen,
   Eye,
   EyeOff,
   Grid3X3,
   Group,
   ImageIcon,
+  Keyboard,
   Layers,
   Lock,
   Magnet,
-  Map,
+  Map as MapIcon,
   Maximize,
   Package,
   Minus,
@@ -72,6 +75,7 @@ import {
   Ungroup,
   Undo2,
   Unlock,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -428,6 +432,52 @@ function bestAxisSnap(values, targets, tolerance) {
   return best;
 }
 
+/* ── Minimap ── */
+
+function Minimap({ canvasW, canvasH, vb, desks, walls, boundaries, onPanTo }) {
+  const MINI_W = 160;
+  const MINI_H = Math.round(MINI_W * (canvasH / canvasW)) || 100;
+  const scale = MINI_W / canvasW;
+
+  const vpX = vb.x * scale;
+  const vpY = vb.y * scale;
+  const vpW = vb.w * scale;
+  const vpH = vb.h * scale;
+
+  const handleClick = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / scale;
+    const my = (e.clientY - rect.top) / scale;
+    onPanTo(mx, my);
+  };
+
+  return (
+    <div className="ce-minimap" onClick={handleClick}>
+      <svg width={MINI_W} height={MINI_H} viewBox={`0 0 ${canvasW} ${canvasH}`}>
+        <rect width={canvasW} height={canvasH} fill="#f1f5f9" />
+        {walls.map((w) => {
+          const pts = (w.pts || w.points || []).map(ptFromArr);
+          return pts.length >= 2 ? <polyline key={w.id} points={pts.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#64748b" strokeWidth={4} /> : null;
+        })}
+        {boundaries.map((b) => {
+          const pts = (b.pts || b.points || []).map(ptFromArr);
+          return pts.length >= 2 ? <polygon key={b.id} points={pts.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#94a3b8" strokeWidth={3} /> : null;
+        })}
+        {desks.map((d) => (
+          <rect key={d.id} x={d.x} y={d.y} width={d.w || 100} height={d.h || 60} fill="#93c5fd" stroke="#2563eb" strokeWidth={2} rx={4} />
+        ))}
+        <rect x={vb.x} y={vb.y} width={vb.w} height={vb.h} fill="rgba(37,99,235,0.08)" stroke="#2563eb" strokeWidth={Math.max(4, 2 / scale)} rx={2} />
+      </svg>
+    </div>
+  );
+}
+
+/* ── Hotkey badge helper ── */
+
+function KBD({ children }) {
+  return <kbd className="ce-kbd">{children}</kbd>;
+}
+
 /* ── component ── */
 
 const CanvasEditor = forwardRef(function CanvasEditor({
@@ -453,7 +503,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const viewport = useViewport({ contentW: canvasW, contentH: canvasH });
   const grid = useGrid({ defaultSize: 10, defaultSnap: false, defaultVisible: true });
 
-  /* ── tool mode: 'select' | 'pan' | 'place' | 'draw_wall' | 'draw_boundary' | 'draw_partition' | 'draw_door' | 'draw_zone' ── */
+  /* ── tool mode: 'select' | 'pan' | 'place' | 'draw_wall' | 'draw_boundary' | 'draw_partition' | 'draw_door' | 'draw_zone' | 'draw_infra' ── */
   const [tool, setTool] = useState('select');
   const [placeComponentId, setPlaceComponentId] = useState('workplace-desk-chair');
 
@@ -472,6 +522,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const isDrawMode = tool.startsWith('draw_');
   const drawStructType = isDrawMode ? tool.replace('draw_', '') : null;
   const isZoneDrawMode = tool === 'draw_zone';
+  const isInfraDrawMode = tool === 'draw_infra';
 
   /* ── local data state ── */
   const [desks, setDesks] = useState([]);
@@ -481,6 +532,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const [doors, setDoors] = useState([]);
   const [groups, setGroups] = useState([]);
   const [zones, setZones] = useState([]);
+  const [infraLayers, setInfraLayers] = useState([]); // [{id, name, color, visible, items:[{id,pts}]}]
+  const [activeInfraLayerId, setActiveInfraLayerId] = useState(null);
+  const [selectedInfraItem, setSelectedInfraItem] = useState(null); // {layerId, itemId}
+  const [kbdPanelOpen, setKbdPanelOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
 
   /* ── selection ── */
@@ -497,6 +552,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       if (snapshot.doors) setDoors(snapshot.doors);
       if (snapshot.groups) setGroups(snapshot.groups);
       if (snapshot.zones) setZones(snapshot.zones);
+      if (snapshot.infraLayers) setInfraLayers(snapshot.infraLayers);
       setStructureLocked(
         snapshot.structureLocked ??
           structuresLocked(snapshot.walls || [], snapshot.boundaries || [], snapshot.partitions || [], snapshot.doors || []),
@@ -518,6 +574,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   /* ── rotation drag state ── */
   const rotateRef = useRef(null);
   // { deskId, center, startAngle, origR }
+
+  /* ── vertex drag state for structure points ── */
+  const vertexDragRef = useRef(null);
+  // { type: 'wall'|'partition'|..., id, pointIndex, startPt }
 
   /* ── clipboard for copy/paste ── */
   const clipboardRef = useRef(null);
@@ -544,6 +604,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     zones: true,
   });
   const [structureLocked, setStructureLocked] = useState(false);
+  const [desksLocked, setDesksLocked] = useState(false);
   const [layerPanelOpen, setLayerPanelOpen] = useState(false);
   const toggleLayer = (key) => setLayerVis((prev) => ({ ...prev, [key]: !prev[key] }));
   const [objectSnapGuides, setObjectSnapGuides] = useState(null);
@@ -628,7 +689,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   }
 
   function snapshot() {
-    return { desks, walls, boundaries, partitions, doors, groups, zones, structureLocked };
+    return { desks, walls, boundaries, partitions, doors, groups, zones, infraLayers, structureLocked };
   }
 
   const visibleWalls = layerVis.walls ? walls : [];
@@ -714,6 +775,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setDoors(nextDoors);
     setGroups(layout?.layout?.groups || []);
     setZones(layout?.layout?.zones || []);
+    setInfraLayers(layout?.layout?.infra_layers || []);
     setStructureLocked(structuresLocked(nextWalls, nextBoundaries, nextPartitions, nextDoors));
     sel.clearSelection();
     setDirty(false);
@@ -772,8 +834,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       if (e.key === 'v' && !inInput && !meta) { cancelDraw(); setTool('select'); return; }
       if (e.key === 'p' && !inInput && !meta) { cancelDraw(); setTool('place'); return; }
       if (e.key === 'w' && !inInput && !meta && !structureLocked) { cancelDraw(); setTool('draw_wall'); return; }
-      if (e.key === 'b' && !inInput && !meta && !structureLocked) { cancelDraw(); setTool('draw_boundary'); return; }
+      if (e.key === 'z' && !inInput && !meta) { cancelDraw(); setTool('draw_zone'); return; }
+      if (e.key === 'i' && !inInput && !meta) {
+        if (activeInfraLayerId) { cancelDraw(); setTool((prev) => (prev === 'draw_infra' ? 'select' : 'draw_infra')); }
+        return;
+      }
       if (e.key === 'f' && !inInput && !meta) { handleZoomToFit(); return; }
+      if (e.key === 'l' && !inInput && !meta) { setDesksLocked((prev) => !prev); return; }
+      if (e.key === '?' && !inInput) { setKbdPanelOpen((prev) => !prev); return; }
 
       if ((e.key === 'Delete' || e.key === 'Backspace') && !inInput) {
         if (sel.selectedIds.size) {
@@ -789,6 +857,18 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         if (selectedZoneId) {
           e.preventDefault();
           deleteZone(selectedZoneId);
+          return;
+        }
+        if (selectedInfraItem) {
+          e.preventDefault();
+          undoRedo.push(snapshot());
+          setInfraLayers((prev) => prev.map((l) =>
+            l.id === selectedInfraItem.layerId
+              ? { ...l, items: l.items.filter((i) => i.id !== selectedInfraItem.itemId) }
+              : l
+          ));
+          setSelectedInfraItem(null);
+          setDirty(true);
           return;
         }
       }
@@ -918,6 +998,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       setZones((prev) => [...prev, newZone]);
       setSelectedZoneId(newZone.id);
       setTool('select');
+    } else if (drawStructType === 'infra') {
+      finishInfraLine(points);
+      setTool('draw_infra');
     } else {
       const newStruct = { id: uid(drawStructType), pts: points.map((p) => [p.x, p.y]) };
       if (drawStructType === 'boundary') newStruct.closed = true;
@@ -1048,6 +1131,55 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     modifyDesks((prev) => prev.map((d) => d.id === id ? { ...d, ...patch } : d));
   }
 
+  function getStructSetter(type) {
+    switch (type) {
+      case 'wall': return setWalls;
+      case 'boundary': return setBoundaries;
+      case 'partition': return setPartitions;
+      case 'door': return setDoors;
+      default: return null;
+    }
+  }
+
+  function getStructList(type) {
+    switch (type) {
+      case 'wall': return walls;
+      case 'boundary': return boundaries;
+      case 'partition': return partitions;
+      case 'door': return doors;
+      default: return [];
+    }
+  }
+
+  function updateStructPoint(type, id, pointIndex, newPt) {
+    const setter = getStructSetter(type);
+    if (!setter) return;
+    setter((prev) => prev.map((s) => {
+      if (s.id !== id) return s;
+      const pts = [...(s.pts || s.points || [])];
+      pts[pointIndex] = [newPt.x, newPt.y];
+      return { ...s, pts, points: undefined };
+    }));
+    setDirty(true);
+  }
+
+  function splitStructureSegment(type, id, segIndex) {
+    const setter = getStructSetter(type);
+    if (!setter) return;
+    undoRedo.push(snapshot());
+    setter((prev) => prev.map((s) => {
+      if (s.id !== id) return s;
+      const pts = [...(s.pts || s.points || []).map((p) => Array.isArray(p) ? p : [p.x, p.y])];
+      if (segIndex < 0 || segIndex >= pts.length - 1) return s;
+      const a = pts[segIndex];
+      const b = pts[segIndex + 1];
+      const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      pts.splice(segIndex + 1, 0, mid);
+      return { ...s, pts, points: undefined };
+    }));
+    setDirty(true);
+  }
+
   function toggleStructureLock() {
     const nextLocked = !structureLocked;
     undoRedo.push(snapshot());
@@ -1064,6 +1196,79 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       }
     }
     setDirty(true);
+  }
+
+  /* ── infra layer operations ── */
+
+  const INFRA_PRESETS = [
+    { name: 'Кабели', color: '#f59e0b' },
+    { name: 'Вода', color: '#06b6d4' },
+    { name: 'HVAC', color: '#10b981' },
+    { name: 'Интернет', color: '#8b5cf6' },
+    { name: 'Электрика', color: '#ef4444' },
+  ];
+
+  function addInfraLayer(name, color) {
+    const id = `il_${Date.now()}`;
+    setInfraLayers((prev) => [...prev, { id, name, color, visible: true, items: [] }]);
+    setActiveInfraLayerId(id);
+    setDirty(true);
+  }
+
+  function removeInfraLayer(id) {
+    undoRedo.push(snapshot());
+    setInfraLayers((prev) => prev.filter((l) => l.id !== id));
+    if (activeInfraLayerId === id) setActiveInfraLayerId(null);
+    setDirty(true);
+  }
+
+  function toggleInfraLayerVisibility(id) {
+    setInfraLayers((prev) => prev.map((l) => l.id === id ? { ...l, visible: !l.visible } : l));
+  }
+
+  function finishInfraLine(pts, layerId) {
+    if (pts.length < 2) return;
+    const lid = layerId || activeInfraLayerId;
+    if (!lid) return;
+    undoRedo.push(snapshot());
+    const itemId = `ili_${Date.now()}`;
+    setInfraLayers((prev) => prev.map((l) =>
+      l.id === lid ? { ...l, items: [...l.items, { id: itemId, pts: pts.map((p) => [p.x, p.y]) }] } : l
+    ));
+    setDirty(true);
+  }
+
+  /* ── PNG export ── */
+
+  function exportPng() {
+    const svgEl = viewport.svgRef.current;
+    if (!svgEl) return;
+    const clone = svgEl.cloneNode(true);
+    clone.setAttribute('viewBox', `0 0 ${canvasW} ${canvasH}`);
+    clone.setAttribute('width', String(canvasW));
+    clone.setAttribute('height', String(canvasH));
+    clone.querySelectorAll(
+      '.ce-grid,.ce-vertex-handles,.ce-draw-preview,.ce-selection-overlay,.ce-snap-marker,.ce-object-snap-guides'
+    ).forEach((el) => el.remove());
+    const svgStr = new XMLSerializer().serializeToString(clone);
+    const url = URL.createObjectURL(new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' }));
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvasW;
+      canvas.height = canvasH;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvasW, canvasH);
+      ctx.drawImage(img, 0, 0, canvasW, canvasH);
+      URL.revokeObjectURL(url);
+      const a = document.createElement('a');
+      a.download = `floor-${floorId || 'plan'}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    };
+    img.onerror = () => URL.revokeObjectURL(url);
+    img.src = url;
   }
 
   /* ── group operations ── */
@@ -1262,6 +1467,32 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       }
     }
 
+    // Infra item click — select for deletion
+    const infraEl = e.target?.closest?.('[data-infra-item]');
+    if (infraEl && tool === 'select') {
+      const layerId = infraEl.dataset.infraLayer;
+      const itemId = infraEl.dataset.infraItem;
+      setSelectedInfraItem({ layerId, itemId });
+      sel.clearSelection();
+      setSelectedStruct(null);
+      setSelectedZoneId(null);
+      return;
+    }
+
+    // Vertex handle drag — start moving a structure point
+    const vertexEl = e.target?.closest?.('[data-vertex-idx]');
+    if (vertexEl && !structureLocked) {
+      const type = vertexEl.dataset.structType;
+      const id = vertexEl.dataset.structId;
+      const pointIndex = Number(vertexEl.dataset.vertexIdx);
+      undoRedo.push(snapshot());
+      vertexDragRef.current = { type, id, pointIndex, startPt: pt };
+      svgEl.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // Segment double-click handled via onSvgDoubleClick (split)
+
     // Select tool — prefer the actual SVG target for imported structures.
     const structEl = e.target?.closest?.('[data-struct-id]');
     if (structEl && !structureLocked) {
@@ -1281,21 +1512,23 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       } else if (!sel.selectedIds.has(hit.id)) {
         sel.selectOne(hit.id);
       }
-      const ids = e.shiftKey ? sel.selectedIds : (sel.selectedIds.has(hit.id) ? sel.selectedIds : new Set([hit.id]));
-      const origins = new Map();
-      for (const id of ids) {
-        const d = desks.find((dd) => dd.id === id);
-        if (d) origins.set(id, { x: deskX(d, compMap), y: deskY(d, compMap) });
+      if (!desksLocked) {
+        const ids = e.shiftKey ? sel.selectedIds : (sel.selectedIds.has(hit.id) ? sel.selectedIds : new Set([hit.id]));
+        const origins = new Map();
+        for (const id of ids) {
+          const d = desks.find((dd) => dd.id === id);
+          if (d) origins.set(id, { x: deskX(d, compMap), y: deskY(d, compMap) });
+        }
+        dragRef.current = {
+          startSvgPt: pt,
+          origins,
+          moved: false,
+          snapshot: snapshot(),
+          originBBox: boundingBoxOf(desks, ids, compMap),
+          snapAxes: collectDeskSnapAxes(desks, ids, compMap, structureSnapPoints),
+        };
+        svgEl.setPointerCapture(e.pointerId);
       }
-      dragRef.current = {
-        startSvgPt: pt,
-        origins,
-        moved: false,
-        snapshot: snapshot(),
-        originBBox: boundingBoxOf(desks, ids, compMap),
-        snapAxes: collectDeskSnapAxes(desks, ids, compMap, structureSnapPoints),
-      };
-      svgEl.setPointerCapture(e.pointerId);
       return;
     }
 
@@ -1310,6 +1543,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     if (!e.shiftKey) sel.clearSelection();
     setSelectedStruct(null);
     setSelectedZoneId(null);
+    setSelectedInfraItem(null);
     sel.startMarquee(pt, { append: e.shiftKey });
     svgEl.setPointerCapture(e.pointerId);
   }, [
@@ -1335,6 +1569,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     drawPoints,
     drawStructType,
     layerVis,
+    desksLocked,
   ]);
 
   const onSvgPointerMove = useCallback((e) => {
@@ -1354,6 +1589,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     // Pan
     if (isPanningRef.current) {
       viewport.updatePan(e);
+      return;
+    }
+
+    // Vertex drag
+    if (vertexDragRef.current) {
+      const { type, id, pointIndex } = vertexDragRef.current;
+      const snapped = { x: grid.snap(pt.x, { altSnapOff: e.altKey }), y: grid.snap(pt.y, { altSnapOff: e.altKey }) };
+      updateStructPoint(type, id, pointIndex, snapped);
       return;
     }
 
@@ -1425,9 +1668,18 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     if (isDrawMode && drawPoints.length >= minPts) {
       e.preventDefault();
       finishDraw();
+      return;
+    }
+    // Double-click on structure segment → split (add midpoint)
+    const segEl = e.target?.closest?.('[data-seg-idx]');
+    if (segEl && !structureLocked) {
+      const type = segEl.dataset.structType;
+      const id = segEl.dataset.structId;
+      const segIdx = Number(segEl.dataset.segIdx);
+      splitStructureSegment(type, id, segIdx);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDrawMode, isZoneDrawMode, drawPoints, drawStructType]);
+  }, [isDrawMode, isZoneDrawMode, drawPoints, drawStructType, structureLocked]);
 
   const onSvgPointerUp = useCallback((e) => {
     const svgEl = viewport.svgRef.current;
@@ -1436,6 +1688,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     if (isPanningRef.current) {
       isPanningRef.current = false;
       viewport.endPan();
+      try { svgEl?.releasePointerCapture(e.pointerId); } catch {}
+      return;
+    }
+
+    // Vertex drag end
+    if (vertexDragRef.current) {
+      vertexDragRef.current = null;
       try { svgEl?.releasePointerCapture(e.pointerId); } catch {}
       return;
     }
@@ -1512,8 +1771,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       doors: setStructureLockOnItems(doors, structureLocked),
       groups,
       zones,
+      infra_layers: infraLayers,
     };
-  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors, groups, structureLocked]);
+  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors, groups, zones, infraLayers, structureLocked]);
 
   /* ── save ── */
   const saveDraft = useCallback(async ({ silent = false } = {}) => {
@@ -1687,21 +1947,21 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           title="Выбор (V)"
           onClick={() => setTool('select')}
         >
-          <MousePointer size={14} />
+          <MousePointer size={14} /><KBD>V</KBD>
         </button>
         <button
           className={`ce-tool-btn ${tool === 'pan' ? 'active' : ''}`}
           title="Двигать холст (Space+drag)"
           onClick={() => setTool('pan')}
         >
-          <Move size={14} />
+          <Move size={14} /><KBD>Space</KBD>
         </button>
         <button
           className={`ce-tool-btn ${tool === 'place' ? 'active' : ''}`}
           title="Добавить объект (P)"
           onClick={() => setTool(tool === 'place' ? 'select' : 'place')}
         >
-          <Plus size={14} />
+          <Plus size={14} /><KBD>P</KBD>
         </button>
 
         <div className="ce-toolbar-sep" />
@@ -1712,15 +1972,22 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           disabled={structureLocked}
           onClick={() => { cancelDraw(); setTool(tool === 'draw_wall' ? 'select' : 'draw_wall'); }}
         >
-          <Minus size={14} />
+          <Minus size={14} /><KBD>W</KBD>
         </button>
         <button
-          className={`ce-tool-btn ${tool === 'draw_boundary' ? 'active' : ''}`}
-          title={structureLocked ? 'Слой конструкций заблокирован' : 'Контур (B)'}
-          disabled={structureLocked}
-          onClick={() => { cancelDraw(); setTool(tool === 'draw_boundary' ? 'select' : 'draw_boundary'); }}
+          className={`ce-tool-btn ${tool === 'draw_zone' ? 'active' : ''}`}
+          title="Зона (Z)"
+          onClick={() => { cancelDraw(); setTool(tool === 'draw_zone' ? 'select' : 'draw_zone'); }}
         >
-          <Square size={14} />
+          <MapIcon size={14} /><KBD>Z</KBD>
+        </button>
+        <button
+          className={`ce-tool-btn ${isInfraDrawMode ? 'active' : ''}`}
+          title={activeInfraLayerId ? 'Коммуникации (I) — рисовать линию слоя' : 'Выберите слой коммуникаций'}
+          disabled={!activeInfraLayerId}
+          onClick={() => { cancelDraw(); setTool(isInfraDrawMode ? 'select' : 'draw_infra'); }}
+        >
+          <Activity size={14} /><KBD>I</KBD>
         </button>
         <button
           className={`ce-tool-btn ${tool === 'draw_partition' ? 'active' : ''}`}
@@ -1738,25 +2005,18 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         >
           <DoorOpen size={14} />
         </button>
-        <button
-          className={`ce-tool-btn ${tool === 'draw_zone' ? 'active' : ''}`}
-          title="Нарисовать зону (кликни 3+ точки, замкни у первой)"
-          onClick={() => { cancelDraw(); setTool(tool === 'draw_zone' ? 'select' : 'draw_zone'); }}
-        >
-          <Map size={14} />
-        </button>
 
         <div className="ce-toolbar-sep" />
 
-        <button className="ce-tool-btn" title="Приблизить" onClick={() => viewport.zoomBy(1 / 1.25)}>
+        <button className="ce-tool-btn" title="Приблизить (+)" onClick={() => viewport.zoomBy(1 / 1.25)}>
           <ZoomIn size={14} />
         </button>
-        <button className="ce-tool-btn" title="Отдалить" onClick={() => viewport.zoomBy(1.25)}>
+        <button className="ce-tool-btn" title="Отдалить (−)" onClick={() => viewport.zoomBy(1.25)}>
           <ZoomOut size={14} />
         </button>
         <span className="ce-zoom-label">{Math.round(viewport.zoom * 100)}%</span>
         <button className="ce-tool-btn" title="Показать всё (F)" onClick={handleZoomToFit}>
-          <Maximize size={14} />
+          <Maximize size={14} /><KBD>F</KBD>
         </button>
 
         <div className="ce-toolbar-sep" />
@@ -1775,6 +2035,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         >
           <Magnet size={14} />
         </button>
+        <button
+          className={`ce-tool-btn ${desksLocked ? 'active' : ''}`}
+          title={desksLocked ? 'Объекты зафиксированы — нажми чтобы разблокировать (L)' : 'Зафиксировать объекты (L)'}
+          onClick={() => setDesksLocked((prev) => !prev)}
+        >
+          {desksLocked ? <Lock size={14} /> : <Unlock size={14} />}<KBD>L</KBD>
+        </button>
 
         <div className="ce-toolbar-sep" />
 
@@ -1791,6 +2058,20 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           onClick={() => { setSearchOpen(!searchOpen); setSearchQuery(''); }}
         >
           <Search size={14} />
+        </button>
+        <button
+          className={`ce-tool-btn ${kbdPanelOpen ? 'active' : ''}`}
+          title="Горячие клавиши (?)"
+          onClick={() => setKbdPanelOpen((prev) => !prev)}
+        >
+          <Keyboard size={14} />
+        </button>
+        <button
+          className="ce-tool-btn"
+          title="Экспортировать PNG"
+          onClick={exportPng}
+        >
+          <Download size={14} />
         </button>
 
         {(sel.selectedIds.size > 0 || selectedStruct) && (
@@ -2008,6 +2289,63 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               <span className="ce-layer-count">{count}</span>
             </label>
           ))}
+          {/* Infra layers section */}
+          <div className="ce-layer-sep" />
+          <span className="ce-layer-infra-title">Коммуникации</span>
+          {infraLayers.map((layer) => (
+            <div key={layer.id} className={`ce-infra-chip ${activeInfraLayerId === layer.id ? 'active' : ''}`}>
+              <button
+                className="ce-tool-btn mini"
+                onClick={() => toggleInfraLayerVisibility(layer.id)}
+                title={layer.visible ? 'Скрыть' : 'Показать'}
+              >
+                {layer.visible ? <Eye size={10} /> : <EyeOff size={10} />}
+              </button>
+              <span className="ce-infra-swatch" style={{ background: layer.color }} />
+              <button
+                className="ce-infra-name-btn"
+                title="Выбрать для рисования"
+                onClick={() => {
+                  const newId = layer.id === activeInfraLayerId ? null : layer.id;
+                  setActiveInfraLayerId(newId);
+                  if (newId) { cancelDraw(); setTool('draw_infra'); }
+                  else if (tool === 'draw_infra') setTool('select');
+                }}
+              >
+                {layer.name}
+              </button>
+              <span className="ce-layer-count">{layer.items.length}</span>
+              <button
+                className="ce-tool-btn mini danger"
+                onClick={() => removeInfraLayer(layer.id)}
+                title="Удалить слой"
+              >
+                <X size={10} />
+              </button>
+            </div>
+          ))}
+          <select
+            value=""
+            className="ce-infra-add-select"
+            onChange={(e) => {
+              const val = e.target.value;
+              if (!val) return;
+              if (val === '__custom') {
+                // eslint-disable-next-line no-alert
+                const name = window.prompt('Название слоя:');
+                if (name?.trim()) addInfraLayer(name.trim(), '#6366f1');
+              } else {
+                const preset = INFRA_PRESETS.find((p) => p.name === val);
+                if (preset) addInfraLayer(preset.name, preset.color);
+              }
+              e.target.value = '';
+            }}
+            title="Добавить слой коммуникаций"
+          >
+            <option value="">+ слой</option>
+            {INFRA_PRESETS.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+            <option value="__custom">Свой…</option>
+          </select>
         </div>
       )}
 
@@ -2135,10 +2473,57 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         </div>
       )}
 
+      {/* ── Hotkeys panel ── */}
+      {kbdPanelOpen && (
+        <div className="ce-kbd-panel">
+          <div className="ce-kbd-panel-header">
+            <span>Горячие клавиши</span>
+            <button className="ce-tool-btn mini" onClick={() => setKbdPanelOpen(false)} title="Закрыть">
+              <X size={12} />
+            </button>
+          </div>
+          <div className="ce-kbd-grid">
+            {[
+              ['V', 'Выбор объекта'],
+              ['Space', 'Навигация (зажать)'],
+              ['P', 'Добавить объект'],
+              ['W', 'Рисовать стену'],
+              ['Z', 'Рисовать зону'],
+              ['I', 'Рисовать коммуникацию'],
+              ['F', 'Показать всё на экране'],
+              ['L', 'Зафиксировать/отпустить объекты'],
+              ['Enter', 'Завершить линию'],
+              ['Esc', 'Отменить / снять выделение'],
+              ['Del / Backspace', 'Удалить выбранное'],
+              ['Ctrl+Z', 'Отменить (Undo)'],
+              ['Ctrl+Shift+Z', 'Повторить (Redo)'],
+              ['Ctrl+C', 'Копировать'],
+              ['Ctrl+V', 'Вставить'],
+              ['Ctrl+D', 'Дублировать'],
+              ['Ctrl+G', 'Сгруппировать'],
+              ['Ctrl+F', 'Поиск по объектам'],
+              ['Shift+прокрутка', 'Горизонтальный скролл'],
+              ['?', 'Открыть/закрыть эту подсказку'],
+            ].map(([key, label]) => (
+              <div key={key} className="ce-kbd-row">
+                <kbd className="ce-kbd-key">{key}</kbd>
+                <span>{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Hint bar ── */}
       {isDrawMode && (
         <div className="ce-hint-bar">
-          Рисование: <strong>{structureLabel(drawStructType).toLowerCase()}</strong> — кликом добавляйте точки
+          Рисование:{' '}
+          <strong>
+            {drawStructType === 'infra'
+              ? (infraLayers.find((l) => l.id === activeInfraLayerId)?.name || 'коммуникации')
+              : structureLabel(drawStructType).toLowerCase()}
+          </strong>
+          {' '}— кликом добавляйте точки
           {isZoneDrawMode
             ? (drawPoints.length >= 3
                 ? ', нажмите у первой точки чтобы замкнуть'
@@ -2255,6 +2640,42 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               );
             })}
           </g>
+
+          {/* Infra layers rendering */}
+          {infraLayers.filter((l) => l.visible).map((layer) => (
+            <g key={layer.id}>
+              {layer.items.map((item) => {
+                const pts = item.pts || [];
+                if (pts.length < 2) return null;
+                const isSel = selectedInfraItem?.layerId === layer.id && selectedInfraItem?.itemId === item.id;
+                return (
+                  <g key={item.id}>
+                    {/* Wide transparent hit area */}
+                    <polyline
+                      points={pts.map((p) => `${p[0]},${p[1]}`).join(' ')}
+                      fill="none"
+                      stroke="transparent"
+                      strokeWidth={12}
+                      strokeLinecap="round"
+                      data-infra-layer={layer.id}
+                      data-infra-item={item.id}
+                      style={{ cursor: tool === 'select' ? 'pointer' : undefined }}
+                    />
+                    <polyline
+                      points={pts.map((p) => `${p[0]},${p[1]}`).join(' ')}
+                      fill="none"
+                      stroke={isSel ? '#2563eb' : layer.color}
+                      strokeWidth={isSel ? 4 : 2.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity={isSel ? 1 : 0.85}
+                      style={{ pointerEvents: 'none' }}
+                    />
+                  </g>
+                );
+              })}
+            </g>
+          ))}
 
           {/* Zone draw preview */}
           {isZoneDrawMode && drawPoints.length > 0 && (() => {
@@ -2387,12 +2808,51 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             })}
           </g>
 
+          {/* Vertex handles + segment hit areas for selected structure */}
+          {selectedStruct && !structureLocked && (() => {
+            const item = getStructList(selectedStruct.type).find((s) => s.id === selectedStruct.id);
+            if (!item) return null;
+            const pts = (item.pts || item.points || []).map(ptFromArr);
+            const handleR = viewport.worldUnitsForPx(5);
+            return (
+              <g className="ce-vertex-handles">
+                {pts.length >= 2 && pts.slice(0, -1).map((a, idx) => {
+                  const b = pts[idx + 1];
+                  return (
+                    <line
+                      key={`seg${idx}`}
+                      data-seg-idx={idx}
+                      data-struct-type={selectedStruct.type}
+                      data-struct-id={selectedStruct.id}
+                      x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                      stroke="transparent" strokeWidth={Math.max(handleR * 2, 8)}
+                      style={{ cursor: 'copy' }}
+                    />
+                  );
+                })}
+                {pts.map((p, idx) => (
+                  <circle
+                    key={`v${idx}`}
+                    data-vertex-idx={idx}
+                    data-struct-type={selectedStruct.type}
+                    data-struct-id={selectedStruct.id}
+                    cx={p.x} cy={p.y} r={handleR}
+                    fill="#fff" stroke="#2563eb" strokeWidth={Math.max(1.5, handleR * 0.4)}
+                    style={{ cursor: 'move' }}
+                  />
+                ))}
+              </g>
+            );
+          })()}
+
           {/* Draw preview polyline (not for zone — zone has its own preview above) */}
           {isDrawMode && !isZoneDrawMode && drawPoints.length > 0 && (() => {
             const allPts = drawPreviewPt
               ? [...drawPoints, drawPreviewPt]
               : drawPoints;
-            const color = STRUCT_COLORS[drawStructType] || '#2563eb';
+            const color = drawStructType === 'infra'
+              ? (infraLayers.find((l) => l.id === activeInfraLayerId)?.color || '#f59e0b')
+              : (STRUCT_COLORS[drawStructType] || '#2563eb');
             return (
               <g className="ce-draw-preview">
                 <polyline
@@ -2676,6 +3136,17 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             )}
           </g>
         </svg>
+
+        {/* ── Minimap ── */}
+        <Minimap
+          canvasW={canvasW}
+          canvasH={canvasH}
+          vb={viewport.vb}
+          desks={desks}
+          walls={visibleWalls}
+          boundaries={visibleBoundaries}
+          onPanTo={viewport.panTo}
+        />
       </div>
 
       {/* ── Zone properties panel ── */}
@@ -2721,6 +3192,90 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                 style={{ width: 36, height: 24, padding: 1, cursor: 'pointer' }}
               />
             </label>
+          </div>
+        );
+      })()}
+
+      {/* ── Structure properties panel ── */}
+      {selectedStruct && !structureLocked && (() => {
+        const item = getStructList(selectedStruct.type).find((s) => s.id === selectedStruct.id);
+        if (!item) return null;
+        const defaultThick = selectedStruct.type === 'wall' ? 4 : selectedStruct.type === 'door' ? 2.5 : 3;
+        const thick = item.thick ?? defaultThick;
+        const setter = getStructSetter(selectedStruct.type);
+        function patchStruct(patch) {
+          setter((prev) => prev.map((s) => s.id === selectedStruct.id ? { ...s, ...patch } : s));
+          setDirty(true);
+        }
+        return (
+          <div className="ce-struct-props">
+            <div className="ce-struct-props-header">
+              <span>{structureLabel(selectedStruct.type)}</span>
+              <span className="ce-struct-pts-count">
+                {(item.pts || item.points || []).length} точек
+              </span>
+              <button className="ce-tool-btn mini danger" title="Удалить (Del)" onClick={deleteSelectedStruct}>
+                <Trash2 size={12} />
+              </button>
+            </div>
+            <label className="ce-prop-row">
+              <span>Толщина</span>
+              <input
+                type="range"
+                min={1} max={24} step={0.5}
+                value={thick}
+                onChange={(e) => patchStruct({ thick: Number(e.target.value) })}
+                style={{ flex: 1, minWidth: 60 }}
+              />
+              <span className="ce-struct-thick-val">{thick}</span>
+            </label>
+            {selectedStruct.type === 'boundary' && (
+              <label className="ce-prop-row">
+                <span>Метка</span>
+                <input
+                  type="text"
+                  value={item.label || ''}
+                  placeholder="—"
+                  onChange={(e) => patchStruct({ label: e.target.value })}
+                  style={{ flex: 1 }}
+                />
+              </label>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── Infra item properties panel ── */}
+      {selectedInfraItem && (() => {
+        const layer = infraLayers.find((l) => l.id === selectedInfraItem.layerId);
+        const item = layer?.items.find((i) => i.id === selectedInfraItem.itemId);
+        if (!layer || !item) return null;
+        return (
+          <div className="ce-struct-props">
+            <div className="ce-struct-props-header">
+              <span
+                className="ce-infra-swatch"
+                style={{ background: layer.color, width: 12, height: 12 }}
+              />
+              <span>{layer.name}</span>
+              <span className="ce-struct-pts-count">{item.pts.length} точек</span>
+              <button
+                className="ce-tool-btn mini danger"
+                title="Удалить линию (Del)"
+                onClick={() => {
+                  undoRedo.push(snapshot());
+                  setInfraLayers((prev) => prev.map((l) =>
+                    l.id === selectedInfraItem.layerId
+                      ? { ...l, items: l.items.filter((i) => i.id !== selectedInfraItem.itemId) }
+                      : l
+                  ));
+                  setSelectedInfraItem(null);
+                  setDirty(true);
+                }}
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
           </div>
         );
       })()}

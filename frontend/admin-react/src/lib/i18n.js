@@ -28,6 +28,7 @@ export const STRUCTURE_LABELS = {
   doors: 'Двери',
   zone: 'Зона',
   zones: 'Зоны',
+  infra: 'Коммуникации',
   uncertain: 'Не распознано',
   skipped: 'Пропущено',
   unknown: 'Неизвестно',

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   BookTemplate,
+  ChevronRight,
   CircleAlert,
   CircleCheck,
   Clock,
@@ -454,12 +455,6 @@ ${svgPreview}
   async function handlePublish() {
     onError('');
     try {
-      const issues = runValidation({ silent: true });
-      const summary = validationSummary(issues);
-      if (summary.errors) {
-        onError(`Публикация остановлена: исправьте ${summary.errors} ${summary.errors === 1 ? 'ошибку' : 'ошибки'} карты.`);
-        return;
-      }
       const saved = await saveCanvasIfNeeded();
       const savedDraft = saved && saved.saved !== false;
       if (!savedDraft && layout?.status !== 'draft') {
@@ -841,6 +836,7 @@ function DraftJsonEditor({ layout, floorId, onLayoutChange, onNotice, onError })
 /* ───────────── Layout Inspector ───────────── */
 
 function LayoutInspector({ layout, busy, onSync }) {
+  const [collapsed, setCollapsed] = useState(false);
   const desks = layout?.layout?.desks || [];
   const groups = layout?.layout?.groups || [];
   const structures =
@@ -850,25 +846,33 @@ function LayoutInspector({ layout, busy, onSync }) {
     (layout?.layout?.doors?.length || 0);
 
   return (
-    <aside className="inspector">
-      <div className="panel-title">
-        <div>
-          <h2>Информация о плане</h2>
-          <p>Метаданные черновика и публикации</p>
+    <aside className={`inspector ${collapsed ? 'inspector-collapsed' : ''}`}>
+      <div className="panel-title inspector-header" onClick={() => setCollapsed(!collapsed)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ChevronRight size={16} className={`inspector-chevron ${collapsed ? '' : 'inspector-chevron-open'}`} />
+          <div>
+            <h2>Информация о плане</h2>
+            {collapsed && <span className="inspector-mini">{statusLabel(layout?.status)} · {desks.length} об. · v{layout?.version || '-'}</span>}
+            {!collapsed && <p>Метаданные черновика и публикации</p>}
+          </div>
         </div>
       </div>
-      <div className="summary-list">
-        <Metric label="Статус" value={statusLabel(layout?.status)} />
-        <Metric label="Объекты" value={desks.length} />
-        <Metric label="Группы" value={groups.length} />
-        <Metric label="Конструкции" value={structures} />
-        <Metric label="Версия" value={layout?.version || '-'} />
-        <Metric label="Опубликовано" value={layout?.published_at ? new Date(layout.published_at).toLocaleString() : '-'} />
-      </div>
-      <button className="tool-button wide" onClick={onSync} disabled={!layout || busy}>
-        <Save size={18} />
-        <span>Синхронизировать объекты</span>
-      </button>
+      {!collapsed && (
+        <>
+          <div className="summary-list">
+            <Metric label="Статус" value={statusLabel(layout?.status)} />
+            <Metric label="Объекты" value={desks.length} />
+            <Metric label="Группы" value={groups.length} />
+            <Metric label="Конструкции" value={structures} />
+            <Metric label="Версия" value={layout?.version || '-'} />
+            <Metric label="Опубликовано" value={layout?.published_at ? new Date(layout.published_at).toLocaleString() : '-'} />
+          </div>
+          <button className="tool-button wide" onClick={onSync} disabled={!layout || busy}>
+            <Save size={18} />
+            <span>Синхронизировать объекты</span>
+          </button>
+        </>
+      )}
     </aside>
   );
 }

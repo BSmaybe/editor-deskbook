@@ -87,8 +87,10 @@ export default function PropertiesPanel({
 function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelectGroup }) {
   const [label, setLabel] = useState(desk.label || '');
   const [inventoryNo, setInventoryNo] = useState(desk.inventory_number || '');
+  const [assignedTo, setAssignedTo] = useState(desk.assigned_to || '');
   const [deskType, setDeskType] = useState(desk.type || 'flex');
   const [spaceType, setSpaceType] = useState(desk.space_type || desk.asset_type || 'desk');
+  const [bookable, setBookable] = useState(desk.bookable ?? false);
   const [componentId, setComponentId] = useState(desk.component_id || '');
   const [rotation, setRotation] = useState(desk.r ?? desk.rotation ?? 0);
   const [w, setW] = useState(desk.w || 100);
@@ -99,8 +101,10 @@ function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelect
   useEffect(() => {
     setLabel(desk.label || '');
     setInventoryNo(desk.inventory_number || '');
+    setAssignedTo(desk.assigned_to || '');
     setDeskType(desk.type || 'flex');
     setSpaceType(desk.space_type || desk.asset_type || 'desk');
+    setBookable(desk.bookable ?? false);
     setComponentId(desk.component_id || '');
     setRotation(desk.r ?? desk.rotation ?? 0);
     setW(desk.w || 100);
@@ -147,6 +151,30 @@ function SingleDeskPanel({ desk, components, group, onUpdate, onDelete, onSelect
           onBlur={() => commit({ inventory_number: inventoryNo })}
           onKeyDown={(e) => e.key === 'Enter' && commit({ inventory_number: inventoryNo })}
           placeholder="—"
+        />
+      </div>
+
+      <div className="prop-group">
+        <label>Сотрудник</label>
+        <input
+          type="text"
+          value={assignedTo}
+          onChange={(e) => setAssignedTo(e.target.value)}
+          onBlur={() => commit({ assigned_to: assignedTo })}
+          onKeyDown={(e) => e.key === 'Enter' && commit({ assigned_to: assignedTo })}
+          placeholder="—"
+        />
+      </div>
+
+      <div className="prop-group prop-group--inline">
+        <label>Бронируется</label>
+        <input
+          type="checkbox"
+          checked={bookable}
+          onChange={(e) => {
+            setBookable(e.target.checked);
+            commit({ bookable: e.target.checked });
+          }}
         />
       </div>
 
