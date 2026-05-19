@@ -288,7 +288,8 @@ function App() {
 
         <Notice notice={notice} error={error} />
 
-        {activeTab === 'layout' && (
+        {/* LayoutPanel stays mounted to preserve canvas viewport, undo history and selection */}
+        <div style={{ display: activeTab === 'layout' ? 'contents' : 'none' }}>
           <LayoutPanel
             floorId={selectedFloorId}
             selectedFloor={selectedFloor}
@@ -303,7 +304,7 @@ function App() {
             onNotice={setNotice}
             onError={setError}
           />
-        )}
+        </div>
         {activeTab === 'buildings' && (
           <BuildingPanel
             offices={offices}
