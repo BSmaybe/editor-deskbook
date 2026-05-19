@@ -4522,8 +4522,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         {grid.gridVisible && (
           <>
             <span className="ce-statusbar-sep ce-statusbar-secondary">·</span>
-            <span className="ce-statusbar-item ce-statusbar-secondary" title="Метрическая сетка зависит от масштаба">
-              сетка: 0.25 м / 1 м
+            <span className="ce-statusbar-item ce-statusbar-secondary" title="Метрическая сетка: малый шаг / большой шаг">
+              сетка: {formatMeters(metricGridStep, pixelsPerMeter)} м / {formatMeters(metricGridStep * METRIC_GRID_DIVISIONS, pixelsPerMeter)} м
             </span>
           </>
         )}
