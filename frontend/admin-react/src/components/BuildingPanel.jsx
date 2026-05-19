@@ -224,13 +224,17 @@ export default function BuildingPanel({
       </section>
 
       <section className="building-create-panel">
+        <div className="building-create-title">
+          <strong>Создать новое здание</strong>
+          <span>Используйте это только для нового адреса или корпуса. Этажи добавляются ниже внутри нужного здания.</span>
+        </div>
         <form className="building-create-form" onSubmit={createOffice}>
           <label>
-            <span>Здание</span>
+            <span>Название здания</span>
             <input
               value={newOffice.name}
               onChange={(event) => setNewOffice((prev) => ({ ...prev, name: event.target.value }))}
-              placeholder="Например, HQ Almaty"
+              placeholder="Например, Альфараби 38"
               disabled={!!busyAction}
             />
           </label>
@@ -248,13 +252,13 @@ export default function BuildingPanel({
             <input
               value={newOffice.firstFloor}
               onChange={(event) => setNewOffice((prev) => ({ ...prev, firstFloor: event.target.value }))}
-              placeholder="Можно оставить пустым"
+              placeholder="Например, 1 этаж"
               disabled={!!busyAction}
             />
           </label>
           <button className="tool-button" disabled={!!busyAction}>
             <Plus size={18} />
-            <span>Создать</span>
+            <span>Создать здание</span>
           </button>
         </form>
       </section>
@@ -314,17 +318,23 @@ export default function BuildingPanel({
               </div>
 
               {!row.readonly && (
-                <div className="floor-create-row">
-                  <input
-                    value={floorDraft}
-                    onChange={(event) => setNewFloorNameByOffice((prev) => ({ ...prev, [row.office.id]: event.target.value }))}
-                    placeholder="Новый этаж"
-                    disabled={!!busyAction}
-                  />
-                  <button className="tool-button sm secondary" onClick={() => createFloor(row.office.id)} disabled={!!busyAction || !trimValue(floorDraft)}>
-                    <Plus size={16} />
-                    <span>Этаж</span>
-                  </button>
+                <div className="floor-create-wrap">
+                  <div className="floor-create-copy">
+                    <strong>Добавить этаж в «{row.office.name}»</strong>
+                    <span>Новый этаж будет привязан к этому зданию, новое здание создавать не нужно.</span>
+                  </div>
+                  <div className="floor-create-row">
+                    <input
+                      value={floorDraft}
+                      onChange={(event) => setNewFloorNameByOffice((prev) => ({ ...prev, [row.office.id]: event.target.value }))}
+                      placeholder="Например, 7 этаж"
+                      disabled={!!busyAction}
+                    />
+                    <button className="tool-button sm secondary" onClick={() => createFloor(row.office.id)} disabled={!!busyAction || !trimValue(floorDraft)}>
+                      <Plus size={16} />
+                      <span>Добавить этаж</span>
+                    </button>
+                  </div>
                 </div>
               )}
 

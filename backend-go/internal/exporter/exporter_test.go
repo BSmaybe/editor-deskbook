@@ -89,11 +89,39 @@ func TestRejectUnsafeCustomSVG(t *testing.T) {
 	}
 }
 
+func TestRenderStructureUsesEditorThicknessFallbacks(t *testing.T) {
+	svg, err := RenderSVG(LayoutDocument{
+		ViewBox: []float64{0, 0, 100, 80},
+		Walls: []StructureElement{{
+			ID: "wall-a", PTS: [][]float64{{0, 0}, {10, 0}},
+		}},
+		Partitions: []StructureElement{{
+			ID: "partition-a", PTS: [][]float64{{0, 10}, {10, 10}},
+		}},
+		Doors: []StructureElement{{
+			ID: "door-a", PTS: [][]float64{{0, 20}, {10, 20}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("RenderSVG failed: %v", err)
+	}
+	assertContains(t, svg, `class="wall" id="wall-a" points="0,0 10,0" fill="none" fill-opacity="0" stroke="#2f343b" stroke-width="4"`)
+	assertContains(t, svg, `class="partition" id="partition-a" points="0,10 10,10" fill="none" fill-opacity="0" stroke="#4b5563" stroke-width="3"`)
+	assertContains(t, svg, `class="door" id="door-a" points="0,20 10,20" fill="none" fill-opacity="0" stroke="#1f2937" stroke-width="2.5"`)
+}
+
 func TestParseLayoutJSONPreservesEditorBackground(t *testing.T) {
 	doc, err := ParseLayoutJSON([]byte(`{
 		"v":1,
 		"vb":[0,0,100,80],
-		"background":{"image":"data:image/png;base64,AAAA","opacity":0.42,"visible":false},
+		"background":{
+			"image":"data:image/png;base64,AAAA",
+			"opacity":0.42,
+			"visible":false,
+			"locked":true,
+			"transform":{"x":10,"y":20,"w":300,"h":200,"rotation":5},
+			"calibration":{"distance_m":10,"points":[[10,20],[110,20]]}
+		},
 		"tracing_background":{"src":"/uploads/floor.png","opacity":0.33,"visible":true}
 	}`))
 	if err != nil {
@@ -108,6 +136,15 @@ func TestParseLayoutJSONPreservesEditorBackground(t *testing.T) {
 	if doc.Background.Visible == nil || *doc.Background.Visible {
 		t.Fatalf("expected background.visible=false, got %#v", doc.Background.Visible)
 	}
+	if !doc.Background.Locked {
+		t.Fatal("expected background.locked=true")
+	}
+	if doc.Background.Transform == nil || doc.Background.Transform.W != 300 || doc.Background.Transform.Rotation != 5 {
+		t.Fatalf("unexpected background transform: %#v", doc.Background.Transform)
+	}
+	if doc.Background.Calibration == nil || doc.Background.Calibration.DistanceM != 10 || len(doc.Background.Calibration.Points) != 2 {
+		t.Fatalf("unexpected background calibration: %#v", doc.Background.Calibration)
+	}
 	if doc.TracingBackground == nil {
 		t.Fatal("expected tracing_background to be preserved")
 	}
@@ -120,6 +157,9 @@ func TestParseLayoutJSONPreservesEditorBackground(t *testing.T) {
 	assertContains(t, output, `"background"`)
 	assertContains(t, output, `"image":"data:image/png;base64,AAAA"`)
 	assertContains(t, output, `"visible":false`)
+	assertContains(t, output, `"locked":true`)
+	assertContains(t, output, `"transform":{"x":10,"y":20,"w":300,"h":200,"rotation":5}`)
+	assertContains(t, output, `"calibration":{"distance_m":10,"points":[[10,20],[110,20]]}`)
 	assertContains(t, output, `"tracing_background"`)
 	assertContains(t, output, `"src":"/uploads/floor.png"`)
 }

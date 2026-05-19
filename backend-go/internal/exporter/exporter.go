@@ -616,14 +616,14 @@ func zoneDefaultColor(zoneType string) string {
 
 func appendStructure(w *xmlWriter, doc LayoutDocument) {
 	w.start("g", a("class", "structure"), a("data-layer", "structure"))
-	appendStructureGroup(w, "boundaries", "zone-boundary", doc.Boundaries, "#1d4ed8", true)
-	appendStructureGroup(w, "walls", "wall", doc.Walls, "#2f343b", false)
-	appendStructureGroup(w, "partitions", "partition", doc.Partitions, "#4b5563", false)
-	appendStructureGroup(w, "doors", "door", doc.Doors, "#1f2937", false)
+	appendStructureGroup(w, "boundaries", "zone-boundary", doc.Boundaries, "#1d4ed8", true, 1.5)
+	appendStructureGroup(w, "walls", "wall", doc.Walls, "#2f343b", false, 4)
+	appendStructureGroup(w, "partitions", "partition", doc.Partitions, "#4b5563", false, 3)
+	appendStructureGroup(w, "doors", "door", doc.Doors, "#1f2937", false, 2.5)
 	w.end("g")
 }
 
-func appendStructureGroup(w *xmlWriter, layerName, className string, items []StructureElement, fallbackStroke string, allowFill bool) {
+func appendStructureGroup(w *xmlWriter, layerName, className string, items []StructureElement, fallbackStroke string, allowFill bool, fallbackThick float64) {
 	w.start("g", a("class", layerName), a("data-layer", layerName))
 	for _, item := range items {
 		pts := points(item.PTS)
@@ -641,6 +641,10 @@ func appendStructureGroup(w *xmlWriter, layerName, className string, items []Str
 			fill = stroke
 			fillOpacity = "0.10"
 		}
+		thick := finite(item.Thick, fallbackThick)
+		if thick <= 0 {
+			thick = fallbackThick
+		}
 		attrs := []attr{
 			a("class", className),
 			a("id", safeID(item.ID, className+"-item")),
@@ -648,7 +652,7 @@ func appendStructureGroup(w *xmlWriter, layerName, className string, items []Str
 			a("fill", fill),
 			a("fill-opacity", fillOpacity),
 			a("stroke", stroke),
-			a("stroke-width", num(math.Max(0.1, finite(item.Thick, 1)))),
+			a("stroke-width", num(math.Max(0.1, thick))),
 			a("stroke-linecap", "butt"),
 			a("stroke-linejoin", "round"),
 		}

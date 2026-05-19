@@ -73,6 +73,7 @@ import {
   Save,
   Search,
   Square,
+  Target,
   Trash2,
   Ungroup,
   Undo2,
@@ -121,6 +122,13 @@ const STRUCT_OPACITY = {
   wall: 1, boundary: 0.3, partition: 0.7, door: 1,
 };
 
+const STRUCT_THICKNESS = {
+  wall: 4,
+  boundary: 1.5,
+  partition: 3,
+  door: 2.5,
+};
+
 const ZONE_TYPES = [
   { id: 'kitchen',    label: 'Кухня',        color: '#fef08a' },
   { id: 'reception',  label: 'Ресепшен',     color: '#bfdbfe' },
@@ -141,6 +149,9 @@ const VERTEX_SNAP_PX = 12;
 const LINE_SNAP_PX = 10;
 const OBJECT_SNAP_PX = 8;
 const MIN_BOUNDARY_AREA = 100;
+const CANVAS_MIN_SIZE = 200;
+const CANVAS_MAX_SIZE = 8000;
+const MIN_BACKGROUND_SIZE = 40;
 
 const PLACE_SIZE_MODES = [
   { id: 's', label: 'S', scale: 0.75 },
@@ -192,6 +203,30 @@ function sameNumber(a, b) {
   return left !== null && right !== null && Math.abs(left - right) < 0.01;
 }
 
+function defaultStructThickness(type) {
+  return STRUCT_THICKNESS[type] || 3;
+}
+
+function structureThickness(item, type) {
+  const n = finiteNumber(item?.thick);
+  return n !== null && n > 0 ? n : defaultStructThickness(type);
+}
+
+function sanitizeCanvasDim(value) {
+  return String(value ?? '').replace(/[^\d]/g, '');
+}
+
+function parseCanvasDim(value) {
+  const raw = sanitizeCanvasDim(value);
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+function clampCanvasDim(value) {
+  return Math.max(CANVAS_MIN_SIZE, Math.min(CANVAS_MAX_SIZE, value));
+}
+
 function componentDefaultSize(component, fallback = { w: 100, h: 60 }) {
   return {
     w: Math.max(1, finiteNumber(component?.default_w) ?? fallback.w),
@@ -215,11 +250,102 @@ function backgroundFromLayout(layoutDoc) {
     ? raw.image
     : (typeof raw?.src === 'string' ? raw.src : (typeof raw?.href === 'string' ? raw.href : null));
   const opacity = finiteNumber(raw?.opacity);
+  const transform = raw?.transform || layoutDoc?.bg_transform || null;
   return {
     image: image || null,
     opacity: opacity === null ? 0.3 : Math.max(0.05, Math.min(1, opacity)),
     visible: raw?.visible === false ? false : true,
+    locked: raw?.locked === true,
+    transform,
+    calibration: raw?.calibration || null,
   };
+}
+
+function defaultBackgroundTransform(canvasW, canvasH) {
+  return { x: 0, y: 0, w: Math.max(1, canvasW), h: Math.max(1, canvasH), rotation: 0 };
+}
+
+function normalizeBackgroundTransform(transform, canvasW, canvasH) {
+  const fallback = defaultBackgroundTransform(canvasW, canvasH);
+  if (!transform || typeof transform !== 'object') return fallback;
+  const x = finiteNumber(transform.x);
+  const y = finiteNumber(transform.y);
+  const w = finiteNumber(transform.w);
+  const h = finiteNumber(transform.h);
+  const rotation = finiteNumber(transform.rotation ?? transform.r);
+  if (x === null || y === null || w === null || h === null || w <= 0 || h <= 0) {
+    return fallback;
+  }
+  return {
+    x,
+    y,
+    w: Math.max(MIN_BACKGROUND_SIZE, w),
+    h: Math.max(MIN_BACKGROUND_SIZE, h),
+    rotation: rotation === null ? 0 : rotation,
+  };
+}
+
+function fitBackgroundTransform(imageSize, canvasW, canvasH) {
+  const iw = finiteNumber(imageSize?.w);
+  const ih = finiteNumber(imageSize?.h);
+  if (iw === null || ih === null || iw <= 0 || ih <= 0) {
+    return defaultBackgroundTransform(canvasW, canvasH);
+  }
+  const scale = Math.min(canvasW / iw, canvasH / ih);
+  const w = Math.max(MIN_BACKGROUND_SIZE, iw * scale);
+  const h = Math.max(MIN_BACKGROUND_SIZE, ih * scale);
+  return {
+    x: (canvasW - w) / 2,
+    y: (canvasH - h) / 2,
+    w,
+    h,
+    rotation: 0,
+  };
+}
+
+function backgroundCenter(transform) {
+  return { x: transform.x + transform.w / 2, y: transform.y + transform.h / 2 };
+}
+
+function rotatePoint(pt, center, degrees) {
+  const rad = degrees * Math.PI / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const dx = pt.x - center.x;
+  const dy = pt.y - center.y;
+  return {
+    x: center.x + dx * cos - dy * sin,
+    y: center.y + dx * sin + dy * cos,
+  };
+}
+
+function inverseRotatePoint(pt, transform) {
+  return rotatePoint(pt, backgroundCenter(transform), -(transform.rotation || 0));
+}
+
+function backgroundHandlePoints(transform) {
+  const center = backgroundCenter(transform);
+  const raw = {
+    nw: { x: transform.x, y: transform.y },
+    ne: { x: transform.x + transform.w, y: transform.y },
+    sw: { x: transform.x, y: transform.y + transform.h },
+    se: { x: transform.x + transform.w, y: transform.y + transform.h },
+    n: { x: transform.x + transform.w / 2, y: transform.y },
+    rotate: { x: transform.x + transform.w / 2, y: transform.y - Math.max(28, transform.h * 0.08) },
+  };
+  return Object.fromEntries(Object.entries(raw).map(([key, pt]) => [key, rotatePoint(pt, center, transform.rotation || 0)]));
+}
+
+function measureImageSize(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({
+      w: img.naturalWidth || img.width || 0,
+      h: img.naturalHeight || img.height || 0,
+    });
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
 }
 
 function componentForDesk(desk, compMap) {
@@ -658,6 +784,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         setBgImage(snapshot.background.image || null);
         setBgOpacity(snapshot.background.opacity ?? 0.3);
         setBgVisible(snapshot.background.visible !== false);
+        setBgLocked(snapshot.background.locked === true);
+        setBgTransform(normalizeBackgroundTransform(snapshot.background.transform, canvasW, canvasH));
+        setBgCalibration(snapshot.background.calibration || null);
+        setBgCalibrationPoints([]);
+        setBgCalibrationInput('');
       }
       setStructureLocked(
         snapshot.structureLocked ??
@@ -666,7 +797,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       sel.clearSelection();
       setSelectedStruct(null);
       setDirty(true);
-    }, [sel]),
+    }, [sel, canvasW, canvasH]),
   });
 
   /* ── drag state (ref — does not need re-render) ── */
@@ -680,6 +811,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   /* ── rotation drag state ── */
   const rotateRef = useRef(null);
   // { deskId, center, startAngle, origR }
+
+  /* ── background image drag state ── */
+  const bgDragRef = useRef(null);
+  // { action, startPt, origTransform, corner }
 
   /* ── vertex drag state for structure points ── */
   const vertexDragRef = useRef(null);
@@ -719,6 +854,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const [bgImage, setBgImage] = useState(null);       // data URL or null
   const [bgOpacity, setBgOpacity] = useState(0.3);    // 0–1
   const [bgVisible, setBgVisible] = useState(true);
+  const [bgLocked, setBgLocked] = useState(false);
+  const [bgTransform, setBgTransform] = useState(() => defaultBackgroundTransform(canvasW, canvasH));
+  const [bgCalibration, setBgCalibration] = useState(null);
+  const [bgCalibrationPoints, setBgCalibrationPoints] = useState([]);
+  const [bgCalibrationInput, setBgCalibrationInput] = useState('');
+  const [bgNaturalSize, setBgNaturalSize] = useState(null);
   const [bgPdfData, setBgPdfData] = useState(null);   // Uint8Array for page switching
   const [bgPdfPages, setBgPdfPages] = useState(0);    // total pages in loaded PDF
   const [bgPdfPage, setBgPdfPage] = useState(1);      // current page (1-indexed)
@@ -726,6 +867,35 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const bgFileRef = useRef(null);
   const toolbarTipTargetRef = useRef(null);
   const [toolbarTip, setToolbarTip] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!bgImage) {
+      setBgNaturalSize(null);
+      return undefined;
+    }
+    measureImageSize(bgImage).then((size) => {
+      if (!cancelled) setBgNaturalSize(size);
+    });
+    return () => { cancelled = true; };
+  }, [bgImage]);
+
+  async function applyLoadedBackground(dataUrl, { pdfData = null, totalPages = 0, page = 1 } = {}) {
+    const imageSize = await measureImageSize(dataUrl);
+    undoRedo.push(snapshot());
+    setBgPdfData(pdfData);
+    setBgPdfPages(totalPages);
+    setBgPdfPage(page);
+    setBgImage(dataUrl);
+    setBgNaturalSize(imageSize);
+    setBgTransform(fitBackgroundTransform(imageSize, canvasW, canvasH));
+    setBgLocked(false);
+    setBgCalibration(null);
+    setBgCalibrationPoints([]);
+    setBgCalibrationInput('');
+    setBgVisible(true);
+    setDirty(true);
+  }
 
   function onBgFileChange(e) {
     const file = e.target.files?.[0];
@@ -735,15 +905,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     if (file.type === 'application/pdf') {
       setBgPdfLoading(true);
       loadPdfPage(file, 1)
-        .then(({ dataUrl, totalPages, pdfData }) => {
-          undoRedo.push(snapshot());
-          setBgPdfData(pdfData);
-          setBgPdfPages(totalPages);
-          setBgPdfPage(1);
-          setBgImage(dataUrl);
-          setBgVisible(true);
-          setDirty(true);
-        })
+        .then(({ dataUrl, totalPages, pdfData }) => applyLoadedBackground(dataUrl, { pdfData, totalPages, page: 1 }))
         .catch((err) => onError?.(`PDF: ${err.message}`))
         .finally(() => setBgPdfLoading(false));
       return;
@@ -752,13 +914,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     // Regular image (PNG / JPEG / WebP / SVG)
     const reader = new FileReader();
     reader.onload = (ev) => {
-      undoRedo.push(snapshot());
-      setBgPdfData(null);
-      setBgPdfPages(0);
-      setBgPdfPage(1);
-      setBgImage(ev.target.result);
-      setBgVisible(true);
-      setDirty(true);
+      applyLoadedBackground(ev.target.result, { pdfData: null, totalPages: 0, page: 1 })
+        .catch((err) => onError?.(`Фон: ${err.message}`));
     };
     reader.readAsDataURL(file);
   }
@@ -775,6 +932,71 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       })
       .catch((err) => onError?.(`PDF: ${err.message}`))
       .finally(() => setBgPdfLoading(false));
+  }
+
+  function fitBackgroundToCanvas() {
+    if (!bgImage) return;
+    undoRedo.push(snapshot());
+    setBgTransform(fitBackgroundTransform(bgNaturalSize, canvasW, canvasH));
+    setBgCalibration(null);
+    setBgCalibrationPoints([]);
+    setBgCalibrationInput('');
+    setDirty(true);
+  }
+
+  function toggleBackgroundLock() {
+    if (!bgImage) return;
+    undoRedo.push(snapshot());
+    const nextLocked = !bgLocked;
+    setBgLocked(nextLocked);
+    if (nextLocked && tool === 'bg_edit') setTool('select');
+    setDirty(true);
+  }
+
+  function startBackgroundCalibration() {
+    if (!bgImage) return;
+    cancelDraw();
+    sel.clearSelection();
+    setSelectedStruct(null);
+    setSelectedZoneId(null);
+    setSelectedInfraItem(null);
+    setBgCalibrationPoints([]);
+    setBgCalibrationInput('');
+    setTool(tool === 'bg_calibrate' ? 'select' : 'bg_calibrate');
+  }
+
+  function confirmBackgroundCalibration() {
+    if (bgCalibrationPoints.length !== 2) return;
+    const distanceM = Number(bgCalibrationInput);
+    if (!Number.isFinite(distanceM) || distanceM <= 0) {
+      onError?.('Введите расстояние в метрах больше 0');
+      return;
+    }
+    const [a, b] = bgCalibrationPoints;
+    const distancePx = Math.hypot(b.x - a.x, b.y - a.y);
+    if (!Number.isFinite(distancePx) || distancePx <= 0) {
+      onError?.('Точки калибровки должны быть разными');
+      return;
+    }
+    const nextPpm = Math.max(10, Math.min(2000, Math.round(distancePx / distanceM)));
+    undoRedo.push(snapshot());
+    setPixelsPerMeter(nextPpm);
+    setBgCalibration({
+      distance_m: distanceM,
+      points: bgCalibrationPoints.map((p) => [p.x, p.y]),
+    });
+    setBgLocked(true);
+    setBgCalibrationPoints([]);
+    setBgCalibrationInput('');
+    setTool('select');
+    setDirty(true);
+    onNotice?.(`Масштаб: 1м=${nextPpm}px`);
+  }
+
+  function cancelBackgroundCalibration() {
+    setBgCalibrationPoints([]);
+    setBgCalibrationInput('');
+    if (tool === 'bg_calibrate') setTool('select');
   }
 
   function restoreTooltipTitle(node) {
@@ -903,6 +1125,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         image: bgImage,
         opacity: bgOpacity,
         visible: bgVisible,
+        locked: bgLocked,
+        transform: bgTransform,
+        calibration: bgCalibration,
       },
     };
   }
@@ -997,6 +1222,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setBgImage(nextBackground.image);
     setBgOpacity(nextBackground.opacity);
     setBgVisible(nextBackground.visible);
+    setBgLocked(nextBackground.locked);
+    setBgTransform(normalizeBackgroundTransform(nextBackground.transform, canvasW, canvasH));
+    setBgCalibration(nextBackground.calibration);
+    setBgCalibrationPoints([]);
+    setBgCalibrationInput('');
     setStructureLocked(structuresLocked(nextWalls, nextBoundaries, nextPartitions, nextDoors));
     sel.clearSelection();
     setDirty(false);
@@ -1095,6 +1325,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       const inInput = tag === 'input' || tag === 'textarea' || tag === 'select';
 
       if (e.key === 'Escape') {
+        if (tool === 'bg_calibrate' || tool === 'bg_edit') {
+          cancelBackgroundCalibration();
+          setTool('select');
+          return;
+        }
         if (drawPoints.length > 0) { cancelDraw(); return; }
         sel.clearSelection();
         setSelectedStruct(null);
@@ -1280,7 +1515,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       finishInfraLine(points);
       setTool('draw_infra');
     } else {
-      const newStruct = { id: uid(drawStructType), pts: points.map((p) => [p.x, p.y]) };
+      const newStruct = {
+        id: uid(drawStructType),
+        pts: points.map((p) => [p.x, p.y]),
+        thick: defaultStructThickness(drawStructType),
+      };
       if (drawStructType === 'boundary') newStruct.closed = true;
       switch (drawStructType) {
         case 'wall':      setWalls((prev) => [...prev, newStruct]); break;
@@ -1561,9 +1800,24 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     { label: 'XL 2800×2000', w: 2800, h: 2000 },
   ];
 
+  const canvasResizeParsed = useMemo(() => ({
+    w: parseCanvasDim(canvasResizeInput.w),
+    h: parseCanvasDim(canvasResizeInput.h),
+  }), [canvasResizeInput]);
+  const canvasResizeValid = canvasResizeParsed.w !== null && canvasResizeParsed.h !== null;
+  const canvasResizeHint = canvasResizeValid
+    ? `Будет: ${clampCanvasDim(canvasResizeParsed.w)}×${clampCanvasDim(canvasResizeParsed.h)}`
+    : `Введите числа ${CANVAS_MIN_SIZE}-${CANVAS_MAX_SIZE}`;
+
   function applyCanvasResize(w, h) {
-    const nw = Math.max(200, Math.min(8000, Math.round(w)));
-    const nh = Math.max(200, Math.min(8000, Math.round(h)));
+    const parsedW = parseCanvasDim(w);
+    const parsedH = parseCanvasDim(h);
+    if (parsedW === null || parsedH === null) {
+      onError?.('Размер холста должен быть числом');
+      return;
+    }
+    const nw = clampCanvasDim(parsedW);
+    const nh = clampCanvasDim(parsedH);
     setCanvasSizeOverride({ w: nw, h: nh });
     setCanvasResizeInput({ w: nw, h: nh });
     setCanvasResizeOpen(false);
@@ -1695,6 +1949,49 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     };
   }
 
+  function resizedBackgroundTransform(orig, corner, pt, event) {
+    const localPt = inverseRotatePoint(pt, orig);
+    let left = orig.x;
+    let right = orig.x + orig.w;
+    let top = orig.y;
+    let bottom = orig.y + orig.h;
+
+    if (corner.includes('w')) left = Math.min(right - MIN_BACKGROUND_SIZE, localPt.x);
+    if (corner.includes('e')) right = Math.max(left + MIN_BACKGROUND_SIZE, localPt.x);
+    if (corner.includes('n')) top = Math.min(bottom - MIN_BACKGROUND_SIZE, localPt.y);
+    if (corner.includes('s')) bottom = Math.max(top + MIN_BACKGROUND_SIZE, localPt.y);
+
+    if (!event.shiftKey) {
+      const aspect = Math.max(0.01, orig.w / orig.h);
+      const rawW = Math.max(MIN_BACKGROUND_SIZE, right - left);
+      const rawH = Math.max(MIN_BACKGROUND_SIZE, bottom - top);
+      const scale = Math.max(rawW / orig.w, rawH / orig.h);
+      const nextW = Math.max(MIN_BACKGROUND_SIZE, orig.w * scale);
+      const nextH = Math.max(MIN_BACKGROUND_SIZE, nextW / aspect);
+
+      if (corner.includes('w')) left = orig.x + orig.w - nextW;
+      else right = orig.x + nextW;
+      if (corner.includes('n')) top = orig.y + orig.h - nextH;
+      else bottom = orig.y + nextH;
+    }
+
+    return {
+      ...orig,
+      x: left,
+      y: top,
+      w: Math.max(MIN_BACKGROUND_SIZE, right - left),
+      h: Math.max(MIN_BACKGROUND_SIZE, bottom - top),
+    };
+  }
+
+  function rotatedBackgroundTransform(orig, pt, dragState, event) {
+    const center = backgroundCenter(orig);
+    const angle = Math.atan2(pt.y - center.y, pt.x - center.x) * 180 / Math.PI;
+    let rotation = dragState.origRotation + angle - dragState.startAngle;
+    if (event.shiftKey) rotation = Math.round(rotation / 15) * 15;
+    return { ...orig, rotation };
+  }
+
   /* ── pointer handlers ── */
 
   const onSvgPointerDown = useCallback((e) => {
@@ -1720,6 +2017,38 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       viewport.startPan(e);
       svgEl.setPointerCapture(e.pointerId);
       return;
+    }
+
+    if (tool === 'bg_calibrate' && bgImage) {
+      e.preventDefault();
+      const nextPoints = [...bgCalibrationPoints, pt].slice(-2);
+      setBgCalibrationPoints(nextPoints);
+      setBgCalibrationInput('');
+      return;
+    }
+
+    if (tool === 'bg_edit' && bgImage && !bgLocked) {
+      const bgActionEl = e.target?.closest?.('[data-bg-action]');
+      if (bgActionEl) {
+        e.preventDefault();
+        const action = bgActionEl.dataset.bgAction;
+        const origTransform = normalizeBackgroundTransform(bgTransform, canvasW, canvasH);
+        const dragState = {
+          action,
+          startPt: pt,
+          origTransform,
+          corner: bgActionEl.dataset.bgCorner,
+        };
+        if (action === 'rotate') {
+          const center = backgroundCenter(origTransform);
+          dragState.startAngle = Math.atan2(pt.y - center.y, pt.x - center.x) * 180 / Math.PI;
+          dragState.origRotation = origTransform.rotation || 0;
+        }
+        undoRedo.push(snapshot());
+        bgDragRef.current = dragState;
+        svgEl.setPointerCapture(e.pointerId);
+        return;
+      }
     }
 
     // Place tool — add desk at click
@@ -1876,6 +2205,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     drawStructType,
     layerVis,
     desksLocked,
+    bgImage,
+    bgLocked,
+    bgTransform,
+    bgCalibrationPoints,
+    canvasW,
+    canvasH,
   ]);
 
   const onSvgPointerMove = useCallback((e) => {
@@ -1903,6 +2238,22 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       const { type, id, pointIndex } = vertexDragRef.current;
       const snapped = { x: grid.snap(pt.x, { altSnapOff: e.altKey }), y: grid.snap(pt.y, { altSnapOff: e.altKey }) };
       updateStructPoint(type, id, pointIndex, snapped);
+      return;
+    }
+
+    // Background image drag
+    if (bgDragRef.current) {
+      const { action, startPt, origTransform, corner } = bgDragRef.current;
+      if (action === 'move') {
+        const dx = pt.x - startPt.x;
+        const dy = pt.y - startPt.y;
+        setBgTransform({ ...origTransform, x: origTransform.x + dx, y: origTransform.y + dy });
+      } else if (action === 'resize') {
+        setBgTransform(resizedBackgroundTransform(origTransform, corner || 'se', pt, e));
+      } else if (action === 'rotate') {
+        setBgTransform(rotatedBackgroundTransform(origTransform, pt, bgDragRef.current, e));
+      }
+      setDirty(true);
       return;
     }
 
@@ -2005,6 +2356,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       return;
     }
 
+    // Background drag end
+    if (bgDragRef.current) {
+      bgDragRef.current = null;
+      try { svgEl?.releasePointerCapture(e.pointerId); } catch {}
+      return;
+    }
+
     // Resize end
     if (resizeRef.current) {
       resizeRef.current = null;
@@ -2085,10 +2443,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             image: bgImage,
             opacity: bgOpacity,
             visible: bgVisible,
+            locked: bgLocked,
+            transform: normalizeBackgroundTransform(bgTransform, canvasW, canvasH),
+            calibration: bgCalibration || undefined,
           }
         : undefined,
     };
-  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors, groups, zones, infraLayers, structureLocked, bgImage, bgOpacity, bgVisible]);
+  }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors, groups, zones, infraLayers, structureLocked, bgImage, bgOpacity, bgVisible, bgLocked, bgTransform, bgCalibration, canvasW, canvasH]);
 
   /* ── save ── */
   const saveDraft = useCallback(async ({ silent = false } = {}) => {
@@ -2212,6 +2573,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setBgImage(nextBackground.image);
     setBgOpacity(nextBackground.opacity);
     setBgVisible(nextBackground.visible);
+    setBgLocked(nextBackground.locked);
+    setBgTransform(normalizeBackgroundTransform(nextBackground.transform, canvasW, canvasH));
+    setBgCalibration(nextBackground.calibration);
+    setBgCalibrationPoints([]);
+    setBgCalibrationInput('');
     setStructureLocked(structuresLocked(nextWalls, nextBoundaries, nextPartitions, nextDoors));
     sel.clearSelection();
     setDrawPoints([]);
@@ -2232,13 +2598,22 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     return boundingBoxOf(desks, sel.selectedIds, compMap);
   }, [desks, sel.selectedIds, compMap]);
   const structureCount = walls.length + boundaries.length + partitions.length + doors.length;
+  const bgFrame = useMemo(
+    () => normalizeBackgroundTransform(bgTransform, canvasW, canvasH),
+    [bgTransform, canvasW, canvasH],
+  );
+  const bgHandles = useMemo(() => backgroundHandlePoints(bgFrame), [bgFrame]);
+  const bgCenter = backgroundCenter(bgFrame);
+  const bgFramePoints = [bgHandles.nw, bgHandles.ne, bgHandles.se, bgHandles.sw]
+    .map((p) => `${p.x},${p.y}`)
+    .join(' ');
 
   /* ── cursor class ── */
   const cursorClass = isPanningRef.current
     ? 'cursor-panning'
     : (tool === 'pan' || spaceRef.current)
       ? 'cursor-pan'
-      : isDrawMode
+      : (isDrawMode || tool === 'bg_calibrate')
         ? 'cursor-crosshair'
         : 'cursor-default';
 
@@ -2554,6 +2929,38 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               title={`Прозрачность фона: ${Math.round(bgOpacity * 100)}%`}
               className="ce-bg-opacity-slider"
             />
+            <button
+              className={`ce-tool-btn mini ${tool === 'bg_edit' ? 'active' : ''}`}
+              title={bgLocked ? 'Фон зафиксирован' : 'Подогнать фон: двигать, менять размер, вращать'}
+              disabled={bgLocked}
+              onClick={() => {
+                cancelDraw();
+                setTool(tool === 'bg_edit' ? 'select' : 'bg_edit');
+              }}
+            >
+              <Move size={12} />
+            </button>
+            <button
+              className="ce-tool-btn mini"
+              title="Вписать фон в холст"
+              onClick={fitBackgroundToCanvas}
+            >
+              <Maximize2 size={12} />
+            </button>
+            <button
+              className={`ce-tool-btn mini ${tool === 'bg_calibrate' ? 'active' : ''}`}
+              title="Калибровать масштаб по двум точкам"
+              onClick={startBackgroundCalibration}
+            >
+              <Target size={12} />
+            </button>
+            <button
+              className={`ce-tool-btn mini ${bgLocked ? 'active' : ''}`}
+              title={bgLocked ? 'Разблокировать фон' : 'Зафиксировать фон'}
+              onClick={toggleBackgroundLock}
+            >
+              {bgLocked ? <Lock size={12} /> : <Unlock size={12} />}
+            </button>
             {/* PDF page navigation */}
             {bgPdfPages > 1 && (
               <span className="ce-pdf-nav">
@@ -2587,6 +2994,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               onClick={() => {
                 undoRedo.push(snapshot());
                 setBgImage(null);
+                setBgLocked(false);
+                setBgTransform(defaultBackgroundTransform(canvasW, canvasH));
+                setBgCalibration(null);
+                setBgCalibrationPoints([]);
+                setBgCalibrationInput('');
+                setBgNaturalSize(null);
                 setBgPdfData(null);
                 setBgPdfPages(0);
                 setBgPdfPage(1);
@@ -2924,39 +3337,38 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             <label>
               W
               <input
-                type="number"
-                className="ce-canvas-dim-input"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                className={`ce-canvas-dim-input${canvasResizeParsed.w === null ? ' invalid' : ''}`}
                 value={canvasResizeInput.w}
-                min={200}
-                max={8000}
-                step={100}
-                onChange={(e) => setCanvasResizeInput((prev) => ({ ...prev, w: Number(e.target.value) }))}
-                onKeyDown={(e) => { if (e.key === 'Enter') applyCanvasResize(canvasResizeInput.w, canvasResizeInput.h); }}
+                onChange={(e) => setCanvasResizeInput((prev) => ({ ...prev, w: sanitizeCanvasDim(e.target.value) }))}
+                onKeyDown={(e) => { if (e.key === 'Enter' && canvasResizeValid) applyCanvasResize(canvasResizeInput.w, canvasResizeInput.h); }}
               />
             </label>
             <span className="ce-canvas-resize-x">×</span>
             <label>
               H
               <input
-                type="number"
-                className="ce-canvas-dim-input"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                className={`ce-canvas-dim-input${canvasResizeParsed.h === null ? ' invalid' : ''}`}
                 value={canvasResizeInput.h}
-                min={200}
-                max={8000}
-                step={100}
-                onChange={(e) => setCanvasResizeInput((prev) => ({ ...prev, h: Number(e.target.value) }))}
-                onKeyDown={(e) => { if (e.key === 'Enter') applyCanvasResize(canvasResizeInput.w, canvasResizeInput.h); }}
+                onChange={(e) => setCanvasResizeInput((prev) => ({ ...prev, h: sanitizeCanvasDim(e.target.value) }))}
+                onKeyDown={(e) => { if (e.key === 'Enter' && canvasResizeValid) applyCanvasResize(canvasResizeInput.w, canvasResizeInput.h); }}
               />
             </label>
             <button
               className="ce-canvas-resize-apply"
+              disabled={!canvasResizeValid}
               onClick={() => applyCanvasResize(canvasResizeInput.w, canvasResizeInput.h)}
             >
               ОК
             </button>
           </div>
           <div className="ce-canvas-resize-current">
-            Текущий: {canvasW}×{canvasH}
+            Текущий: {canvasW}×{canvasH} · {canvasResizeHint}
           </div>
         </div>
       )}
@@ -3018,14 +3430,89 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
           {/* Tracing background image */}
           {bgImage && bgVisible && (
-            <image
-              href={bgImage}
-              x={0} y={0}
-              width={canvasW} height={canvasH}
-              opacity={bgOpacity}
-              preserveAspectRatio="xMidYMid meet"
-              style={{ pointerEvents: 'none' }}
-            />
+            <g transform={`rotate(${bgFrame.rotation || 0} ${bgCenter.x} ${bgCenter.y})`}>
+              <image
+                href={bgImage}
+                x={bgFrame.x} y={bgFrame.y}
+                width={bgFrame.w} height={bgFrame.h}
+                opacity={bgOpacity}
+                preserveAspectRatio="none"
+                data-bg-action="move"
+                style={{ pointerEvents: tool === 'bg_edit' && !bgLocked ? 'visiblePainted' : 'none', cursor: 'move' }}
+              />
+            </g>
+          )}
+
+          {bgImage && bgVisible && (tool === 'bg_edit' || tool === 'bg_calibrate') && (
+            <g className="ce-bg-controls">
+              <polygon
+                points={bgFramePoints}
+                fill="rgba(37, 99, 235, 0.04)"
+                stroke={bgLocked ? '#94a3b8' : '#2563eb'}
+                strokeWidth={viewport.worldUnitsForPx(1.5)}
+                strokeDasharray={`${viewport.worldUnitsForPx(6)} ${viewport.worldUnitsForPx(4)}`}
+                data-bg-action="move"
+                style={{ pointerEvents: tool === 'bg_edit' && !bgLocked ? 'visiblePainted' : 'none', cursor: bgLocked ? 'default' : 'move' }}
+              />
+              {tool === 'bg_edit' && !bgLocked && ['nw', 'ne', 'sw', 'se'].map((corner) => (
+                <rect
+                  key={corner}
+                  className="ce-bg-handle"
+                  data-bg-action="resize"
+                  data-bg-corner={corner}
+                  x={bgHandles[corner].x - viewport.worldUnitsForPx(5)}
+                  y={bgHandles[corner].y - viewport.worldUnitsForPx(5)}
+                  width={viewport.worldUnitsForPx(10)}
+                  height={viewport.worldUnitsForPx(10)}
+                  rx={viewport.worldUnitsForPx(2)}
+                />
+              ))}
+              {tool === 'bg_edit' && !bgLocked && (
+                <>
+                  <line
+                    x1={bgHandles.n.x}
+                    y1={bgHandles.n.y}
+                    x2={bgHandles.rotate.x}
+                    y2={bgHandles.rotate.y}
+                    stroke="#2563eb"
+                    strokeWidth={viewport.worldUnitsForPx(1)}
+                  />
+                  <circle
+                    className="ce-bg-rotate-handle"
+                    data-bg-action="rotate"
+                    cx={bgHandles.rotate.x}
+                    cy={bgHandles.rotate.y}
+                    r={viewport.worldUnitsForPx(7)}
+                  />
+                </>
+              )}
+            </g>
+          )}
+
+          {bgImage && bgVisible && (tool === 'bg_calibrate' || bgCalibrationPoints.length > 0) && (
+            <g className="ce-bg-calibration">
+              {bgCalibrationPoints.length >= 2 && (
+                <line
+                  x1={bgCalibrationPoints[0].x}
+                  y1={bgCalibrationPoints[0].y}
+                  x2={bgCalibrationPoints[1].x}
+                  y2={bgCalibrationPoints[1].y}
+                  stroke="#dc2626"
+                  strokeWidth={viewport.worldUnitsForPx(2)}
+                />
+              )}
+              {bgCalibrationPoints.map((p, i) => (
+                <circle
+                  key={i}
+                  cx={p.x}
+                  cy={p.y}
+                  r={viewport.worldUnitsForPx(5)}
+                  fill="#fff"
+                  stroke="#dc2626"
+                  strokeWidth={viewport.worldUnitsForPx(2)}
+                />
+              ))}
+            </g>
           )}
 
           {/* Grid lines layer */}
@@ -3153,6 +3640,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             {layerVis.boundaries && boundaries.map((b, i) => {
               const pts = (b.pts || b.points || []).map(ptFromArr);
               const isSel = !structureLocked && selectedStruct?.type === 'boundary' && selectedStruct?.id === b.id;
+              const thick = structureThickness(b, 'boundary');
               return (
                 <polygon
                   key={`b${i}`}
@@ -3163,7 +3651,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                   fill={STRUCT_COLORS.boundary}
                   fillOpacity={STRUCT_OPACITY.boundary}
                   stroke={isSel ? '#2563eb' : STRUCT_COLORS.boundary}
-                  strokeWidth={isSel ? 3 : 1.5}
+                  strokeWidth={isSel ? thick + 1.5 : thick}
                   strokeDasharray={isSel ? '6 3' : 'none'}
                 />
               );
@@ -3171,6 +3659,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             {layerVis.partitions && partitions.map((p, i) => {
               const pts = (p.pts || []).map(ptFromArr);
               const isSel = !structureLocked && selectedStruct?.type === 'partition' && selectedStruct?.id === p.id;
+              const thick = structureThickness(p, 'partition');
               return (
                 <polyline
                   key={`p${i}`}
@@ -3181,7 +3670,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                   fill="none"
                   stroke={isSel ? '#2563eb' : STRUCT_COLORS.partition}
                   strokeOpacity={isSel ? 1 : STRUCT_OPACITY.partition}
-                  strokeWidth={isSel ? (p.thick || 3) + 2 : (p.thick || 3)}
+                  strokeWidth={isSel ? thick + 2 : thick}
                   strokeLinecap="round"
                   strokeDasharray={isSel ? '6 3' : 'none'}
                 />
@@ -3190,6 +3679,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             {layerVis.walls && walls.map((w, i) => {
               const pts = (w.pts || []).map(ptFromArr);
               const isSel = !structureLocked && selectedStruct?.type === 'wall' && selectedStruct?.id === w.id;
+              const thick = structureThickness(w, 'wall');
               if (pts.length >= 2) {
                 return (
                   <polyline
@@ -3200,7 +3690,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                     points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
                     fill="none"
                     stroke={isSel ? '#2563eb' : STRUCT_COLORS.wall}
-                    strokeWidth={isSel ? (w.thick || 4) + 2 : (w.thick || 4)}
+                    strokeWidth={isSel ? thick + 2 : thick}
                     strokeLinecap="square"
                     strokeDasharray={isSel ? '6 3' : 'none'}
                   />
@@ -3215,7 +3705,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                   x1={w.x1 || 0} y1={w.y1 || 0}
                   x2={w.x2 || 0} y2={w.y2 || 0}
                   stroke={isSel ? '#2563eb' : STRUCT_COLORS.wall}
-                  strokeWidth={isSel ? (w.thick || 4) + 2 : (w.thick || 4)}
+                  strokeWidth={isSel ? thick + 2 : thick}
                   strokeDasharray={isSel ? '6 3' : 'none'}
                 />
               );
@@ -3223,6 +3713,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             {layerVis.doors && doors.map((d, i) => {
               const pts = (d.pts || []).map(ptFromArr);
               const isSel = !structureLocked && selectedStruct?.type === 'door' && selectedStruct?.id === d.id;
+              const thick = structureThickness(d, 'door');
               if (pts.length >= 2) {
                 return (
                   <polyline
@@ -3233,7 +3724,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                     points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
                     fill="none"
                     stroke={isSel ? '#2563eb' : STRUCT_COLORS.door}
-                    strokeWidth={isSel ? (d.thick || 2.5) + 2 : (d.thick || 2.5)}
+                    strokeWidth={isSel ? thick + 2 : thick}
                     strokeDasharray={isSel ? '6 3' : '6 3'}
                     strokeLinecap="round"
                   />
@@ -3248,7 +3739,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                   x1={d.x1 || 0} y1={d.y1 || 0}
                   x2={d.x2 || 0} y2={d.y2 || 0}
                   stroke={isSel ? '#2563eb' : STRUCT_COLORS.door}
-                  strokeWidth={isSel ? 4.5 : 2.5}
+                  strokeWidth={isSel ? thick + 2 : thick}
                   strokeDasharray="6 3"
                 />
               );
@@ -3596,6 +4087,52 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         />
       </div>
 
+      {/* ── Background properties panel ── */}
+      {bgImage && (tool === 'bg_edit' || tool === 'bg_calibrate' || bgCalibrationPoints.length > 0) && (
+        <div className="ce-bg-props">
+          <div className="ce-struct-props-header">
+            <span>Фон</span>
+            <span className="ce-struct-pts-count">
+              {bgLocked ? 'зафиксирован' : tool === 'bg_calibrate' ? `${bgCalibrationPoints.length}/2 точки` : 'редактирование'}
+            </span>
+            <button className="ce-tool-btn mini" title="Вписать фон в холст" onClick={fitBackgroundToCanvas}>
+              <Maximize2 size={12} />
+            </button>
+            <button className="ce-tool-btn mini" title={bgLocked ? 'Разблокировать фон' : 'Зафиксировать фон'} onClick={toggleBackgroundLock}>
+              {bgLocked ? <Lock size={12} /> : <Unlock size={12} />}
+            </button>
+          </div>
+          {tool === 'bg_calibrate' && bgCalibrationPoints.length < 2 && (
+            <div className="ce-bg-hint">Укажите две точки с известным расстоянием.</div>
+          )}
+          {bgCalibrationPoints.length === 2 && (
+            <label className="ce-prop-row">
+              <span>Длина, м</span>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={bgCalibrationInput}
+                onChange={(e) => setBgCalibrationInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') confirmBackgroundCalibration(); }}
+                autoFocus
+              />
+              <button className="ce-tool-btn mini" title="Применить калибровку" onClick={confirmBackgroundCalibration}>
+                <Save size={12} />
+              </button>
+              <button className="ce-tool-btn mini" title="Отменить калибровку" onClick={cancelBackgroundCalibration}>
+                <X size={12} />
+              </button>
+            </label>
+          )}
+          {bgCalibration && (
+            <div className="ce-bg-hint">
+              Калибровано: {bgCalibration.distance_m} м, 1м={pixelsPerMeter}px
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Zone properties panel ── */}
       {selectedZoneId && (() => {
         const zone = zones.find((z) => z.id === selectedZoneId);
@@ -3647,8 +4184,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       {selectedStruct && !structureLocked && (() => {
         const item = getStructList(selectedStruct.type).find((s) => s.id === selectedStruct.id);
         if (!item) return null;
-        const defaultThick = selectedStruct.type === 'wall' ? 4 : selectedStruct.type === 'door' ? 2.5 : 3;
-        const thick = item.thick ?? defaultThick;
+        const thick = structureThickness(item, selectedStruct.type);
         const setter = getStructSetter(selectedStruct.type);
         function patchStruct(patch) {
           setter((prev) => prev.map((s) => s.id === selectedStruct.id ? { ...s, ...patch } : s));

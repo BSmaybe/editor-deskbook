@@ -56,18 +56,27 @@ type LayoutGroup struct {
 }
 
 type BackgroundTransform struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-	W float64 `json:"w"`
-	H float64 `json:"h"`
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+	W        float64 `json:"w"`
+	H        float64 `json:"h"`
+	Rotation float64 `json:"rotation,omitempty"`
 }
 
 type LayoutBackground struct {
-	Image   string  `json:"image,omitempty"`
-	Src     string  `json:"src,omitempty"`
-	Href    string  `json:"href,omitempty"`
-	Opacity float64 `json:"opacity,omitempty"`
-	Visible *bool   `json:"visible,omitempty"`
+	Image       string                 `json:"image,omitempty"`
+	Src         string                 `json:"src,omitempty"`
+	Href        string                 `json:"href,omitempty"`
+	Opacity     float64                `json:"opacity,omitempty"`
+	Visible     *bool                  `json:"visible,omitempty"`
+	Locked      bool                   `json:"locked,omitempty"`
+	Transform   *BackgroundTransform   `json:"transform,omitempty"`
+	Calibration *BackgroundCalibration `json:"calibration,omitempty"`
+}
+
+type BackgroundCalibration struct {
+	DistanceM float64     `json:"distance_m,omitempty"`
+	Points    [][]float64 `json:"points,omitempty"`
 }
 
 type LayoutComponent struct {

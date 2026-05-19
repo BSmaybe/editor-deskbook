@@ -702,16 +702,17 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
             </div>
             <div className="ce-field-row">
               <div className="ce-field">
-                <label htmlFor="ce-dw">Ширина по умолчанию</label>
+                <label htmlFor="ce-dw">Ширина на карте</label>
                 <input id="ce-dw" type="number" min={1} max={10000} value={meta.default_w}
                   onChange={(e) => setMeta((prev) => ({ ...prev, default_w: Number(e.target.value), _wTouched: true }))} />
               </div>
               <div className="ce-field">
-                <label htmlFor="ce-dh">Высота по умолчанию</label>
+                <label htmlFor="ce-dh">Высота на карте</label>
                 <input id="ce-dh" type="number" min={1} max={10000} value={meta.default_h}
                   onChange={(e) => setMeta((prev) => ({ ...prev, default_h: Number(e.target.value), _hTouched: true }))} />
               </div>
             </div>
+            <span className="ce-field-hint">Габарит при вставке: SVG масштабируется под этот размер на карте.</span>
           </section>
 
           {mode === 'draw' && (
@@ -773,12 +774,11 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
 
               {/* Selected shape properties */}
               <section className="ce-section">
-                <h3 className="ce-section-title">
-                  {selectedShape
-                    ? `${shapeTypeLabel(selectedShape.type)} #${selectedIdx + 1}`
-                    : 'Свойства фигуры'}
-                </h3>
+                <h3 className="ce-section-title">Геометрия SVG-фигуры</h3>
                 {!selectedShape && <p className="ce-empty-hint">Выберите фигуру, чтобы редактировать свойства.</p>}
+                {selectedShape && (
+                  <p className="ce-empty-hint">{shapeTypeLabel(selectedShape.type)} #{selectedIdx + 1}: размеры только этой фигуры внутри SVG.</p>
+                )}
                 {selectedShape && selectedShape.type === 'line' && (
                   <div className="ce-props-grid">
                     {(['x1','y1','x2','y2']).map((f) => (
@@ -807,8 +807,8 @@ export default function ComponentEditor({ form, busy, existingIds = [], onSave, 
                 )}
                 {selectedShape && (
                   <div className="ce-shape-actions">
-                    <button type="button" className="ce-btn ce-btn-sm" onClick={bringToFront} title="На передний план">↑ Вперёд</button>
-                    <button type="button" className="ce-btn ce-btn-sm" onClick={sendToBack} title="На задний план">↓ Назад</button>
+                    <button type="button" className="ce-btn ce-btn-sm" onClick={bringToFront} title="На передний план">↑ Передний план</button>
+                    <button type="button" className="ce-btn ce-btn-sm" onClick={sendToBack} title="На задний план">↓ Задний план</button>
                     <button type="button" className="ce-btn ce-btn-sm ce-btn-danger" onClick={deleteSelected} title="Удалить фигуру">Удалить</button>
                   </div>
                 )}

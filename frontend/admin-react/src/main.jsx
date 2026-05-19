@@ -67,15 +67,6 @@ function App() {
     [components],
   );
 
-  const floorsByOffice = useMemo(() => {
-    const names = new Map(offices.map((o) => [o.id, o.name]));
-    return floors.reduce((acc, f) => {
-      const key = names.get(f.office_id) || `Здание ${f.office_id}`;
-      (acc[key] ||= []).push(f);
-      return acc;
-    }, {});
-  }, [floors, offices]);
-
   const loadReferenceData = useCallback(async () => {
     if (!tokenFromStorage()) return;
     setBusy(true);
@@ -288,21 +279,6 @@ function App() {
             <p>{selectedFloor ? `${selectedFloor.name} · этаж #${selectedFloor.id}` : 'Создайте или выберите этаж'}</p>
           </div>
           <div className="toolbar">
-            <select
-              className="floor-select"
-              value={selectedFloorId}
-              onChange={(e) => setSelectedFloorId(e.target.value)}
-              disabled={!floors.length}
-            >
-              {!floors.length && <option value="">Нет этажей</option>}
-              {Object.entries(floorsByOffice).map(([office, rows]) => (
-                <optgroup label={office} key={office}>
-                  {rows.map((f) => (
-                    <option value={f.id} key={f.id}>{f.name}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
             <button className="tool-button" onClick={refreshAll} disabled={busy} title="Обновить">
               <RefreshCw size={18} />
               <span>Обновить</span>
