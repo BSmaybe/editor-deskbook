@@ -141,7 +141,7 @@ func (a *appServer) listComponentsHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (a *appServer) createComponentHandler(w http.ResponseWriter, r *http.Request) {
-	if err := requireAdmin(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -183,7 +183,7 @@ func (a *appServer) createComponentHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *appServer) updateComponentHandler(w http.ResponseWriter, r *http.Request) {
-	if err := requireAdmin(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -224,7 +224,7 @@ func (a *appServer) updateComponentHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *appServer) deleteComponentHandler(w http.ResponseWriter, r *http.Request) {
-	if err := requireAdmin(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}

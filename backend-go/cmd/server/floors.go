@@ -143,7 +143,7 @@ func (app *appServer) createFloorHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -176,7 +176,7 @@ func (app *appServer) updateFloorHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -209,7 +209,7 @@ func (app *appServer) deleteFloorHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -234,7 +234,7 @@ func (app *appServer) uploadFloorPlanHandler(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}

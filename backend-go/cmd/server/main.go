@@ -269,7 +269,7 @@ func renderHTMLHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func importLayoutSVGHandler(w http.ResponseWriter, r *http.Request) {
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}

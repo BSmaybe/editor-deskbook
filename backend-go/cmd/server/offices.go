@@ -102,7 +102,7 @@ func (app *appServer) createOfficeHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -131,7 +131,7 @@ func (app *appServer) updateOfficeHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -165,7 +165,7 @@ func (app *appServer) deleteOfficeHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}

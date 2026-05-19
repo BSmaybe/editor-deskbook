@@ -94,6 +94,39 @@ else
 fi
 
 echo ""
+echo "=== User role permissions ==="
+USER_LOGIN="$(curl -fsS -X POST "${BASE_URL}/auth/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "username=smoke_${SUFFIX}" \
+  --data-urlencode "password=SmokePass1!")"
+USER_TOKEN="$(echo "$USER_LOGIN" | jq -r '.access_token // empty')"
+USER_AUTH=(-H "Authorization: Bearer ${USER_TOKEN}")
+if [ -n "$USER_TOKEN" ]; then
+  pass "Login as user"
+else
+  fail "Login as user" "$USER_LOGIN"
+fi
+
+USER_COMP_STATUS="$(http_status -X POST "${BASE_URL}/components" "${USER_AUTH[@]}" -H "Content-Type: application/json" \
+  -d "{\"id\":\"user-comp-${SUFFIX}\",\"label\":\"User component\",\"asset_type\":\"asset\",\"view_box\":[0,0,40,20],\"default_w\":80,\"default_h\":40,\"svg_markup\":\"<rect x=\\\"0\\\" y=\\\"0\\\" width=\\\"40\\\" height=\\\"20\\\" fill=\\\"#eee\\\"/>\"}")"
+if [ "$USER_COMP_STATUS" = "201" ]; then
+  pass "User can create components"
+else
+  fail "User create component" "HTTP ${USER_COMP_STATUS}"
+fi
+
+USER_INVITE_STATUS="$(http_status -X POST "${BASE_URL}/admin/invites" "${USER_AUTH[@]}" -H "Content-Type: application/json" \
+  -d "{\"email\":\"blocked@test.local\",\"role\":\"user\"}")"
+if [ "$USER_INVITE_STATUS" = "403" ]; then
+  pass "User cannot create invites (admin-only)"
+else
+  fail "User invite guard" "Expected 403, got ${USER_INVITE_STATUS}"
+fi
+
+# cleanup user component
+http_status -X DELETE "${BASE_URL}/components/user-comp-${SUFFIX}" "${USER_AUTH[@]}" >/dev/null
+
+echo ""
 echo "=== Buildings and floors ==="
 OFFICE_BODY="$(http_body -X POST "${BASE_URL}/offices" "${AUTH[@]}" -H "Content-Type: application/json" \
   -d "{\"name\":\"Smoke Building ${SUFFIX}\",\"address\":\"Smoke address\"}")"

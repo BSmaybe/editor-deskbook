@@ -99,7 +99,7 @@ func (app *appServer) createTemplateHandler(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, errors.New("templates store not available"))
 		return
 	}
-	if err := requireAdmin(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -141,7 +141,7 @@ func (app *appServer) deleteTemplateHandler(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, errors.New("templates store not available"))
 		return
 	}
-	if err := requireAdmin(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}

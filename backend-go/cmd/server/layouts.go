@@ -215,7 +215,7 @@ func (s *layoutStore) ensureSchema(ctx context.Context) error {
 }
 
 func (a *appServer) getLayoutHandler(w http.ResponseWriter, r *http.Request) {
-	auth, err := requireAdminContext(r)
+	auth, err := requireAuthContext(r)
 	if err != nil {
 		writeAuthError(w, err)
 		return
@@ -320,7 +320,7 @@ func (a *appServer) embedFloorHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *appServer) saveLayoutDraftHandler(w http.ResponseWriter, r *http.Request) {
-	auth, err := requireAdminContext(r)
+	auth, err := requireAuthContext(r)
 	if err != nil {
 		writeAuthError(w, err)
 		return
@@ -344,7 +344,7 @@ func (a *appServer) saveLayoutDraftHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *appServer) publishLayoutHandler(w http.ResponseWriter, r *http.Request) {
-	auth, err := requireAdminContext(r)
+	auth, err := requireAuthContext(r)
 	if err != nil {
 		writeAuthError(w, err)
 		return
@@ -363,7 +363,7 @@ func (a *appServer) publishLayoutHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (a *appServer) syncLayoutDesksHandler(w http.ResponseWriter, r *http.Request) {
-	auth, err := requireAdminContext(r)
+	auth, err := requireAuthContext(r)
 	if err != nil {
 		writeAuthError(w, err)
 		return
@@ -395,7 +395,7 @@ func (a *appServer) syncLayoutDesksHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *appServer) discardLayoutDraftHandler(w http.ResponseWriter, r *http.Request) {
-	auth, err := requireAdminContext(r)
+	auth, err := requireAuthContext(r)
 	if err != nil {
 		writeAuthError(w, err)
 		return
@@ -417,7 +417,7 @@ func (a *appServer) discardLayoutDraftHandler(w http.ResponseWriter, r *http.Req
 }
 
 func (a *appServer) getLayoutHistoryHandler(w http.ResponseWriter, r *http.Request) {
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -438,7 +438,7 @@ func (a *appServer) getLayoutHistoryHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (a *appServer) listLayoutRevisionsHandler(w http.ResponseWriter, r *http.Request) {
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -460,7 +460,7 @@ func (a *appServer) listLayoutRevisionsHandler(w http.ResponseWriter, r *http.Re
 }
 
 func (a *appServer) getLayoutRevisionHandler(w http.ResponseWriter, r *http.Request) {
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -481,7 +481,7 @@ func (a *appServer) getLayoutRevisionHandler(w http.ResponseWriter, r *http.Requ
 }
 
 func (a *appServer) restoreLayoutRevisionHandler(w http.ResponseWriter, r *http.Request) {
-	auth, err := requireAdminContext(r)
+	auth, err := requireAuthContext(r)
 	if err != nil {
 		writeAuthError(w, err)
 		return
@@ -554,7 +554,7 @@ func (a *appServer) getFloorLockHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *appServer) acquireFloorLockHandler(w http.ResponseWriter, r *http.Request) {
-	auth, err := requireAdminContext(r)
+	auth, err := requireAuthContext(r)
 	if err != nil {
 		writeAuthError(w, err)
 		return
@@ -581,7 +581,7 @@ func (a *appServer) acquireFloorLockHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (a *appServer) releaseFloorLockHandler(w http.ResponseWriter, r *http.Request) {
-	auth, err := requireAdminContext(r)
+	auth, err := requireAuthContext(r)
 	if err != nil {
 		writeAuthError(w, err)
 		return

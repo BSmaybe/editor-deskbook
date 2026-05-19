@@ -168,7 +168,7 @@ func (app *appServer) updateDeskHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -208,7 +208,7 @@ func (app *appServer) deleteDeskHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}

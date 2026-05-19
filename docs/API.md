@@ -6,7 +6,7 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 
 - **Content-Type**: `application/json` (кроме login и upload).
 - **Auth**: Bearer JWT в заголовке `Authorization: Bearer <token>`.
-- **Роли**: `admin` и `user`. Admin-эндпоинты возвращают `403` если роль не admin.
+- **Роли**: `admin` и `user`. Оба имеют полный доступ к редактору (компоненты, здания, этажи, layout, блоки, шаблоны, десков). Admin-only: управление приглашениями (`/admin/invites`), пользователями (`/admin/users`) и cleanup ревизий.
 - **Ошибки**: `{"detail": "описание ошибки"}`.
 - **HTTP-коды**: `200` OK, `201` Created, `204` No Content, `400` Bad Request, `401` Unauthorized, `403` Forbidden, `404` Not Found, `409` Conflict, `410` Gone, `422` Unprocessable Entity, `423` Locked.
 
@@ -183,21 +183,21 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `POST /offices`
 Создать здание.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Body**: `{"name": "HQ", "address": "ул. Примерная, 1"}`  
 **Response** `201`.
 
 ### `PATCH /offices/{office_id}`
 Обновить здание.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Body**: `{"name": "HQ Updated", "address": "новый адрес"}` (все поля опциональны)  
 **Response** `200`.
 
 ### `DELETE /offices/{office_id}`
 Удалить здание.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `204`.
 
 ---
@@ -214,27 +214,27 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `POST /floors`
 Создать этаж.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Body**: `{"office_id": 1, "name": "Этаж 3"}`  
 **Response** `201`.
 
 ### `PATCH /floors/{floor_id}`
 Обновить этаж.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Body**: `{"name": "Этаж 3 (обновлён)"}`  
 **Response** `200`.
 
 ### `DELETE /floors/{floor_id}`
 Удалить этаж.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `204`.
 
 ### `POST /floors/{floor_id}/plan`
 Загрузить план этажа (PNG/JPG/SVG).
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Content-Type**: `multipart/form-data`  
 **Body**: поле `file` — файл изображения (до 10 МБ).  
 **Response** `200`: `{"plan_url": "/static/floor_1_plan.png"}`
@@ -254,7 +254,7 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `POST /components`
 Создать компонент.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Body**:
 ```json
 {
@@ -284,14 +284,14 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `PUT /components/{component_id}`
 Обновить компонент (upsert).
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Body**: такой же как POST. Поле `id` в body должно совпадать с `component_id` из URL.  
 **Response** `200`.
 
 ### `DELETE /components/{component_id}`
 Удалить компонент.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `200`: `{"message": "deleted"}`.
 
 ---
@@ -309,7 +309,7 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `POST /blocks`
 Создать блок.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Body**:
 ```json
 {
@@ -325,7 +325,7 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `DELETE /blocks/{block_id}`
 Удалить блок.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `204`.
 
 ---
@@ -343,7 +343,7 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `POST /templates`
 Создать шаблон.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Body**:
 ```json
 {
@@ -358,7 +358,7 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `DELETE /templates/{template_id}`
 Удалить шаблон.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `204`.
 
 ---
@@ -384,7 +384,7 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `PUT /floors/{floor_id}/layout/draft`
 Сохранить черновик.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Body**:
 ```json
 {
@@ -410,19 +410,19 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `DELETE /floors/{floor_id}/layout/draft`
 Отменить черновик.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `200`.
 
 ### `POST /floors/{floor_id}/layout/publish`
 Опубликовать черновик.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `200`. Автоматически синхронизирует workplace-объекты в таблицу `desks`.
 
 ### `POST /floors/{floor_id}/layout/import`
 Импортировать SVG и классифицировать элементы.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Content-Type**: `text/xml` или `image/svg+xml`  
 **Body**: SVG-документ.  
 **Response** `200`: результат классификации (стены, двери, рабочие места и т.д.).
@@ -430,7 +430,7 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `POST /floors/{floor_id}/layout/sync-desks`
 Синхронизировать рабочие места из layout в таблицу desks.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Query**: `?source=published&cleanup=false`  
 **Response** `200`: `{"created": 5, "updated": 2, "removed": 0, "protected": 0}`.
 
@@ -455,25 +455,25 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `GET /floors/{floor_id}/layout/history`
 Аудит-лог изменений layout.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `200`: массив записей `{action, username, created_at}`.
 
 ### `GET /floors/{floor_id}/layout/revisions`
 Список ревизий layout.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `200`: массив ревизий с `is_current` флагом.
 
 ### `GET /floors/{floor_id}/layout/revisions/{revision_id}`
 Получить конкретную ревизию.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `200`: layout из ревизии.
 
 ### `POST /floors/{floor_id}/layout/revisions/{revision_id}/restore`
 Восстановить ревизию как новый черновик.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `200`.
 
 ---
@@ -495,14 +495,14 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `POST /floors/{floor_id}/lock`
 Заблокировать этаж.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `200`: `{"locked": true, "locked_by": "admin", ...}`.  
 **Ошибки**: `423` этаж уже заблокирован другим пользователем.
 
 ### `DELETE /floors/{floor_id}/lock`
 Снять блокировку.
 
-**Auth**: admin (только владелец блокировки)  
+**Auth**: авторизованный (только владелец блокировки)  
 **Response** `200`.
 
 ---
@@ -529,14 +529,14 @@ Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http:/
 ### `PATCH /desks/{desk_id}`
 Обновить рабочее место.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Body**: любые поля из `label`, `type`, `space_type`, `assigned_to`, `position_x`, `position_y`, `w`, `h` (все опциональны).  
 **Response** `200`.
 
 ### `DELETE /desks/{desk_id}`
 Удалить рабочее место.
 
-**Auth**: admin  
+**Auth**: авторизованный  
 **Response** `204`.
 
 ---
