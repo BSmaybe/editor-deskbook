@@ -1,0 +1,1557 @@
+openapi: "3.0.3"
+info:
+  title: DeskBook API
+  description: |
+    Редактор карт офисных этажей. Здания, этажи, библиотека компонентов, layout editor, SVG/HTML экспорт.
+
+    **Роли:** `admin` и `user` имеют одинаковый доступ к редактору. Admin-only: invites, user management, cleanup.
+
+    **Layout workflow:** draft → publish → archived. Каждое сохранение создаёт ревизию в PostgreSQL. Версионирование с оптимистичной блокировкой.
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:8000
+    description: Go API (direct)
+  - url: http://localhost:5175/api
+    description: Через nginx proxy
+
+tags:
+  - name: Health
+  - name: Auth
+    description: Логин и регистрация по invite
+  - name: Invites
+    description: "Управление приглашениями (admin-only)"
+  - name: Users
+  - name: Offices
+    description: Здания
+  - name: Floors
+    description: Этажи
+  - name: Components
+    description: Библиотека компонентов
+  - name: Blocks
+    description: Блоки (группы объектов)
+  - name: Templates
+    description: Шаблоны layout
+  - name: Layout
+    description: "Редактирование карт: draft/publish/revisions"
+  - name: Floor Lock
+    description: Блокировка этажа от одновременного редактирования
+  - name: Desks
+    description: Рабочие места (sync из layout)
+  - name: Render
+    description: SVG/HTML экспорт
+  - name: Embed
+    description: Публичный виджет
+  - name: Admin
+    description: Обслуживание (admin-only)
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT из POST /auth/login. Claims: sub, role, exp."
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+      required: [detail]
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+
+    UserPublic:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+        full_name:
+          type: string
+          nullable: true
+        department:
+          type: string
+          nullable: true
+        position:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        user_status:
+          type: string
+          enum: [available, busy, away]
+        is_active:
+          type: boolean
+
+    Invite:
+      type: object
+      properties:
+        id:
+          type: integer
+        token:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+        created_by:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        used_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Office:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        address:
+          type: string
+          nullable: true
+
+    Floor:
+      type: object
+      properties:
+        id:
+          type: integer
+        office_id:
+          type: integer
+        name:
+          type: string
+        plan_url:
+          type: string
+          nullable: true
+
+    Component:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        asset_type:
+          type: string
+          enum: [workplace, desk, chair, meeting_table, conference_set, call_room, lounge, sofa, plant, storage, printer, reception, column, asset]
+        view_box:
+          type: array
+          items:
+            type: number
+          minItems: 4
+          maxItems: 4
+        default_w:
+          type: number
+        default_h:
+          type: number
+        svg_markup:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Block:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        objects:
+          type: array
+          items:
+            type: object
+        preview_svg:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Template:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        layout:
+          type: string
+          description: Layout JSON as string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    LayoutState:
+      type: object
+      properties:
+        floor_id:
+          type: integer
+        version:
+          type: integer
+        status:
+          type: string
+          enum: [draft, published, archived]
+        layout:
+          type: object
+          description: LayoutDocument JSON
+        updated_at:
+          type: string
+          format: date-time
+        updated_by:
+          type: string
+
+    Desk:
+      type: object
+      properties:
+        id:
+          type: integer
+        floor_id:
+          type: integer
+        label:
+          type: string
+        type:
+          type: string
+          enum: [flex, fixed]
+        space_type:
+          type: string
+          enum: [desk, meeting_room, call_room, open_space, lounge]
+        assigned_to:
+          type: string
+          nullable: true
+        position_x:
+          type: number
+          nullable: true
+        position_y:
+          type: number
+          nullable: true
+        w:
+          type: number
+        h:
+          type: number
+        qr_token:
+          type: string
+
+    LockState:
+      type: object
+      properties:
+        locked:
+          type: boolean
+        locked_by:
+          type: string
+        locked_at:
+          type: string
+          format: date-time
+
+    SyncResult:
+      type: object
+      properties:
+        created:
+          type: integer
+        updated:
+          type: integer
+        removed:
+          type: integer
+        protected:
+          type: integer
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Проверка доступности
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: ok
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Получить JWT-токен
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+              required: [username, password]
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+              required: [username, password]
+      responses:
+        "200":
+          description: JWT-токен
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: Неверные credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Регистрация по invite-ссылке
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                email:
+                  type: string
+                  description: Должен совпадать с email в invite
+                password:
+                  type: string
+                invite_token:
+                  type: string
+              required: [username, email, password, invite_token]
+      responses:
+        "201":
+          description: Пользователь создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPublic"
+        "403":
+          description: Невалидный/использованный/просроченный invite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Username или email уже заняты
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/invites:
+    post:
+      tags: [Invites]
+      summary: Создать invite
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                role:
+                  type: string
+                  enum: [admin, user]
+                  default: user
+                expires_in_hours:
+                  type: integer
+                  nullable: true
+                  description: Срок действия в часах (null = бессрочно)
+              required: [email]
+      responses:
+        "201":
+          description: Invite создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invite"
+        "403":
+          description: Admin-only
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      tags: [Invites]
+      summary: Список всех invite
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Invite"
+
+  /admin/invites/{invite_id}:
+    delete:
+      tags: [Invites]
+      summary: Удалить invite
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: invite_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Удалён
+
+  /invites/{token}:
+    get:
+      tags: [Invites]
+      summary: Публичная информация об invite
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email:
+                    type: string
+                  role:
+                    type: string
+        "404":
+          description: Не найден
+        "410":
+          description: Использован или просрочен
+
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Текущий пользователь
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPublic"
+
+  /users:
+    get:
+      tags: [Users]
+      summary: Список пользователей
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Фильтр по username/full_name
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserPublic"
+
+  /admin/users:
+    get:
+      tags: [Users]
+      summary: Полный список (admin-only)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserPublic"
+
+  /admin/users/{username}:
+    patch:
+      tags: [Users]
+      summary: Обновить роль/статус (admin-only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum: [admin, user]
+                is_active:
+                  type: boolean
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPublic"
+    delete:
+      tags: [Users]
+      summary: Удалить пользователя (admin-only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Удалён
+
+  /offices:
+    get:
+      tags: [Offices]
+      summary: Список зданий
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Office"
+    post:
+      tags: [Offices]
+      summary: Создать здание
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                address:
+                  type: string
+              required: [name]
+      responses:
+        "201":
+          description: Создано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Office"
+
+  /offices/{office_id}:
+    patch:
+      tags: [Offices]
+      summary: Обновить здание
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: office_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                address:
+                  type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Office"
+    delete:
+      tags: [Offices]
+      summary: Удалить здание
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: office_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Удалено
+
+  /floors:
+    get:
+      tags: [Floors]
+      summary: Список этажей
+      parameters:
+        - name: office_id
+          in: query
+          schema:
+            type: integer
+          description: Фильтр по зданию
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Floor"
+    post:
+      tags: [Floors]
+      summary: Создать этаж
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                office_id:
+                  type: integer
+                name:
+                  type: string
+              required: [office_id, name]
+      responses:
+        "201":
+          description: Создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Floor"
+
+  /floors/{floor_id}:
+    patch:
+      tags: [Floors]
+      summary: Обновить этаж
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Floor"
+    delete:
+      tags: [Floors]
+      summary: Удалить этаж
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Удалён
+
+  /floors/{floor_id}/plan:
+    post:
+      tags: [Floors]
+      summary: Загрузить план этажа (PNG/JPG/SVG)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan_url:
+                    type: string
+
+  /components:
+    get:
+      tags: [Components]
+      summary: Список компонентов
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Component"
+    post:
+      tags: [Components]
+      summary: Создать компонент
+      description: "SVG валидируется: <script> и опасные теги запрещены."
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  pattern: "^[A-Za-z_][A-Za-z0-9_.:-]{0,119}$"
+                label:
+                  type: string
+                  maxLength: 120
+                asset_type:
+                  type: string
+                  enum: [workplace, desk, chair, meeting_table, conference_set, call_room, lounge, sofa, plant, storage, printer, reception, column, asset]
+                view_box:
+                  type: array
+                  items:
+                    type: number
+                  minItems: 4
+                  maxItems: 4
+                default_w:
+                  type: number
+                default_h:
+                  type: number
+                svg_markup:
+                  type: string
+              required: [id, label, asset_type, view_box, default_w, default_h, svg_markup]
+      responses:
+        "201":
+          description: Создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Component"
+        "409":
+          description: ID уже существует
+        "422":
+          description: Невалидный SVG
+
+  /components/{component_id}:
+    put:
+      tags: [Components]
+      summary: Обновить компонент (upsert)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: component_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                label:
+                  type: string
+                asset_type:
+                  type: string
+                view_box:
+                  type: array
+                  items:
+                    type: number
+                default_w:
+                  type: number
+                default_h:
+                  type: number
+                svg_markup:
+                  type: string
+              required: [id, label, asset_type, view_box, default_w, default_h, svg_markup]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Component"
+    delete:
+      tags: [Components]
+      summary: Удалить компонент
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: component_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Удалён
+
+  /blocks:
+    get:
+      tags: [Blocks]
+      summary: Список блоков
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Block"
+    post:
+      tags: [Blocks]
+      summary: Создать блок
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                category:
+                  type: string
+                  default: custom
+                description:
+                  type: string
+                objects:
+                  type: array
+                  items:
+                    type: object
+                preview_svg:
+                  type: string
+              required: [name, objects]
+      responses:
+        "201":
+          description: Создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Block"
+
+  /blocks/{block_id}:
+    delete:
+      tags: [Blocks]
+      summary: Удалить блок
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: block_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Удалён
+
+  /templates:
+    get:
+      tags: [Templates]
+      summary: Список шаблонов
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Template"
+    post:
+      tags: [Templates]
+      summary: Создать шаблон
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                category:
+                  type: string
+                  default: custom
+                layout:
+                  type: object
+              required: [name, layout]
+      responses:
+        "201":
+          description: Создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+
+  /templates/{template_id}:
+    delete:
+      tags: [Templates]
+      summary: Удалить шаблон
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: template_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Удалён
+
+  /floors/{floor_id}/layout:
+    get:
+      tags: [Layout]
+      summary: Текущий layout (draft или published)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LayoutState"
+
+  /floors/{floor_id}/layout/draft:
+    put:
+      tags: [Layout]
+      summary: Сохранить черновик
+      description: "version — оптимистичная блокировка: должен совпадать с текущим."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: integer
+                layout:
+                  type: object
+                  description: LayoutDocument JSON
+              required: [version, layout]
+      responses:
+        "200":
+          description: Черновик сохранён
+        "409":
+          description: Version mismatch
+        "423":
+          description: Этаж заблокирован другим пользователем
+    delete:
+      tags: [Layout]
+      summary: Отменить черновик
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Черновик удалён
+
+  /floors/{floor_id}/layout/publish:
+    post:
+      tags: [Layout]
+      summary: Опубликовать черновик
+      description: "draft → published, старый published → archived. Автоматически синхронизирует workplace-объекты в desks."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Опубликовано
+
+  /floors/{floor_id}/layout/import:
+    post:
+      tags: [Layout]
+      summary: Импортировать и классифицировать SVG
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          text/xml:
+            schema:
+              type: string
+          image/svg+xml:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Результат классификации
+
+  /floors/{floor_id}/layout/sync-desks:
+    post:
+      tags: [Layout]
+      summary: Синхронизировать рабочие места из layout
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: source
+          in: query
+          schema:
+            type: string
+            default: published
+        - name: cleanup
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncResult"
+
+  /floors/{floor_id}/layout/published:
+    get:
+      tags: [Layout]
+      summary: Опубликованный layout (JSON)
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LayoutState"
+
+  /floors/{floor_id}/layout/published.svg:
+    get:
+      tags: [Render]
+      summary: Опубликованный layout как SVG
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Семантический SVG
+          content:
+            image/svg+xml:
+              schema:
+                type: string
+
+  /floors/{floor_id}/layout/published.html:
+    get:
+      tags: [Render]
+      summary: Опубликованный layout как HTML
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Standalone HTML с hover и click events
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /floors/{floor_id}/layout/history:
+    get:
+      tags: [Layout]
+      summary: Аудит-лог изменений
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    action:
+                      type: string
+                    username:
+                      type: string
+                    created_at:
+                      type: string
+                      format: date-time
+
+  /floors/{floor_id}/layout/revisions:
+    get:
+      tags: [Layout]
+      summary: Список ревизий
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    status:
+                      type: string
+                      enum: [draft, published, archived]
+                    version:
+                      type: integer
+                    is_current:
+                      type: boolean
+                    created_at:
+                      type: string
+                      format: date-time
+
+  /floors/{floor_id}/layout/revisions/{revision_id}:
+    get:
+      tags: [Layout]
+      summary: Получить ревизию
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: revision_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Layout из ревизии
+
+  /floors/{floor_id}/layout/revisions/{revision_id}/restore:
+    post:
+      tags: [Layout]
+      summary: Восстановить ревизию как новый черновик
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: revision_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ревизия восстановлена как draft
+
+  /floors/{floor_id}/lock:
+    get:
+      tags: [Floor Lock]
+      summary: Статус блокировки
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LockState"
+    post:
+      tags: [Floor Lock]
+      summary: Заблокировать этаж (TTL 10 мин)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Заблокировано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LockState"
+        "423":
+          description: Уже заблокирован другим пользователем
+    delete:
+      tags: [Floor Lock]
+      summary: Снять блокировку (только владелец)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Разблокировано
+
+  /desks:
+    get:
+      tags: [Desks]
+      summary: Список рабочих мест
+      parameters:
+        - name: floor_id
+          in: query
+          schema:
+            type: integer
+          description: Фильтр по этажу
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Desk"
+
+  /desks/{desk_id}:
+    get:
+      tags: [Desks]
+      summary: Получить рабочее место
+      parameters:
+        - name: desk_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Desk"
+    patch:
+      tags: [Desks]
+      summary: Обновить рабочее место
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: desk_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                type:
+                  type: string
+                  enum: [flex, fixed]
+                space_type:
+                  type: string
+                assigned_to:
+                  type: string
+                position_x:
+                  type: number
+                position_y:
+                  type: number
+                w:
+                  type: number
+                h:
+                  type: number
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Desk"
+    delete:
+      tags: [Desks]
+      summary: Удалить рабочее место
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: desk_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Удалён
+
+  /render/svg:
+    post:
+      tags: [Render]
+      summary: Отрендерить layout в SVG
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: "layout_json напрямую или {layout: {...}, title: '...'}"
+      responses:
+        "200":
+          description: SVG
+          content:
+            image/svg+xml:
+              schema:
+                type: string
+
+  /render/html:
+    post:
+      tags: [Render]
+      summary: Отрендерить layout в HTML
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Standalone HTML
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /embed/floors/{floor_id}:
+    get:
+      tags: [Embed]
+      summary: Публичная HTML-страница для iframe
+      parameters:
+        - name: floor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: HTML с опубликованной картой
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /admin/cleanup/revisions:
+    post:
+      tags: [Admin]
+      summary: Удалить старые архивные ревизии (admin-only)
+      description: "Удаляет archived-ревизии старше N дней. Текущий draft и published не трогает."
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: older_than_days
+          in: query
+          schema:
+            type: integer
+            default: 90
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: integer

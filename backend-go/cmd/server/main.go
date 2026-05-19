@@ -191,6 +191,9 @@ func main() {
 	// Public embed (no auth — read-only published floor plan)
 	mux.HandleFunc("GET /embed/floors/{floor_id}", app.embedFloorHandler)
 
+	// Swagger UI — interactive API documentation
+	mux.Handle("/docs", swaggerUIHandler())
+	mux.Handle("/docs/", swaggerUIHandler())
 
 	// Static file serving
 	staticDir := envDefault("STATIC_DIR", "static")
