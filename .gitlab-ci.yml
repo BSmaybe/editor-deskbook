@@ -1,0 +1,102 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  DeskBook CI/CD
+#
+#  Stages:
+#    build   — собирает 3 Docker-образа и пушит в GitLab Container Registry
+#    deploy  — SSH → git pull + docker compose up с pre-built образами
+#
+#  Переменные, которые нужно задать в Settings → CI/CD → Variables:
+#    DEPLOY_HOST       IP или hostname сервера
+#    DEPLOY_USER       SSH-пользователь (например deploy)
+#    SSH_PRIVATE_KEY   приватный ключ (тип: File или Variable, protected)
+# ──────────────────────────────────────────────────────────────────────────────
+
+stages:
+  - build
+  - deploy
+
+variables:
+  IMAGE_API:     "$CI_REGISTRY_IMAGE/api"
+  IMAGE_ADMIN:   "$CI_REGISTRY_IMAGE/admin"
+  IMAGE_LANDING: "$CI_REGISTRY_IMAGE/landing"
+  DOCKER_TLS_CERTDIR: "/certs"
+
+# ── Общий шаблон для build-джобов ─────────────────────────────────────────────
+
+.build:
+  stage: build
+  image: docker:26
+  services:
+    - docker:26-dind
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ── Build ──────────────────────────────────────────────────────────────────────
+
+build:api:
+  extends: .build
+  script:
+    - docker build
+        --cache-from "$IMAGE_API:latest"
+        -t "$IMAGE_API:$CI_COMMIT_SHORT_SHA"
+        -t "$IMAGE_API:latest"
+        ./backend-go
+    - docker push "$IMAGE_API:$CI_COMMIT_SHORT_SHA"
+    - docker push "$IMAGE_API:latest"
+
+build:admin:
+  extends: .build
+  script:
+    - docker build
+        --cache-from "$IMAGE_ADMIN:latest"
+        -t "$IMAGE_ADMIN:$CI_COMMIT_SHORT_SHA"
+        -t "$IMAGE_ADMIN:latest"
+        ./frontend/admin-react
+    - docker push "$IMAGE_ADMIN:$CI_COMMIT_SHORT_SHA"
+    - docker push "$IMAGE_ADMIN:latest"
+
+build:landing:
+  extends: .build
+  script:
+    - docker build
+        --cache-from "$IMAGE_LANDING:latest"
+        -t "$IMAGE_LANDING:$CI_COMMIT_SHORT_SHA"
+        -t "$IMAGE_LANDING:latest"
+        ./landing
+    - docker push "$IMAGE_LANDING:$CI_COMMIT_SHORT_SHA"
+    - docker push "$IMAGE_LANDING:latest"
+
+# ── Deploy ─────────────────────────────────────────────────────────────────────
+
+deploy:production:
+  stage: deploy
+  image: alpine:3.20
+  needs:
+    - build:api
+    - build:admin
+    - build:landing
+  before_script:
+    - apk add --no-cache openssh-client git
+    - install -m 600 /dev/null ~/.ssh/id_rsa
+    - printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+  script:
+    - |
+      ssh "$DEPLOY_USER@$DEPLOY_HOST" "
+        set -e
+        docker login -u '$CI_REGISTRY_USER' -p '$CI_REGISTRY_PASSWORD' '$CI_REGISTRY'
+        cd /opt/deskbook
+        git pull origin main
+        IMAGE_API='$IMAGE_API:$CI_COMMIT_SHORT_SHA' \
+        IMAGE_ADMIN='$IMAGE_ADMIN:$CI_COMMIT_SHORT_SHA' \
+        IMAGE_LANDING='$IMAGE_LANDING:$CI_COMMIT_SHORT_SHA' \
+        docker compose -f docker-compose.prod.yml up -d --remove-orphans
+        docker image prune -f
+      "
+  environment:
+    name: production
+    url: "http://$DEPLOY_HOST"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
