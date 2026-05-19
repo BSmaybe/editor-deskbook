@@ -4521,15 +4521,15 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         </>
         {grid.gridVisible && (
           <>
-            <span className="ce-statusbar-sep">·</span>
-            <span className="ce-statusbar-item" title="Метрическая сетка зависит от масштаба">
+            <span className="ce-statusbar-sep ce-statusbar-secondary">·</span>
+            <span className="ce-statusbar-item ce-statusbar-secondary" title="Метрическая сетка зависит от масштаба">
               сетка: 0.25 м / 1 м
             </span>
           </>
         )}
         <>
-          <span className="ce-statusbar-sep">·</span>
-          <span className="ce-statusbar-item" style={{ opacity: 0.6 }}>
+          <span className="ce-statusbar-sep ce-statusbar-secondary">·</span>
+          <span className="ce-statusbar-item ce-statusbar-secondary" style={{ opacity: 0.6 }}>
             {canvasW}×{canvasH}
           </span>
         </>

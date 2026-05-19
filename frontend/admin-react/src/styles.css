@@ -187,6 +187,7 @@ a {
   min-height: 0;
   padding: 20px;
   overflow-y: auto;
+  max-height: 100vh;
 }
 
 .topbar,

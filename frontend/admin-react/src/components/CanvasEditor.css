@@ -3,9 +3,10 @@
 .floor-canvas-editor {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  height: clamp(420px, calc(100vh - 260px), 860px);
+  flex: 1 1 0;
+  height: calc(100vh - 220px);
   min-height: 360px;
+  max-height: calc(100vh - 160px);
   overflow: hidden;
   background: #f8fafc;
   position: relative;
@@ -403,16 +404,19 @@
 
 .floor-canvas-editor .ce-statusbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 2px 10px;
+  gap: 4px 10px;
+  padding: 3px 10px;
   background: #f8fafc;
   border-top: 1px solid #e2e8f0;
   font-size: 11px;
   color: #64748b;
   flex-shrink: 0;
   user-select: none;
-  min-height: 22px;
+  min-height: 24px;
+  overflow: hidden;
+  max-height: 48px;
 }
 
 .floor-canvas-editor .ce-statusbar-item {
@@ -420,6 +424,7 @@
   align-items: center;
   gap: 4px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .floor-canvas-editor .ce-statusbar-sep {
@@ -428,6 +433,17 @@
 
 .floor-canvas-editor .ce-measure-readout {
   color: #b91c1c;
+}
+
+/* Hide low-priority status items on narrow screens */
+@media (max-width: 900px) {
+  .floor-canvas-editor .ce-statusbar {
+    gap: 3px 8px;
+    font-size: 10px;
+  }
+  .floor-canvas-editor .ce-statusbar .ce-statusbar-secondary {
+    display: none;
+  }
 }
 
 /* ── Structure layers ──────────────────────────────────────────────────────── */
