@@ -89,8 +89,7 @@ type layoutDeskSyncResult struct {
 	Renamed                         int    `json:"renamed"`
 	TotalLayoutDesks                int    `json:"total_layout_desks"`
 	UnmatchedExisting               int    `json:"unmatched_existing"`
-	Deleted                         int    `json:"deleted"`
-	ProtectedWithActiveReservations int    `json:"protected_with_active_reservations"`
+	Deleted           int    `json:"deleted"`
 }
 
 type layoutRevisionSummary struct {
@@ -504,6 +503,24 @@ func (a *appServer) restoreLayoutRevisionHandler(w http.ResponseWriter, r *http.
 	writeLayoutResponse(w, resp, err, "")
 }
 
+func (a *appServer) cleanupRevisionsHandler(w http.ResponseWriter, r *http.Request) {
+	if _, err := requireAdminContext(r); err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	if a.layouts == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("layout store is not configured"))
+		return
+	}
+	days := intQuery(r, "older_than_days", 90, 1, 3650)
+	deleted, err := a.layouts.cleanupArchivedRevisions(r.Context(), days)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"deleted_revisions": deleted, "older_than_days": days})
+}
+
 func (a *appServer) getFloorLockHandler(w http.ResponseWriter, r *http.Request) {
 	if _, err := requireAuthContext(r); err != nil {
 		writeAuthError(w, err)
@@ -823,17 +840,8 @@ func (s *layoutStore) syncDesksForFloor(ctx context.Context, floorID int, source
 	}
 
 	deleted := 0
-	protected := 0
 	if cleanup {
 		for _, deskID := range stats.UnmatchedIDs {
-			hasActive, err := deskHasActiveReservation(ctx, tx, deskID)
-			if err != nil {
-				return layoutDeskSyncResult{}, err
-			}
-			if hasActive {
-				protected++
-				continue
-			}
 			tag, err := tx.Exec(ctx, `DELETE FROM desks WHERE id=$1`, deskID)
 			if err != nil {
 				return layoutDeskSyncResult{}, err
@@ -842,22 +850,21 @@ func (s *layoutStore) syncDesksForFloor(ctx context.Context, floorID int, source
 		}
 	}
 
-	note := fmt.Sprintf("source:%s;cleanup:%d;deleted:%d;protected:%d", sourceStatus, boolInt(cleanup), deleted, protected)
+	note := fmt.Sprintf("source:%s;cleanup:%d;deleted:%d", sourceStatus, boolInt(cleanup), deleted)
 	_ = logAuditTx(ctx, tx, floorID, userID, "desks_synced", sql.NullInt64{Int64: int64(rev.ID), Valid: true}, note)
 	if err := tx.Commit(ctx); err != nil {
 		return layoutDeskSyncResult{}, err
 	}
 	return layoutDeskSyncResult{
-		FloorID:                         floorID,
-		RevisionID:                      rev.ID,
-		SourceStatus:                    sourceStatus,
-		Created:                         stats.Created,
-		Updated:                         stats.Updated,
-		Renamed:                         stats.Renamed,
-		TotalLayoutDesks:                stats.TotalLayoutDesks,
-		UnmatchedExisting:               stats.UnmatchedExisting,
-		Deleted:                         deleted,
-		ProtectedWithActiveReservations: protected,
+		FloorID:          floorID,
+		RevisionID:       rev.ID,
+		SourceStatus:     sourceStatus,
+		Created:          stats.Created,
+		Updated:          stats.Updated,
+		Renamed:          stats.Renamed,
+		TotalLayoutDesks: stats.TotalLayoutDesks,
+		UnmatchedExisting: stats.UnmatchedExisting,
+		Deleted:          deleted,
 	}, nil
 }
 
@@ -1204,6 +1211,22 @@ func (s *layoutStore) getLock(ctx context.Context, floorID int) (floorLockOut, b
 	}
 	lock.LockedByUsername = lockUsername(lock.LockedByUsername, lock.LockedByID)
 	return lock, true, nil
+}
+
+func (s *layoutStore) cleanupArchivedRevisions(ctx context.Context, olderThanDays int) (int, error) {
+	cutoff := time.Now().AddDate(0, 0, -olderThanDays)
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM floor_map_revisions
+		 WHERE status = 'archived' AND updated_at < $1
+		 AND id NOT IN (
+		   SELECT COALESCE(published_map_revision_id, 0) FROM floors
+		   UNION
+		   SELECT COALESCE(draft_map_revision_id, 0) FROM floors
+		 )`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func usernameForUserID(ctx context.Context, q rowQuerier, userID int) string {
@@ -1580,16 +1603,6 @@ func effectiveLayoutViewBox(layout exporter.LayoutDocument) (float64, float64, f
 		return minX, minY, spanW, spanH
 	}
 	return vx, vy, vw, vh
-}
-
-func deskHasActiveReservation(ctx context.Context, tx pgx.Tx, deskID int) (bool, error) {
-	var exists bool
-	err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM reservations WHERE desk_id=$1 AND status='active'
-		)
-	`, deskID).Scan(&exists)
-	return exists, err
 }
 
 func logAuditTx(ctx context.Context, tx pgx.Tx, floorID int, userID sql.NullInt64, action string, revisionID sql.NullInt64, note string) error {

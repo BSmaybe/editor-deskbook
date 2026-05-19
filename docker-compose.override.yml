@@ -1,0 +1,14 @@
+# Dev overrides — applied automatically by `docker compose up`.
+# On the server, rename or remove this file so only docker-compose.yml is used.
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  api:
+    ports:
+      - "8000:8080"
+
+  admin:
+    ports:
+      - "5175:80"

@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Boxes, Building2, Layers3, LogOut, PanelLeftClose, PanelLeftOpen, RefreshCw } from 'lucide-react';
+import { Boxes, Building2, Layers3, LogOut, Mail, PanelLeftClose, PanelLeftOpen, RefreshCw } from 'lucide-react';
 import { apiFetch, login, logout, tokenFromStorage, usernameFromStorage } from './lib/api.js';
-import { LoginScreen, Notice } from './components/ui.jsx';
+import { LoginScreen, Notice, RegisterScreen } from './components/ui.jsx';
 import LayoutPanel from './components/LayoutPanel.jsx';
 import ComponentPanel from './components/ComponentPanel.jsx';
 import BuildingPanel from './components/BuildingPanel.jsx';
+import InvitePanel from './components/InvitePanel.jsx';
 import { mergeComponentCatalog } from './lib/componentCatalog.js';
 import './styles.css';
 
@@ -34,7 +35,11 @@ async function loadPublishedSvgPreview(floorId) {
   }
 }
 
+const isInviteUrl = new URLSearchParams(window.location.search).has('invite');
+
 function App() {
+  if (isInviteUrl) return <RegisterScreen />;
+
   const [token, setToken] = useState(tokenFromStorage());
   const [username, setUsername] = useState(usernameFromStorage());
   const [activeTab, setActiveTab] = useState('layout');
@@ -264,6 +269,9 @@ function App() {
           <button type="button" className={activeTab === 'components' ? 'active' : ''} onClick={() => setActiveTab('components')} title="Компоненты">
             <Boxes size={18} /> <span>Компоненты</span>
           </button>
+          <button type="button" className={activeTab === 'invites' ? 'active' : ''} onClick={() => setActiveTab('invites')} title="Приглашения">
+            <Mail size={18} /> <span>Приглашения</span>
+          </button>
         </nav>
         <div className="session">
           <span>{username}</span>
@@ -336,6 +344,12 @@ function App() {
           <ComponentPanel
             components={componentCatalog}
             onRefresh={loadReferenceData}
+            onNotice={setNotice}
+            onError={setError}
+          />
+        )}
+        {activeTab === 'invites' && (
+          <InvitePanel
             onNotice={setNotice}
             onError={setError}
           />

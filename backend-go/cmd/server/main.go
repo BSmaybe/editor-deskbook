@@ -40,6 +40,7 @@ func main() {
 		ds  *deskStore
 		ts  *templateStore
 		bs  *blockStore
+		is  *inviteStore
 	)
 
 	if databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL")); databaseURL != "" {
@@ -91,10 +92,20 @@ func main() {
 			bs = store
 			defer bs.close()
 		}
+		if store, err := newInviteStore(ctx, databaseURL); err != nil {
+			log.Printf("invite store disabled: %v", err)
+		} else {
+			is = store
+			defer is.close()
+		}
 		log.Printf("database stores initialized")
+
+		if us != nil {
+			seedBootstrapAdmin(ctx, us)
+		}
 	}
 
-	app := &appServer{components: cs, layouts: ls, users: us, offices: os2, floors: fs, desks: ds, templates: ts, blocks: bs}
+	app := &appServer{components: cs, layouts: ls, users: us, offices: os2, floors: fs, desks: ds, templates: ts, blocks: bs, invites: is}
 	mux := http.NewServeMux()
 
 	// Health
@@ -107,7 +118,12 @@ func main() {
 	// Auth
 	mux.HandleFunc("POST /auth/register", app.registerHandler)
 	mux.HandleFunc("POST /auth/login", app.loginHandler)
-	mux.HandleFunc("POST /auth/demo", placeholder501)
+
+	// Invites (admin)
+	mux.HandleFunc("POST /admin/invites", app.createInviteHandler)
+	mux.HandleFunc("GET /admin/invites", app.listInvitesHandler)
+	mux.HandleFunc("DELETE /admin/invites/{invite_id}", app.deleteInviteHandler)
+	mux.HandleFunc("GET /invites/{token}", app.getInviteInfoHandler)
 
 	// Users
 	mux.HandleFunc("GET /users/me", app.getMeHandler)
@@ -153,6 +169,9 @@ func main() {
 	mux.HandleFunc("POST /floors/{floor_id}/lock", app.acquireFloorLockHandler)
 	mux.HandleFunc("DELETE /floors/{floor_id}/lock", app.releaseFloorLockHandler)
 
+	// Admin maintenance
+	mux.HandleFunc("POST /admin/cleanup/revisions", app.cleanupRevisionsHandler)
+
 	// Templates
 	mux.HandleFunc("GET /templates", app.listTemplatesHandler)
 	mux.HandleFunc("POST /templates", app.createTemplateHandler)
@@ -172,32 +191,6 @@ func main() {
 	// Public embed (no auth — read-only published floor plan)
 	mux.HandleFunc("GET /embed/floors/{floor_id}", app.embedFloorHandler)
 
-	// Frozen module placeholders (501)
-	mux.HandleFunc("GET /users/search", placeholder501)
-	mux.HandleFunc("GET /users/me/favorites", placeholder501)
-	mux.HandleFunc("POST /users/me/favorites/{desk_id}", placeholder501)
-	mux.HandleFunc("DELETE /users/me/favorites/{desk_id}", placeholder501)
-	mux.HandleFunc("GET /users/{username}", placeholder501)
-	mux.HandleFunc("PATCH /users/{username}/profile", placeholder501)
-	mux.HandleFunc("POST /users/me/password", placeholder501)
-	mux.HandleFunc("GET /users/team", placeholder501)
-	mux.HandleFunc("GET /departments", placeholder501)
-	mux.HandleFunc("POST /departments", placeholder501)
-	mux.HandleFunc("DELETE /departments/{dept_id}", placeholder501)
-	mux.HandleFunc("GET /desks/{desk_id}/qr", placeholder501)
-	mux.HandleFunc("POST /checkin/{qr_token}", placeholder501)
-	mux.HandleFunc("GET /availability", placeholder501)
-	mux.HandleFunc("POST /availability/batch", placeholder501)
-	mux.HandleFunc("GET /reservations", placeholder501)
-	mux.HandleFunc("POST /reservations", placeholder501)
-	mux.HandleFunc("POST /reservations/batch", placeholder501)
-	mux.HandleFunc("POST /reservations/{reservation_id}/cancel", placeholder501)
-	mux.HandleFunc("GET /floors/{floor_id}/reservations", placeholder501)
-	mux.HandleFunc("GET /analytics", placeholder501)
-	mux.HandleFunc("GET /policies", placeholder501)
-	mux.HandleFunc("POST /policies", placeholder501)
-	mux.HandleFunc("PATCH /policies/{policy_id}", placeholder501)
-	mux.HandleFunc("DELETE /policies/{policy_id}", placeholder501)
 
 	// Static file serving
 	staticDir := envDefault("STATIC_DIR", "static")
@@ -216,10 +209,6 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
-}
-
-func placeholder501(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, errorResponse{Detail: "Module frozen during editor migration"})
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

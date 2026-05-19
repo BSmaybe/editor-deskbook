@@ -1,24 +1,10 @@
-# DeskBook Editor
+# DeskBook
 
-DeskBook сейчас сфокусирован на редакторе карт офисных этажей:
+Редактор карт офисных этажей. Админка для создания зданий, этажей, библиотеки компонентов, редактирования layout и публикации интерактивных SVG/HTML карт.
 
-- React-админка для зданий, этажей, компонентов и layout editor.
-- Go API для auth, справочников, компонентов, draft/publish workflow и SVG/HTML export.
-- PostgreSQL для пользователей, зданий, этажей, ревизий карт и синхронизированных рабочих мест.
-
-Бронирования, политики, аналитика, QR/check-in, клиентское приложение и landing заморожены на время миграции редактора. Их API-маршруты остаются только как `501 Not Implemented` placeholders.
-
-## Быстрый Старт
-
-### Требования
-
-- Docker и Docker Compose v2
-- `curl` и `jq` для contract/smoke проверок
-
-### Запуск
+## Быстрый старт (локально)
 
 ```bash
-cp .env.example .env
 docker compose up --build -d
 ```
 
@@ -28,11 +14,11 @@ docker compose up --build -d
 | Go API | http://localhost:8000 |
 | PostgreSQL | localhost:5432 |
 
-Админка проксирует `/api/*` в Go API. Миграции PostgreSQL выполняет compose-сервис `migrate` перед стартом API.
+Порты 5175, 8000 и 5432 открываются через `docker-compose.override.yml` (для разработки). Первый админ создаётся автоматически из `BOOTSTRAP_ADMIN_*` в `.env`.
 
-## Локальная Разработка
+## Локальная разработка
 
-Backend:
+Go API:
 
 ```bash
 cd backend-go
@@ -48,37 +34,54 @@ npm install
 npm run dev
 ```
 
-Dev server доступен на `http://localhost:5175` и проксирует `/api` в `http://localhost:8000`.
+Dev server на `http://localhost:5175`, проксирует `/api` в Go API.
 
-## Основные API
+## Архитектура
 
-- `POST /auth/register`
-- `POST /auth/login`
-- `GET /offices`
-- `POST /offices`
-- `PATCH /offices/{office_id}`
-- `DELETE /offices/{office_id}`
-- `GET /floors`
-- `POST /floors`
-- `PATCH /floors/{floor_id}`
-- `DELETE /floors/{floor_id}`
-- `GET /components`
-- `POST /components`
-- `PUT /components/{component_id}`
-- `DELETE /components/{component_id}`
-- `GET /floors/{floor_id}/layout`
-- `PUT /floors/{floor_id}/layout/draft`
-- `POST /floors/{floor_id}/layout/publish`
-- `POST /floors/{floor_id}/layout/import`
-- `GET /floors/{floor_id}/layout/published.svg`
-- `GET /floors/{floor_id}/layout/published.html`
-- `GET /floors/{floor_id}/layout/history`
-- `GET /floors/{floor_id}/layout/revisions`
-- `GET /floors/{floor_id}/lock`
+```
+backend-go/
+  cmd/server/          Go HTTP API (auth, CRUD, layout, export)
+  internal/exporter/   layout_json -> semantic SVG/HTML
+  internal/svgimport/  SVG import и классификация
+  migrations/          PostgreSQL schema
 
-Admin write operations require a Bearer JWT with `role=admin`.
+frontend/admin-react/
+  src/                 React admin UI (Vite)
+  nginx.conf           /api proxy -> Go API
 
-## Проверки
+scripts/
+  backup.sh            Бэкап PostgreSQL с ротацией
+  restore.sh           Восстановление из бэкапа
+  gen-secrets.sh       Генерация .env.production
+
+tests/
+  smoke_test.sh        Smoke-тест всего контура
+  go_renderer_contract.sh
+  go_components_contract.sh
+  go_layout_contract.sh
+```
+
+## Auth и регистрация
+
+- `POST /auth/login` выдаёт JWT (HS256). Admin-эндпоинты требуют `role=admin`.
+- Регистрация invite-only: админ создаёт invite на конкретный email, пользователь переходит по ссылке `/?invite=<token>` и регистрируется. Invite одноразовый.
+
+## API
+
+Полный список эндпоинтов — в [backend-go/README.md](backend-go/README.md).
+
+Основные группы:
+- **Auth**: `/auth/login`, `/auth/register`
+- **Invites**: `/admin/invites`, `/invites/{token}`
+- **Здания/этажи**: `/offices`, `/floors`
+- **Компоненты**: `/components`
+- **Блоки/шаблоны**: `/blocks`, `/templates`
+- **Layout**: `/floors/{id}/layout/*` (draft, publish, import, history, revisions, lock)
+- **Экспорт**: `/render/svg`, `/render/html`, `published.svg`, `published.html`
+- **Desks**: `/desks`
+- **Embed**: `/embed/floors/{id}`
+
+## Тесты
 
 ```bash
 bash tests/go_renderer_contract.sh
@@ -87,28 +90,33 @@ bash tests/go_layout_contract.sh
 bash tests/smoke_test.sh
 ```
 
-`tests/smoke_test.sh` проверяет текущий editor-only контур: health, auth, CRUD зданий/этажей, сохранение и публикацию layout, экспорт SVG/HTML, синхронизацию workplace-объектов и frozen placeholders.
+## Деплой на сервер
 
-## Структура
+```bash
+# 1. Сгенерировать production секреты
+bash scripts/gen-secrets.sh
+cp .env.production .env
 
-```text
-backend-go/
-  cmd/server/        Go HTTP API
-  internal/exporter/ layout_json -> semantic SVG/HTML
-  internal/svgimport SVG import/classification
-  migrations/        PostgreSQL schema
+# 2. Удалить dev-override (он открывает лишние порты)
+rm -f docker-compose.override.yml
 
-frontend/admin-react/
-  src/               React admin UI
-  nginx.conf         /api proxy to Go API
-
-tests/
-  *_contract.sh      API/export contract checks
-  smoke_test.sh      editor-only smoke test
+# 3. Запустить
+docker compose up --build -d
 ```
 
-## Документы
+Наружу открыт только порт 80 (nginx). PostgreSQL и Go API доступны только внутри Docker-сети. Порт можно сменить через `DESKBOOK_PORT` в `.env`.
 
-- [Go + React migration](docs/GO_REACT_EDITOR_MIGRATION.md)
-- [Roadmap](docs/ROADMAP.md)
-- [Next steps](docs/NEXT_STEPS.md)
+### Обслуживание
+
+```bash
+bash scripts/backup.sh          # бэкап PostgreSQL (ротация 30 копий)
+bash scripts/restore.sh <file>  # восстановление из бэкапа
+```
+
+Cleanup старых ревизий: `POST /admin/cleanup/revisions?older_than_days=90`.
+
+## Документация
+
+- [API](docs/API.md) — полная документация по всем эндпоинтам с примерами
+- [Tech Lead QA](docs/TECH_LEAD_HANDOFF_QA.md) — вопросы и ответы для онбординга
+- [Go API](backend-go/README.md) — список эндпоинтов и контракт экспорта SVG/HTML

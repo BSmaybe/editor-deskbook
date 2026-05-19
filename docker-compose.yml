@@ -9,13 +9,16 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-deskbook}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # Run migrations before API starts
   migrate:
@@ -35,8 +38,6 @@ services:
     build: ./backend-go
     restart: unless-stopped
     env_file: .env
-    ports:
-      - "8000:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,15 +45,31 @@ services:
         condition: service_completed_successfully
     volumes:
       - api_static:/app/static
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
-  # React admin — editor + components
+  # React admin — nginx frontend, proxies /api to Go API
   admin:
     build: ./frontend/admin-react
     restart: unless-stopped
     ports:
-      - "5175:80"
+      - "${DESKBOOK_PORT:-80}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:

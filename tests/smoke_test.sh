@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Editor-only smoke test for the Go API.
 # Usage: bash tests/smoke_test.sh [BASE_URL]
+# Requires an existing admin user (set via SMOKE_ADMIN_USER / SMOKE_ADMIN_PASS
+# env vars, or defaults to admin / admin123).
 
 set -euo pipefail
 
 BASE_URL="${1:-http://localhost:8000}"
+ADMIN_USER="${SMOKE_ADMIN_USER:-admin}"
+ADMIN_PASS="${SMOKE_ADMIN_PASS:-admin123}"
 PASS=0
 FAIL=0
 SUFFIX="$(date +%s)$RANDOM"
-ADMIN_USER="smokeadmin_${SUFFIX}"
-ADMIN_PASS="SmokePass1!"
-ADMIN_EMAIL="${ADMIN_USER}@test.local"
 
 pass() { echo "[PASS] $1"; PASS=$((PASS + 1)); }
 fail() { echo "[FAIL] $1 - $2"; FAIL=$((FAIL + 1)); }
@@ -30,16 +31,6 @@ require_cmd() {
 require_cmd curl
 require_cmd jq
 
-ADMIN_SECRET="${ADMIN_REGISTER_SECRET:-}"
-if [ -z "$ADMIN_SECRET" ] && [ -f ".env" ]; then
-  ADMIN_SECRET="$(grep -E '^ADMIN_REGISTER_SECRET=' .env | tail -n1 | cut -d '=' -f2- | tr -d '\r')"
-fi
-
-if [ -z "$ADMIN_SECRET" ]; then
-  echo "ADMIN_REGISTER_SECRET is required for admin registration"
-  exit 1
-fi
-
 echo ""
 echo "=== Health ==="
 if [ "$(http_status "${BASE_URL}/health")" = "200" ]; then
@@ -51,19 +42,6 @@ fi
 
 echo ""
 echo "=== Auth ==="
-REGISTER_BODY="$(jq -n \
-  --arg username "$ADMIN_USER" \
-  --arg email "$ADMIN_EMAIL" \
-  --arg password "$ADMIN_PASS" \
-  --arg admin_secret "$ADMIN_SECRET" \
-  '{username:$username,email:$email,password:$password,role:"admin",admin_secret:$admin_secret}')"
-REGISTER_STATUS="$(http_status -X POST "${BASE_URL}/auth/register" -H "Content-Type: application/json" -d "$REGISTER_BODY")"
-if [ "$REGISTER_STATUS" = "201" ]; then
-  pass "Register admin"
-else
-  fail "Register admin" "HTTP ${REGISTER_STATUS}: $(cat /tmp/deskbook_smoke_body.$$)"
-fi
-
 LOGIN_BODY="$(curl -fsS -X POST "${BASE_URL}/auth/login" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   --data-urlencode "username=${ADMIN_USER}" \
@@ -73,9 +51,47 @@ if [ -n "$TOKEN" ]; then
   pass "Login admin"
 else
   fail "Login admin" "$LOGIN_BODY"
+  exit 1
 fi
 
 AUTH=(-H "Authorization: Bearer ${TOKEN}")
+
+echo ""
+echo "=== Invites ==="
+INVITE_BODY="$(http_body -X POST "${BASE_URL}/admin/invites" "${AUTH[@]}" -H "Content-Type: application/json" \
+  -d "{\"email\":\"smoke_${SUFFIX}@test.local\",\"role\":\"user\",\"expires_in_hours\":1}")"
+INVITE_TOKEN="$(echo "$INVITE_BODY" | jq -r '.token // empty')"
+if [ -n "$INVITE_TOKEN" ]; then
+  pass "Create invite"
+else
+  fail "Create invite" "$INVITE_BODY"
+fi
+
+INVITE_INFO_STATUS="$(http_status "${BASE_URL}/invites/${INVITE_TOKEN}")"
+if [ "$INVITE_INFO_STATUS" = "200" ]; then
+  pass "Get invite info"
+else
+  fail "Get invite info" "HTTP ${INVITE_INFO_STATUS}"
+fi
+
+REG_BODY="$(jq -n \
+  --arg username "smoke_${SUFFIX}" \
+  --arg email "smoke_${SUFFIX}@test.local" \
+  --arg token "$INVITE_TOKEN" \
+  '{username:$username,email:$email,password:"SmokePass1!",invite_token:$token}')"
+REG_STATUS="$(http_status -X POST "${BASE_URL}/auth/register" -H "Content-Type: application/json" -d "$REG_BODY")"
+if [ "$REG_STATUS" = "201" ]; then
+  pass "Register via invite"
+else
+  fail "Register via invite" "HTTP ${REG_STATUS}: $(cat /tmp/deskbook_smoke_body.$$)"
+fi
+
+REUSE_STATUS="$(http_status -X POST "${BASE_URL}/auth/register" -H "Content-Type: application/json" -d "$REG_BODY")"
+if [ "$REUSE_STATUS" != "201" ]; then
+  pass "Invite single-use (reuse blocked)"
+else
+  fail "Invite single-use" "Expected non-201, got ${REUSE_STATUS}"
+fi
 
 echo ""
 echo "=== Buildings and floors ==="
@@ -194,16 +210,6 @@ if echo "$DESKS_BODY" | jq -e 'any(.[]; .label == "SMOKE-1") and (any(.[]; .labe
   pass "Publish syncs workplace objects only"
 else
   fail "Desk sync from layout" "$DESKS_BODY"
-fi
-
-echo ""
-echo "=== Frozen modules ==="
-RESERVATIONS_STATUS="$(http_status "${BASE_URL}/reservations")"
-ANALYTICS_STATUS="$(http_status "${BASE_URL}/analytics")"
-if [ "$RESERVATIONS_STATUS" = "501" ] && [ "$ANALYTICS_STATUS" = "501" ]; then
-  pass "Frozen modules return 501"
-else
-  fail "Frozen modules" "reservations=${RESERVATIONS_STATUS} analytics=${ANALYTICS_STATUS}"
 fi
 
 echo ""

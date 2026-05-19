@@ -1,40 +1,11 @@
 # Environment
 .env
-
-# Claude Code local config (permissions, not project code)
-.claude/settings.local.json
-
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.Python
-.venv/
-venv/
-env/
-ENV/
-*.egg-info/
-dist/
-build/
-*.egg
-.eggs/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-coverage.xml
-*.cover
+.env.production
 
 # Node
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 dist/
-.next/
-.nuxt/
+npm-debug.log*
 
 # IDE
 .idea/
@@ -43,10 +14,14 @@ dist/
 *.swo
 .DS_Store
 
-# Docker
-docker-compose.override.yml
+# Claude Code local config
+.claude/settings.local.json
 
-# Static uploads (generated at runtime)
-backend/static/*.png
-backend/static/*.jpg
-backend/static/*.svg
+# Backups
+backups/
+
+# Go build artifacts
+backend-go/server
+
+# Docker (uncomment on server to ignore dev overrides)
+# docker-compose.override.yml

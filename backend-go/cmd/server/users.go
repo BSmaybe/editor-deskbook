@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -179,8 +180,7 @@ type registerPayload struct {
 	Username    string `json:"username"`
 	Email       string `json:"email"`
 	Password    string `json:"password"`
-	Role        string `json:"role"`
-	AdminSecret string `json:"admin_secret"`
+	InviteToken string `json:"invite_token"`
 }
 
 type loginPayload struct {
@@ -194,7 +194,7 @@ type tokenResponse struct {
 }
 
 func (app *appServer) registerHandler(w http.ResponseWriter, r *http.Request) {
-	if app.users == nil {
+	if app.users == nil || app.invites == nil {
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
@@ -204,26 +204,24 @@ func (app *appServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Username = strings.TrimSpace(p.Username)
-	p.Email = strings.TrimSpace(p.Email)
+	p.Email = strings.TrimSpace(strings.ToLower(p.Email))
+	p.InviteToken = strings.TrimSpace(p.InviteToken)
 	if p.Username == "" || p.Email == "" || p.Password == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("username, email and password are required"))
 		return
 	}
-	if strings.HasPrefix(p.Username, "demo_") {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("username prefix 'demo_' is reserved"))
+	if p.InviteToken == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invite_token is required"))
 		return
 	}
-	if p.Role == "" {
-		p.Role = "user"
-	}
-	if p.Role == "admin" {
-		adminSecret := strings.TrimSpace(os.Getenv("ADMIN_REGISTER_SECRET"))
-		if adminSecret == "" || p.AdminSecret != adminSecret {
-			writeError(w, http.StatusForbidden, fmt.Errorf("admin registration requires a valid admin_secret"))
-			return
-		}
-	}
+
 	ctx := r.Context()
+	inv, err := app.validateInviteToken(ctx, p.InviteToken, p.Email)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+
 	if existing, _ := app.users.getByUsername(ctx, p.Username); existing != nil {
 		writeError(w, http.StatusConflict, fmt.Errorf("username already taken"))
 		return
@@ -237,11 +235,12 @@ func (app *appServer) registerHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	user, err := app.users.create(ctx, p.Username, p.Email, string(hashed), p.Role)
+	user, err := app.users.create(ctx, p.Username, p.Email, string(hashed), inv.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	_ = app.invites.markUsed(ctx, inv.ID)
 	writeJSON(w, http.StatusCreated, user.toPublic())
 }
 
@@ -421,6 +420,40 @@ func (app *appServer) getMeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, user.toPublic())
+}
+
+// --- Bootstrap ---
+
+func seedBootstrapAdmin(ctx context.Context, store *userStore) {
+	email := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_EMAIL"))
+	password := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"))
+	if email == "" || password == "" {
+		return
+	}
+	users, err := store.list(ctx)
+	if err != nil {
+		log.Printf("bootstrap: cannot list users: %v", err)
+		return
+	}
+	for _, u := range users {
+		if u.Role == "admin" {
+			return
+		}
+	}
+	username := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_USERNAME"))
+	if username == "" {
+		username = "admin"
+	}
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("bootstrap: bcrypt error: %v", err)
+		return
+	}
+	if _, err := store.create(ctx, username, email, string(hashed), "admin"); err != nil {
+		log.Printf("bootstrap: create admin error: %v", err)
+		return
+	}
+	log.Printf("bootstrap: created admin user %q (%s)", username, email)
 }
 
 // --- JWT issue ---

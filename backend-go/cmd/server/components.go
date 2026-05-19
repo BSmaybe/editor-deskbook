@@ -43,6 +43,7 @@ type appServer struct {
 	desks      *deskStore
 	templates  *templateStore
 	blocks     *blockStore
+	invites    *inviteStore
 }
 
 type componentStore struct {

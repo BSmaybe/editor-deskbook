@@ -51,50 +51,6 @@ CREATE TABLE IF NOT EXISTS desks (
 );
 CREATE INDEX IF NOT EXISTS idx_desks_floor_id ON desks(floor_id);
 
-CREATE TABLE IF NOT EXISTS reservations (
-    id SERIAL PRIMARY KEY,
-    desk_id INTEGER NOT NULL REFERENCES desks(id) ON DELETE CASCADE,
-    user_id VARCHAR(120) NOT NULL,
-    reservation_date DATE NOT NULL,
-    start_time TIME,
-    end_time TIME,
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
-    checked_in_at TIMESTAMPTZ,
-    created_at DATE NOT NULL DEFAULT CURRENT_DATE,
-    CONSTRAINT ck_reservations_status CHECK (status IN ('active', 'cancelled'))
-);
-CREATE INDEX IF NOT EXISTS idx_reservations_desk_date ON reservations(desk_id, reservation_date);
-CREATE INDEX IF NOT EXISTS idx_reservations_user_id ON reservations(user_id);
-
-CREATE TABLE IF NOT EXISTS policies (
-    id SERIAL PRIMARY KEY,
-    office_id INTEGER REFERENCES offices(id) ON DELETE CASCADE,
-    name VARCHAR(120) NOT NULL,
-    min_days_ahead INTEGER NOT NULL DEFAULT 0,
-    max_days_ahead INTEGER NOT NULL DEFAULT 30,
-    min_duration_minutes INTEGER,
-    max_duration_minutes INTEGER,
-    no_show_timeout_minutes INTEGER NOT NULL DEFAULT 15,
-    max_bookings_per_day INTEGER NOT NULL DEFAULT 1,
-    CONSTRAINT ck_policies_days_positive CHECK (min_days_ahead >= 0 AND max_days_ahead >= 0),
-    CONSTRAINT ck_policies_days_order CHECK (min_days_ahead <= max_days_ahead),
-    CONSTRAINT ck_policies_max_bookings_per_day CHECK (max_bookings_per_day >= 1)
-);
-CREATE INDEX IF NOT EXISTS idx_policies_office_id ON policies(office_id);
-
-CREATE TABLE IF NOT EXISTS departments (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(120) UNIQUE NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS favorite_desks (
-    id SERIAL PRIMARY KEY,
-    user_id VARCHAR(120) NOT NULL,
-    desk_id INTEGER NOT NULL REFERENCES desks(id) ON DELETE CASCADE,
-    CONSTRAINT uq_favorite_desk UNIQUE (user_id, desk_id)
-);
-CREATE INDEX IF NOT EXISTS ix_favorite_desks_user_id ON favorite_desks(user_id);
-
 CREATE TABLE IF NOT EXISTS floor_map_revisions (
     id SERIAL PRIMARY KEY,
     floor_id INTEGER NOT NULL REFERENCES floors(id) ON DELETE CASCADE,
@@ -139,6 +95,19 @@ CREATE TABLE IF NOT EXISTS map_audit_log (
     note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_mal_floor_id ON map_audit_log(floor_id);
+
+CREATE TABLE IF NOT EXISTS invites (
+    id SERIAL PRIMARY KEY,
+    token VARCHAR(64) UNIQUE NOT NULL,
+    email VARCHAR(320) NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'user',
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    used_at TIMESTAMPTZ,
+    CONSTRAINT ck_invites_role CHECK (role IN ('admin', 'user'))
+);
+CREATE INDEX IF NOT EXISTS idx_invites_token ON invites(token);
 
 CREATE TABLE IF NOT EXISTS global_components (
     id VARCHAR(120) PRIMARY KEY,

@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DeskBook — a map editor product for office floor plans. The system focuses on an admin editor for creating and publishing interactive floor layouts, with a component library and SVG/HTML export.
 
-Booking, reservations, policies, analytics, and client app are **frozen** (501 placeholders) during the editor migration.
-
 ## Running the Project
 
 **Via Docker Compose (recommended):**
@@ -17,6 +15,8 @@ docker compose up --build
 - Go API: `http://localhost:8000`
 - Admin (React): `http://localhost:5175`
 - PostgreSQL: `localhost:5432`
+
+First admin is bootstrapped from env vars `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_ADMIN_USERNAME`.
 
 **React admin dev server (with hot reload):**
 ```bash
@@ -36,13 +36,20 @@ backend-go/
 
 frontend/
   admin-react/    — React admin app (Vite, sole frontend)
+
+scripts/
+  backup.sh       — PostgreSQL backup with retention
+  restore.sh      — PostgreSQL restore from backup
+  gen-secrets.sh  — Generate production .env with random secrets
 ```
 
 Single Go binary serves ALL API routes. Nginx frontend proxies `/api/` → Go.
 
 ## Key Design Decisions
 
-**Auth:** JWT tokens issued by `POST /auth/login`. Admin endpoints require `role: admin` in the token. Token validation uses HMAC-SHA256 (same secret as Python used).
+**Auth:** JWT tokens issued by `POST /auth/login`. Admin endpoints require `role: admin` in the token. Token validation uses HMAC-SHA256.
+
+**Registration:** Invite-only. Admin creates invite for a specific email → user registers via `?invite=<token>` link. Single-use.
 
 **Database:** PostgreSQL. Schema in `backend-go/migrations/001_schema.sql`. Tables created by the `migrate` compose service on startup.
 
@@ -58,7 +65,6 @@ Single Go binary serves ALL API routes. Nginx frontend proxies `/api/` → Go.
 
 - Auth: Bearer token in `Authorization` header.
 - Admin-only endpoints return `403` if token role != admin.
-- Frozen modules return `501 Not Implemented`.
 - Conflict: `409`. Not found: `404`.
 - Error bodies: `{"detail": "..."}`.
 - CORS: all origins allowed in dev.
@@ -74,6 +80,7 @@ bash tests/smoke_test.sh
 
 All tests target `http://localhost:8000` by default.
 
-## Roadmap Context
+## Documentation
 
-See `docs/GO_REACT_EDITOR_MIGRATION.md` for the active migration plan.
+- `docs/TECH_LEAD_HANDOFF_QA.md` — onboarding Q&A for new engineers.
+- `backend-go/README.md` — full API endpoint list and export contract.
