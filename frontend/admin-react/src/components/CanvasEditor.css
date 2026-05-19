@@ -295,6 +295,18 @@
   pointer-events: none;
 }
 
+.floor-canvas-editor .ce-grid-line-minor {
+  stroke: #cbd5e1;
+  stroke-width: 1;
+  opacity: 0.22;
+}
+
+.floor-canvas-editor .ce-grid-line-major {
+  stroke: #64748b;
+  stroke-width: 1.2;
+  opacity: 0.34;
+}
+
 /* ── Desk elements ─────────────────────────────────────────────────────────── */
 
 .floor-canvas-editor .ce-desk {
@@ -318,6 +330,29 @@
 
 .floor-canvas-editor .ce-selection-overlay {
   pointer-events: none;
+}
+
+.floor-canvas-editor .ce-measure-overlay {
+  pointer-events: none;
+}
+
+.floor-canvas-editor .ce-measure-line {
+  stroke: #dc2626;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.floor-canvas-editor .ce-measure-point {
+  fill: #ffffff;
+  stroke: #dc2626;
+  stroke-width: 2;
+}
+
+.floor-canvas-editor .ce-measure-label {
+  fill: #0f172a;
+  stroke: #ffffff;
+  stroke-linejoin: round;
+  font-weight: 700;
 }
 
 /* Selection dashed bounding box */
@@ -389,6 +424,10 @@
 
 .floor-canvas-editor .ce-statusbar-sep {
   color: #cbd5e1;
+}
+
+.floor-canvas-editor .ce-measure-readout {
+  color: #b91c1c;
 }
 
 /* ── Structure layers ──────────────────────────────────────────────────────── */
@@ -1420,7 +1459,7 @@
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.13);
   padding: 10px 12px;
-  width: 230px;
+  width: 260px;
   display: flex;
   flex-direction: column;
   gap: 8px;

@@ -93,7 +93,6 @@ import {
   componentMarkup,
   groupComponents,
   labelPrefixForComponent,
-  mergeComponentCatalog,
   shouldShowObjectLabel,
   viewBoxString,
 } from '../lib/componentCatalog.js';
@@ -152,6 +151,7 @@ const MIN_BOUNDARY_AREA = 100;
 const CANVAS_MIN_SIZE = 200;
 const CANVAS_MAX_SIZE = 8000;
 const MIN_BACKGROUND_SIZE = 40;
+const METRIC_GRID_DIVISIONS = 4;
 
 const PLACE_SIZE_MODES = [
   { id: 's', label: 'S', scale: 0.75 },
@@ -225,6 +225,32 @@ function parseCanvasDim(value) {
 
 function clampCanvasDim(value) {
   return Math.max(CANVAS_MIN_SIZE, Math.min(CANVAS_MAX_SIZE, value));
+}
+
+function formatNumber(value, digits = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '0';
+  const fixed = n.toFixed(digits);
+  return fixed.replace(/\.?0+$/, '');
+}
+
+function formatUnits(value) {
+  const abs = Math.abs(Number(value) || 0);
+  return formatNumber(value, abs >= 100 ? 0 : 1);
+}
+
+function formatMeters(value, pixelsPerMeter, digits = 2) {
+  const ppm = Math.max(1, Number(pixelsPerMeter) || 100);
+  return formatNumber(value / ppm, digits);
+}
+
+function distanceBetween(a, b) {
+  if (!a || !b) return 0;
+  return Math.hypot((b.x || 0) - (a.x || 0), (b.y || 0) - (a.y || 0));
+}
+
+function lengthOfSegments(segments) {
+  return (segments || []).reduce((sum, segment) => sum + distanceBetween(segment.a, segment.b), 0);
 }
 
 function componentDefaultSize(component, fallback = { w: 100, h: 60 }) {
@@ -653,7 +679,12 @@ function PpmInlineEdit({ value, onChange }) {
   const inputRef = useRef(null);
 
   function commit() {
-    const n = Math.max(10, Math.min(2000, Math.round(Number(draft))));
+    const raw = Number(draft);
+    if (!Number.isFinite(raw) || raw <= 0) {
+      setEditing(false);
+      return;
+    }
+    const n = Math.max(10, Math.min(2000, Math.round(raw)));
     if (Number.isFinite(n) && n !== value) onChange(n);
     setEditing(false);
   }
@@ -685,9 +716,9 @@ function PpmInlineEdit({ value, onChange }) {
     <span
       className="ce-ppm-display"
       onClick={() => setEditing(true)}
-      title="Пикселей на метр — кликни чтобы изменить"
+      title="1 метр в единицах холста — кликни чтобы изменить"
     >
-      1м={value}px
+      1 м = {value} ед.
     </span>
   );
 }
@@ -726,9 +757,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   /* ── hooks ── */
   const viewport = useViewport({ contentW: canvasW, contentH: canvasH });
-  const grid = useGrid({ defaultSize: 10, defaultSnap: false, defaultVisible: true });
+  const metricGridStep = Math.max(1, (Number(pixelsPerMeter) || 100) / METRIC_GRID_DIVISIONS);
+  const grid = useGrid({ defaultSize: metricGridStep, defaultSnap: false, defaultVisible: true });
 
-  /* ── tool mode: 'select' | 'pan' | 'place' | 'draw_wall' | 'draw_boundary' | 'draw_partition' | 'draw_door' | 'draw_zone' | 'draw_infra' ── */
+  useEffect(() => {
+    grid.setGridSize(metricGridStep);
+  }, [grid.setGridSize, metricGridStep]);
+
+  /* ── tool mode: 'select' | 'pan' | 'place' | 'measure' | 'draw_wall' | 'draw_boundary' | 'draw_partition' | 'draw_door' | 'draw_zone' | 'draw_infra' ── */
   const [tool, setTool] = useState('select');
   const [placeComponentId, setPlaceComponentId] = useState('workplace-desk-chair');
 
@@ -736,6 +772,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const [drawPoints, setDrawPoints] = useState([]);
   const [drawPreviewPt, setDrawPreviewPt] = useState(null);
   const [drawSnapPt, setDrawSnapPt] = useState(null);
+  const [measurePoints, setMeasurePoints] = useState([]);
+  const [measurePreviewPt, setMeasurePreviewPt] = useState(null);
 
   /* ── selected structure element { type, id } or null ── */
   const [selectedStruct, setSelectedStruct] = useState(null);
@@ -879,6 +917,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     });
     return () => { cancelled = true; };
   }, [bgImage]);
+
+  useEffect(() => {
+    if (tool !== 'measure') setMeasurePreviewPt(null);
+  }, [tool]);
 
   async function applyLoadedBackground(dataUrl, { pdfData = null, totalPages = 0, page = 1 } = {}) {
     const imageSize = await measureImageSize(dataUrl);
@@ -1066,14 +1108,16 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const autoSaveRef = useRef(null);
 
   /* ── component size lookup ── */
-  const componentCatalog = useMemo(() => mergeComponentCatalog(components), [components]);
+  // components prop is already merged (builtins + DB overrides) from main.jsx —
+  // do NOT call mergeComponentCatalog again or builtins will overwrite DB changes.
+  const componentCatalog = components;
   const componentGroups = useMemo(() => groupComponents(componentCatalog), [componentCatalog]);
   const componentSizeRef = useRef(new Map());
   const compMap = useMemo(() => {
     const m = new Map();
     for (const c of componentCatalog) m.set(c.id, c);
-    if (!m.has('desk-short'))           m.set('desk-short', { default_w: 100, default_h: 60 });
-    if (!m.has('workplace-desk-chair')) m.set('workplace-desk-chair', { default_w: 140, default_h: 125 });
+    if (!m.has('desk-short'))           m.set('desk-short', { id: 'desk-short', default_w: 100, default_h: 60 });
+    if (!m.has('workplace-desk-chair')) m.set('workplace-desk-chair', { id: 'workplace-desk-chair', default_w: 140, default_h: 125 });
     return m;
   }, [componentCatalog]);
 
@@ -1233,6 +1277,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setDrawPoints([]);
     setDrawPreviewPt(null);
     setDrawSnapPt(null);
+    setMeasurePoints([]);
+    setMeasurePreviewPt(null);
     setObjectSnapGuides(null);
     setSelectedStruct(null);
     undoRedo.clear();
@@ -1325,6 +1371,15 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       const inInput = tag === 'input' || tag === 'textarea' || tag === 'select';
 
       if (e.key === 'Escape') {
+        if (tool === 'measure') {
+          if (measurePoints.length > 0) {
+            setMeasurePoints([]);
+            setMeasurePreviewPt(null);
+          } else {
+            setTool('select');
+          }
+          return;
+        }
         if (tool === 'bg_calibrate' || tool === 'bg_edit') {
           cancelBackgroundCalibration();
           setTool('select');
@@ -1346,6 +1401,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
       if (e.key === 'v' && !inInput && !meta) { cancelDraw(); setTool('select'); return; }
       if (e.key === 'p' && !inInput && !meta) { cancelDraw(); setTool('place'); return; }
+      if (e.key === 'm' && !inInput && !meta) { cancelDraw(); setTool((prev) => (prev === 'measure' ? 'select' : 'measure')); return; }
       if (e.key === 'w' && !inInput && !meta && !structureLocked) { cancelDraw(); setTool('draw_wall'); return; }
       if (e.key === 'z' && !inInput && !meta) { cancelDraw(); setTool('draw_zone'); return; }
       if (e.key === 'i' && !inInput && !meta) {
@@ -1486,7 +1542,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       window.removeEventListener('keyup', onKeyUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel.selectedIds, desks, zones, drawPoints, isDrawMode, tool, selectedStruct, selectedZoneId, structureLocked, compMap]);
+  }, [sel.selectedIds, desks, zones, drawPoints, measurePoints.length, isDrawMode, tool, selectedStruct, selectedZoneId, structureLocked, compMap]);
 
   function finishDraw(points = drawPoints) {
     if (points.length < 2) {
@@ -1822,8 +1878,6 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setCanvasResizeInput({ w: nw, h: nh });
     setCanvasResizeOpen(false);
     setDirty(true);
-    // Zoom to fit new canvas size after a tick (DOM must update first)
-    setTimeout(() => handleZoomToFit(), 50);
   }
 
   /* ── group operations ── */
@@ -2016,6 +2070,18 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       isPanningRef.current = true;
       viewport.startPan(e);
       svgEl.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    if (tool === 'measure') {
+      e.preventDefault();
+      const point = grid.snapPoint(pt, { altSnapOff: e.altKey });
+      setMeasurePoints((prev) => (prev.length >= 2 ? [point] : [...prev, point]));
+      setMeasurePreviewPt(null);
+      sel.clearSelection();
+      setSelectedStruct(null);
+      setSelectedZoneId(null);
+      setSelectedInfraItem(null);
       return;
     }
 
@@ -2227,6 +2293,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       setDrawSnapPt(snapPoint);
     }
 
+    if (tool === 'measure' && measurePoints.length === 1) {
+      setMeasurePreviewPt(grid.snapPoint(pt, { altSnapOff: e.altKey }));
+    }
+
     // Pan
     if (isPanningRef.current) {
       viewport.updatePan(e);
@@ -2318,7 +2388,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     if (sel.marquee) {
       sel.updateMarquee(pt);
     }
-  }, [viewport, sel, grid, isDrawMode, drawPoints, compMap, resolveDrawPoint]);
+  }, [viewport, sel, grid, isDrawMode, tool, drawPoints, measurePoints.length, compMap, resolveDrawPoint]);
 
   const onSvgDoubleClick = useCallback((e) => {
     const minPts = isZoneDrawMode ? 3 : 2;
@@ -2597,7 +2667,41 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     if (!sel.selectedIds.size) return null;
     return boundingBoxOf(desks, sel.selectedIds, compMap);
   }, [desks, sel.selectedIds, compMap]);
+  const selectedObjectSize = useMemo(() => {
+    if (selectedDesk) {
+      return {
+        w: deskW(selectedDesk, compMap),
+        h: deskH(selectedDesk, compMap),
+      };
+    }
+    if (selBBox) return { w: selBBox.w, h: selBBox.h };
+    return null;
+  }, [selectedDesk, selBBox, compMap]);
+  const selectedObjectSizeText = selectedObjectSize
+    ? `${formatUnits(selectedObjectSize.w)}×${formatUnits(selectedObjectSize.h)} ед. · ${formatMeters(selectedObjectSize.w, pixelsPerMeter)}×${formatMeters(selectedObjectSize.h, pixelsPerMeter)} м`
+    : null;
+  const selectedStructLengthText = useMemo(() => {
+    if (!selectedStruct) return null;
+    const item = getStructList(selectedStruct.type).find((s) => s.id === selectedStruct.id);
+    if (!item) return null;
+    const length = lengthOfSegments(segmentsFromStructure(item, selectedStruct.type === 'boundary'));
+    if (length <= 0) return null;
+    return `${formatUnits(length)} ед. · ${formatMeters(length, pixelsPerMeter)} м`;
+  }, [selectedStruct, walls, boundaries, partitions, doors, pixelsPerMeter]);
   const structureCount = walls.length + boundaries.length + partitions.length + doors.length;
+  const measureEndPoint = measurePoints[1] || (tool === 'measure' ? measurePreviewPt : null);
+  const measureDistance = measurePoints[0] && measureEndPoint
+    ? distanceBetween(measurePoints[0], measureEndPoint)
+    : 0;
+  const measureText = measureDistance > 0
+    ? `${formatUnits(measureDistance)} ед. · ${formatMeters(measureDistance, pixelsPerMeter)} м`
+    : null;
+  const measureMidPoint = measurePoints[0] && measureEndPoint
+    ? {
+        x: (measurePoints[0].x + measureEndPoint.x) / 2,
+        y: (measurePoints[0].y + measureEndPoint.y) / 2,
+      }
+    : null;
   const bgFrame = useMemo(
     () => normalizeBackgroundTransform(bgTransform, canvasW, canvasH),
     [bgTransform, canvasW, canvasH],
@@ -2613,17 +2717,18 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     ? 'cursor-panning'
     : (tool === 'pan' || spaceRef.current)
       ? 'cursor-pan'
-      : (isDrawMode || tool === 'bg_calibrate')
+      : (isDrawMode || tool === 'bg_calibrate' || tool === 'measure')
         ? 'cursor-crosshair'
         : 'cursor-default';
 
   /* ── grid lines ── */
   const gridLines = useMemo(() => {
-    if (!grid.gridVisible || grid.gridSize < 5) return null;
-    const cols = Math.ceil(canvasW / grid.gridSize) + 1;
-    const rows = Math.ceil(canvasH / grid.gridSize) + 1;
-    return { cols, rows };
-  }, [grid.gridVisible, grid.gridSize, canvasW, canvasH]);
+    const step = Math.max(1, metricGridStep);
+    if (!grid.gridVisible) return null;
+    const cols = Math.ceil(canvasW / step) + 1;
+    const rows = Math.ceil(canvasH / step) + 1;
+    return { cols, rows, step, majorEvery: METRIC_GRID_DIVISIONS };
+  }, [grid.gridVisible, metricGridStep, canvasW, canvasH]);
 
   const drawIssue = useMemo(
     () => drawValidationIssue(drawStructType, drawPoints, drawPreviewPt),
@@ -2662,6 +2767,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           onClick={() => setTool(tool === 'place' ? 'select' : 'place')}
         >
           <Plus size={14} /><KBD>P</KBD>
+        </button>
+        <button
+          className={`ce-tool-btn ${tool === 'measure' ? 'active' : ''}`}
+          title="Линейка: измерить расстояние (M)"
+          onClick={() => { cancelDraw(); setTool(tool === 'measure' ? 'select' : 'measure'); }}
+        >
+          <Ruler size={14} /><KBD>M</KBD>
         </button>
 
         <div className="ce-toolbar-sep" />
@@ -2723,14 +2835,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
         <button
           className={`ce-tool-btn ${grid.gridVisible ? 'active' : ''}`}
-          title={`Сетка (${grid.gridSize}px)`}
+          title={`Сетка: малая 0.25 м (${formatUnits(metricGridStep)} ед.), крупная 1 м`}
           onClick={grid.toggleVisible}
         >
           <Grid3X3 size={14} />
         </button>
         <button
           className={`ce-tool-btn ${grid.snapOn ? 'active' : ''}`}
-          title={grid.snapOn ? 'Привязка к сетке вкл (кликни чтобы выкл)' : 'Привязка к сетке выкл (кликни чтобы вкл)'}
+          title={grid.snapOn ? 'Привязка к сетке 0.25 м вкл' : 'Привязка к сетке 0.25 м выкл'}
           onClick={grid.toggleSnap}
         >
           <Magnet size={14} />
@@ -3286,6 +3398,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               ['V', 'Выбор объекта'],
               ['Space', 'Навигация (зажать)'],
               ['P', 'Добавить объект'],
+              ['M', 'Линейка'],
               ['W', 'Рисовать стену'],
               ['Z', 'Рисовать зону'],
               ['I', 'Рисовать коммуникацию'],
@@ -3368,7 +3481,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             </button>
           </div>
           <div className="ce-canvas-resize-current">
-            Текущий: {canvasW}×{canvasH} · {canvasResizeHint}
+            Текущий: {canvasW}×{canvasH} · {canvasResizeHint} · зум сохранится
           </div>
         </div>
       )}
@@ -3394,6 +3507,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           {drawIssue?.text && (
             <span className={`ce-draw-issue ${drawIssue.level}`}>{drawIssue.text}</span>
           )}
+        </div>
+      )}
+
+      {tool === 'measure' && (
+        <div className="ce-hint-bar">
+          Линейка: кликните две точки
+          {measureText ? ` — ${measureText}` : ''}
+          {measurePoints.length > 0 && ', Escape очистит'}
         </div>
       )}
 
@@ -3517,23 +3638,33 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
           {/* Grid lines layer */}
           {gridLines && (
-            <g className="ce-grid" opacity={0.18}>
-              {Array.from({ length: gridLines.cols }, (_, i) => (
-                <line
-                  key={`gx${i}`}
-                  x1={i * grid.gridSize} y1={0}
-                  x2={i * grid.gridSize} y2={canvasH}
-                  stroke="#94a3b8" strokeWidth={0.5}
-                />
-              ))}
-              {Array.from({ length: gridLines.rows }, (_, i) => (
-                <line
-                  key={`gy${i}`}
-                  x1={0} y1={i * grid.gridSize}
-                  x2={canvasW} y2={i * grid.gridSize}
-                  stroke="#94a3b8" strokeWidth={0.5}
-                />
-              ))}
+            <g className="ce-grid">
+              {Array.from({ length: gridLines.cols }, (_, i) => {
+                const x = i * gridLines.step;
+                const isMajor = i % gridLines.majorEvery === 0;
+                return (
+                  <line
+                    key={`gx${i}`}
+                    className={isMajor ? 'ce-grid-line-major' : 'ce-grid-line-minor'}
+                    x1={x} y1={0}
+                    x2={x} y2={canvasH}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                );
+              })}
+              {Array.from({ length: gridLines.rows }, (_, i) => {
+                const y = i * gridLines.step;
+                const isMajor = i % gridLines.majorEvery === 0;
+                return (
+                  <line
+                    key={`gy${i}`}
+                    className={isMajor ? 'ce-grid-line-major' : 'ce-grid-line-minor'}
+                    x1={0} y1={y}
+                    x2={canvasW} y2={y}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                );
+              })}
             </g>
           )}
 
@@ -3854,6 +3985,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               >
                 {markup ? (
                   <svg
+                    key={`${desk.component_id || desk.symbol_id}-${markup.length}`}
                     className="ce-desk-art"
                     width={w}
                     height={h}
@@ -4061,6 +4193,41 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                 </g>
               );
             })()}
+
+            {/* Measurement ruler */}
+            {measureText && measureMidPoint && (
+              <g className="ce-measure-overlay">
+                <line
+                  className="ce-measure-line"
+                  x1={measurePoints[0].x}
+                  y1={measurePoints[0].y}
+                  x2={measureEndPoint.x}
+                  y2={measureEndPoint.y}
+                  vectorEffect="non-scaling-stroke"
+                />
+                {[measurePoints[0], measureEndPoint].map((p, i) => (
+                  <circle
+                    key={i}
+                    className="ce-measure-point"
+                    cx={p.x}
+                    cy={p.y}
+                    r={viewport.worldUnitsForPx(4)}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+                <text
+                  className="ce-measure-label"
+                  x={measureMidPoint.x}
+                  y={measureMidPoint.y - viewport.worldUnitsForPx(8)}
+                  fontSize={viewport.worldUnitsForPx(12)}
+                  textAnchor="middle"
+                  paintOrder="stroke"
+                  strokeWidth={viewport.worldUnitsForPx(4)}
+                >
+                  {measureText}
+                </text>
+              </g>
+            )}
 
             {/* Marquee rubber band */}
             {sel.marqueeRect && (
@@ -4310,6 +4477,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             </span>
           </>
         )}
+        {selectedObjectSizeText && (
+          <>
+            <span className="ce-statusbar-sep">·</span>
+            <span className="ce-statusbar-item" title="Размер выбранного в единицах холста и метрах">
+              размер: {selectedObjectSizeText}
+            </span>
+          </>
+        )}
         {selectedStruct && (
           <>
             <span className="ce-statusbar-sep">·</span>
@@ -4318,9 +4493,25 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             </span>
           </>
         )}
+        {selectedStructLengthText && (
+          <>
+            <span className="ce-statusbar-sep">·</span>
+            <span className="ce-statusbar-item" title="Длина выбранной конструкции">
+              длина: {selectedStructLengthText}
+            </span>
+          </>
+        )}
+        {measureText && (
+          <>
+            <span className="ce-statusbar-sep">·</span>
+            <span className="ce-statusbar-item ce-measure-readout">
+              линейка: {measureText}
+            </span>
+          </>
+        )}
         <>
           <span className="ce-statusbar-sep">·</span>
-          <span className="ce-statusbar-item ce-scale-indicator" title="Масштаб: пикселей на метр — кликни чтобы изменить">
+          <span className="ce-statusbar-item ce-scale-indicator" title="Масштаб: сколько единиц холста приходится на 1 метр">
             <Ruler size={11} style={{ verticalAlign: 'middle', marginRight: 3 }} />
             <PpmInlineEdit
               value={pixelsPerMeter}
@@ -4328,6 +4519,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             />
           </span>
         </>
+        {grid.gridVisible && (
+          <>
+            <span className="ce-statusbar-sep">·</span>
+            <span className="ce-statusbar-item" title="Метрическая сетка зависит от масштаба">
+              сетка: 0.25 м / 1 м
+            </span>
+          </>
+        )}
         <>
           <span className="ce-statusbar-sep">·</span>
           <span className="ce-statusbar-item" style={{ opacity: 0.6 }}>

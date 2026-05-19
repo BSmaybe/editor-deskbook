@@ -319,7 +319,11 @@ function App() {
         {activeTab === 'components' && (
           <ComponentPanel
             components={componentCatalog}
-            onRefresh={loadReferenceData}
+            onRefresh={async () => {
+              await loadReferenceData();
+              // Reload layout so canvas picks up updated component visuals
+              await loadLayout(selectedFloorId);
+            }}
             onNotice={setNotice}
             onError={setError}
           />
