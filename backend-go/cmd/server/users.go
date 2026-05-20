@@ -297,7 +297,7 @@ func (app *appServer) listUsersHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := app.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -328,7 +328,7 @@ func (app *appServer) adminListUsersHandler(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := app.requireActiveAdmin(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -349,7 +349,7 @@ func (app *appServer) adminUpdateUserHandler(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := app.requireActiveAdmin(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -388,7 +388,7 @@ func (app *appServer) adminDeleteUserHandler(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := app.requireActiveAdmin(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -409,7 +409,7 @@ func (app *appServer) getMeHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	auth, err := requireAuthContext(r)
+	auth, err := app.requireActiveAuth(r)
 	if err != nil {
 		writeAuthError(w, err)
 		return

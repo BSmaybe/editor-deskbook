@@ -131,7 +131,7 @@ func (app *appServer) createInviteHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	auth, err := requireAdminContext(r)
+	auth, err := app.requireActiveAdmin(r)
 	if err != nil {
 		writeAuthError(w, err)
 		return
@@ -179,7 +179,7 @@ func (app *appServer) listInvitesHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := app.requireActiveAdmin(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -199,7 +199,7 @@ func (app *appServer) deleteInviteHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAdminContext(r); err != nil {
+	if _, err := app.requireActiveAdmin(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}

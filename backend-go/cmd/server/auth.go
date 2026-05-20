@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -16,6 +17,37 @@ type tokenClaims struct {
 	Sub  string  `json:"sub"`
 	Role string  `json:"role"`
 	Exp  float64 `json:"exp"`
+}
+
+// requireActiveAuth validates the JWT and then confirms the user is still active
+// in the database. Use this in all appServer handlers instead of requireAuthContext.
+func (app *appServer) requireActiveAuth(r *http.Request) (authContext, error) {
+	auth, err := requireAuthContext(r)
+	if err != nil {
+		return authContext{}, err
+	}
+	if app.users != nil {
+		user, dbErr := app.users.getByUsername(r.Context(), auth.Username)
+		if dbErr != nil {
+			return authContext{}, fmt.Errorf("failed to verify account status")
+		}
+		if user == nil || !user.IsActive {
+			return authContext{}, errAccountDisabled
+		}
+	}
+	return auth, nil
+}
+
+// requireActiveAdmin is like requireActiveAuth but also enforces the admin role.
+func (app *appServer) requireActiveAdmin(r *http.Request) (authContext, error) {
+	auth, err := app.requireActiveAuth(r)
+	if err != nil {
+		return authContext{}, err
+	}
+	if auth.Role != "admin" {
+		return authContext{}, errForbidden
+	}
+	return auth, nil
 }
 
 func requireAdmin(r *http.Request) error {

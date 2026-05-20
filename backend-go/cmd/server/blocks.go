@@ -107,7 +107,7 @@ func (app *appServer) createBlockHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, errors.New("blocks store not available"))
 		return
 	}
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := app.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -149,7 +149,7 @@ func (app *appServer) deleteBlockHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, errors.New("blocks store not available"))
 		return
 	}
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := app.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}

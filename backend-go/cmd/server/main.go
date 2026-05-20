@@ -158,7 +158,7 @@ func main() {
 	mux.HandleFunc("GET /floors/{floor_id}/layout/published.html", app.getPublishedHTMLHandler)
 	mux.HandleFunc("PUT /floors/{floor_id}/layout/draft", app.saveLayoutDraftHandler)
 	mux.HandleFunc("DELETE /floors/{floor_id}/layout/draft", app.discardLayoutDraftHandler)
-	mux.HandleFunc("POST /floors/{floor_id}/layout/import", importLayoutSVGHandler)
+	mux.HandleFunc("POST /floors/{floor_id}/layout/import", app.importLayoutSVGHandler)
 	mux.HandleFunc("POST /floors/{floor_id}/layout/publish", app.publishLayoutHandler)
 	mux.HandleFunc("POST /floors/{floor_id}/layout/sync-desks", app.syncLayoutDesksHandler)
 	mux.HandleFunc("GET /floors/{floor_id}/layout/history", app.getLayoutHistoryHandler)
@@ -195,9 +195,10 @@ func main() {
 	mux.Handle("/docs", swaggerUIHandler())
 	mux.Handle("/docs/", swaggerUIHandler())
 
-	// Static file serving
+	// Static file serving — nosniff header prevents browsers from treating
+	// uploaded assets as executable content even if the extension were wrong.
 	staticDir := envDefault("STATIC_DIR", "static")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
+	mux.Handle("GET /static/", secureStaticHandler(staticDir))
 
 	// CORS middleware
 	handler := corsMiddleware(logRequests(mux))
@@ -212,6 +213,17 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+// secureStaticHandler serves files from dir under /static/ with security headers
+// that prevent browsers from executing uploaded content as scripts.
+func secureStaticHandler(dir string) http.Handler {
+	fs := http.StripPrefix("/static/", http.FileServer(http.Dir(dir)))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		fs.ServeHTTP(w, r)
+	})
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -271,8 +283,8 @@ func renderHTMLHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(exporter.RenderHTML(svg, title)))
 }
 
-func importLayoutSVGHandler(w http.ResponseWriter, r *http.Request) {
-	if _, err := requireAuthContext(r); err != nil {
+func (app *appServer) importLayoutSVGHandler(w http.ResponseWriter, r *http.Request) {
+	if _, err := app.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}

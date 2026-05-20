@@ -110,6 +110,47 @@ func TestRenderStructureUsesEditorThicknessFallbacks(t *testing.T) {
 	assertContains(t, svg, `class="door" id="door-a" points="0,20 10,20" fill="none" fill-opacity="0" stroke="#1f2937" stroke-width="2.5"`)
 }
 
+func TestRenderSVGUsesEditorBackground(t *testing.T) {
+	visible := true
+	svg, err := RenderSVG(LayoutDocument{
+		ViewBox: []float64{0, 0, 500, 300},
+		Background: &LayoutBackground{
+			Image:   "data:image/png;base64,AAAA",
+			Opacity: 0.42,
+			Visible: &visible,
+			Transform: &BackgroundTransform{
+				X: 10, Y: 20, W: 300, H: 200, Rotation: 5,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RenderSVG failed: %v", err)
+	}
+	assertContains(t, svg, `class="background-plan" href="data:image/png;base64,AAAA" x="10" y="20" width="300" height="200"`)
+	assertContains(t, svg, `opacity="0.42"`)
+	assertContains(t, svg, `transform="rotate(5 160 120)"`)
+}
+
+func TestRenderSVGWrapsNonContiguousGroupOnce(t *testing.T) {
+	svg, err := RenderSVG(LayoutDocument{
+		ViewBox: []float64{0, 0, 300, 200},
+		Groups: []LayoutGroup{{
+			ID: "group-a", Label: "Team A", DeskIDs: []string{"desk-1", "desk-3"}, Color: "#2563eb",
+		}},
+		Desks: []LayoutDesk{
+			{ID: "desk-1", Label: "D-1", ComponentID: "desk-short", AssetType: "desk", X: 0, Y: 0, W: 20, H: 10},
+			{ID: "desk-2", Label: "D-2", ComponentID: "desk-short", AssetType: "desk", X: 40, Y: 0, W: 20, H: 10},
+			{ID: "desk-3", Label: "D-3", ComponentID: "desk-short", AssetType: "desk", X: 80, Y: 0, W: 20, H: 10},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RenderSVG failed: %v", err)
+	}
+	if count := strings.Count(svg, `class="group" id="group-a"`); count != 1 {
+		t.Fatalf("expected one group wrapper, got %d\n%s", count, svg)
+	}
+}
+
 func TestParseLayoutJSONPreservesEditorBackground(t *testing.T) {
 	doc, err := ParseLayoutJSON([]byte(`{
 		"v":1,

@@ -121,6 +121,10 @@ func (app *appServer) listDesksHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
+	if _, err := app.requireActiveAuth(r); err != nil {
+		writeAuthError(w, err)
+		return
+	}
 	var floorID *int
 	if v := r.URL.Query().Get("floor_id"); v != "" {
 		id, err := strconv.Atoi(v)
@@ -146,6 +150,10 @@ func (app *appServer) getDeskHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
+	if _, err := app.requireActiveAuth(r); err != nil {
+		writeAuthError(w, err)
+		return
+	}
 	id, err := strconv.Atoi(r.PathValue("desk_id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid desk_id"))
@@ -168,7 +176,7 @@ func (app *appServer) updateDeskHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := app.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -208,7 +216,7 @@ func (app *appServer) deleteDeskHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := app.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}

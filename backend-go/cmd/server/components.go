@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	errForbidden  = errors.New("admin role required")
-	componentIDRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.:-]{0,119}$`)
-	assetTypes    = map[string]bool{
+	errForbidden       = errors.New("admin role required")
+	errAccountDisabled = errors.New("account is disabled")
+	componentIDRE      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.:-]{0,119}$`)
+	assetTypes         = map[string]bool{
 		"workplace": true, "desk": true, "chair": true, "meeting_table": true, "conference_set": true,
 		"call_room": true, "lounge": true, "sofa": true, "plant": true, "storage": true,
 		"printer": true, "reception": true, "column": true, "asset": true,
@@ -141,7 +142,7 @@ func (a *appServer) listComponentsHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (a *appServer) createComponentHandler(w http.ResponseWriter, r *http.Request) {
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := a.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -183,7 +184,7 @@ func (a *appServer) createComponentHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *appServer) updateComponentHandler(w http.ResponseWriter, r *http.Request) {
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := a.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -224,7 +225,7 @@ func (a *appServer) updateComponentHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *appServer) deleteComponentHandler(w http.ResponseWriter, r *http.Request) {
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := a.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -318,7 +319,7 @@ func viewBoxString(value []float64) string {
 }
 
 func writeAuthError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errForbidden) {
+	if errors.Is(err, errForbidden) || errors.Is(err, errAccountDisabled) {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}

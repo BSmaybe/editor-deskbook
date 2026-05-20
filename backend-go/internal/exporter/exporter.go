@@ -33,6 +33,12 @@ type attr struct {
 	value string
 }
 
+type backgroundSpec struct {
+	Href      string
+	Transform *BackgroundTransform
+	Opacity   float64
+}
+
 var builtinComponents = map[string]componentMeta{
 	"workplace-desk-chair": {AssetType: "workplace", ViewBox: [4]float64{0, 0, 140, 125}, DefaultW: 140, DefaultH: 125, Source: "system"},
 	"chair":                {AssetType: "chair", ViewBox: [4]float64{0, 0, 64, 64}, DefaultW: 64, DefaultH: 64, Source: "system"},
@@ -179,30 +185,37 @@ func RenderSVG(doc LayoutDocument) (string, error) {
 			a("data-storey", storeyID),
 			a("data-zone", zoneID),
 		)
-		// Render desks, wrapping grouped desks in <g class="group">
+		// Render desks, wrapping each group once at its first desk position.
 		rendered := map[string]bool{}
-		openGroup := ""
+		renderedGroups := map[string]bool{}
 		for _, desk := range zones[zoneID] {
 			gid := deskGroup[desk.ID]
-			if gid != openGroup {
-				if openGroup != "" {
-					w.end("g") // close previous group
+			if gid != "" {
+				if renderedGroups[gid] {
+					continue
 				}
-				if gid != "" {
-					g := groupByID[gid]
-					attrs := []attr{a("class", "group"), a("id", safeID(gid, "group")), a("data-label", g.Label)}
-					if g.Color != "" {
-						attrs = append(attrs, a("data-color", g.Color))
+				g := groupByID[gid]
+				attrs := []attr{a("class", "group"), a("id", safeID(gid, "group")), a("data-label", g.Label)}
+				if g.Color != "" {
+					attrs = append(attrs, a("data-color", g.Color))
+				}
+				w.start("g", attrs...)
+				for _, groupDesk := range zones[zoneID] {
+					if deskGroup[groupDesk.ID] != gid || rendered[groupDesk.ID] {
+						continue
 					}
-					w.start("g", attrs...)
+					appendLayoutObject(&w, groupDesk, buildingID, storeyID, zoneID, componentLookup)
+					rendered[groupDesk.ID] = true
 				}
-				openGroup = gid
+				w.end("g")
+				renderedGroups[gid] = true
+				continue
+			}
+			if rendered[desk.ID] {
+				continue
 			}
 			appendLayoutObject(&w, desk, buildingID, storeyID, zoneID, componentLookup)
 			rendered[desk.ID] = true
-		}
-		if openGroup != "" {
-			w.end("g") // close last group
 		}
 		w.end("g")
 	}
@@ -467,23 +480,67 @@ func appendBuiltinSymbol(w *xmlWriter, id string) {
 func appendBackground(w *xmlWriter, doc LayoutDocument, vx, vy, vw, vh float64) {
 	w.start("g", a("class", "background"), a("data-layer", "background"))
 	w.empty("rect", a("x", num(vx)), a("y", num(vy)), a("width", num(vw)), a("height", num(vh)), a("fill", "#f3f6fb"))
-	if href := safeHref(doc.BgURL); href != "" {
+	if bg := effectiveBackground(doc); bg.Href != "" {
 		x, y, bw, bh := vx, vy, vw, vh
-		if doc.BgTransform != nil && doc.BgTransform.W > 0 && doc.BgTransform.H > 0 {
-			x, y, bw, bh = doc.BgTransform.X, doc.BgTransform.Y, doc.BgTransform.W, doc.BgTransform.H
+		rotation := 0.0
+		if bg.Transform != nil && bg.Transform.W > 0 && bg.Transform.H > 0 {
+			x, y, bw, bh = bg.Transform.X, bg.Transform.Y, bg.Transform.W, bg.Transform.H
+			rotation = finite(bg.Transform.Rotation, 0)
 		}
-		w.empty("image",
+		attrs := []attr{
 			a("class", "background-plan"),
-			a("href", href),
+			a("href", bg.Href),
 			a("x", num(x)),
 			a("y", num(y)),
 			a("width", num(math.Max(1, bw))),
 			a("height", num(math.Max(1, bh))),
 			a("preserveAspectRatio", "xMidYMid meet"),
 			a("pointer-events", "none"),
-		)
+		}
+		if bg.Opacity >= 0 && bg.Opacity < 1 {
+			attrs = append(attrs, a("opacity", num(bg.Opacity)))
+		}
+		if math.Abs(rotation) > 1e-6 {
+			attrs = append(attrs, a("transform", fmt.Sprintf("rotate(%s %s %s)", num(rotation), num(x+bw/2), num(y+bh/2))))
+		}
+		w.empty("image", attrs...)
 	}
 	w.end("g")
+}
+
+func effectiveBackground(doc LayoutDocument) backgroundSpec {
+	if spec := backgroundFromLayoutBackground(doc.Background); spec.Href != "" || doc.Background != nil {
+		return spec
+	}
+	if spec := backgroundFromLayoutBackground(doc.TracingBackground); spec.Href != "" || doc.TracingBackground != nil {
+		return spec
+	}
+	return backgroundSpec{
+		Href:      safeHref(doc.BgURL),
+		Transform: doc.BgTransform,
+		Opacity:   1,
+	}
+}
+
+func backgroundFromLayoutBackground(bg *LayoutBackground) backgroundSpec {
+	if bg == nil {
+		return backgroundSpec{}
+	}
+	if bg.Visible != nil && !*bg.Visible {
+		return backgroundSpec{}
+	}
+	opacity := bg.Opacity
+	if opacity <= 0 || math.IsNaN(opacity) || math.IsInf(opacity, 0) {
+		opacity = 1
+	}
+	if opacity > 1 {
+		opacity = 1
+	}
+	return backgroundSpec{
+		Href:      safeHref(firstNonEmpty(bg.Image, bg.Src, bg.Href)),
+		Transform: bg.Transform,
+		Opacity:   opacity,
+	}
 }
 
 func appendZones(w *xmlWriter, doc LayoutDocument) {

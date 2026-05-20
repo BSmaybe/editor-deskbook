@@ -143,7 +143,7 @@ func (app *appServer) createFloorHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := app.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -176,7 +176,7 @@ func (app *appServer) updateFloorHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := app.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -209,7 +209,7 @@ func (app *appServer) deleteFloorHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := app.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -234,7 +234,7 @@ func (app *appServer) uploadFloorPlanHandler(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("database not configured"))
 		return
 	}
-	if _, err := requireAuthContext(r); err != nil {
+	if _, err := app.requireActiveAuth(r); err != nil {
 		writeAuthError(w, err)
 		return
 	}
@@ -259,9 +259,14 @@ func (app *appServer) uploadFloorPlanHandler(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	ext := filepath.Ext(header.Filename)
+	allowedExts := map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".pdf": true}
+	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext == "" {
 		ext = ".png"
+	}
+	if !allowedExts[ext] {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("unsupported file type: only PNG, JPEG, PDF are accepted"))
+		return
 	}
 	filename := fmt.Sprintf("floor_%d_plan%s", id, ext)
 	path := filepath.Join(staticDir, filename)
