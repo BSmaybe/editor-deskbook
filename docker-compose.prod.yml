@@ -1,10 +1,9 @@
 # Продакшн-вариант: использует pre-built образы из GitLab Container Registry.
-# Переменные IMAGE_API / IMAGE_ADMIN / IMAGE_LANDING выставляет CI во время деплоя.
+# Переменные IMAGE_API / IMAGE_ADMIN выставляет CI во время деплоя.
 #
 # Запуск вручную:
 #   IMAGE_API=registry.gitlab.com/org/repo/api:abc123 \
 #   IMAGE_ADMIN=registry.gitlab.com/org/repo/admin:abc123 \
-#   IMAGE_LANDING=registry.gitlab.com/org/repo/landing:abc123 \
 #   docker compose -f docker-compose.prod.yml up -d
 
 services:
@@ -75,17 +74,6 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  landing:
-    image: ${IMAGE_LANDING}
-    restart: unless-stopped
-    ports:
-      - "8080:80"
     logging:
       driver: json-file
       options:

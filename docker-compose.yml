@@ -71,15 +71,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  landing:
-    build: ./landing
-    restart: unless-stopped
-    ports:
-      - "8080:80"
-    volumes:
-      - ./landing/index.html:/usr/share/nginx/html/index.html:ro
-      - ./landing/screenshots:/usr/share/nginx/html/screenshots:ro
-
   pg_backup:
     image: postgres:16-alpine
     restart: unless-stopped
