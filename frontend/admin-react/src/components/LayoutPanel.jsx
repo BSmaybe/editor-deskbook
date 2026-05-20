@@ -536,6 +536,17 @@ ${svgPreview}
             >
               <ListChecks size={18} />
             </button>
+            {canvasDirty && mode === 'canvas' && (
+              <button
+                className="tool-button secondary"
+                onClick={async () => { try { await saveCanvasIfNeeded(); } catch {} }}
+                disabled={busy}
+                data-tip="Сохранить черновик"
+              >
+                <Save size={18} />
+                <span>Сохранить</span>
+              </button>
+            )}
             <button
               className="tool-button"
               onClick={handlePublish}
