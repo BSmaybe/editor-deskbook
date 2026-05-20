@@ -9,17 +9,20 @@ export default function InvitePanel({ onNotice, onError }) {
   const [role, setRole] = useState('user');
   const [expiresIn, setExpiresIn] = useState('72');
 
+  const onErrorRef = React.useRef(onError);
+  onErrorRef.current = onError;
+
   const load = useCallback(async () => {
     setBusy(true);
     try {
       const data = await apiFetch('/admin/invites');
       setInvites(Array.isArray(data) ? data : []);
     } catch (err) {
-      onError(err.message);
+      onErrorRef.current(err.message);
     } finally {
       setBusy(false);
     }
-  }, [onError]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 

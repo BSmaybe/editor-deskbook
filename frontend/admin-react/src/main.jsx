@@ -39,8 +39,6 @@ async function loadPublishedSvgPreview(floorId) {
 const isInviteUrl = new URLSearchParams(window.location.search).has('invite');
 
 function App() {
-  if (isInviteUrl) return <RegisterScreen />;
-
   const [token, setToken] = useState(tokenFromStorage());
   const [username, setUsername] = useState(usernameFromStorage());
   const [activeTab, setActiveTab] = useState('layout');
@@ -84,9 +82,10 @@ function App() {
       const nextFloors = Array.isArray(f) ? f : [];
       setFloors(nextFloors);
       setComponents(Array.isArray(c) ? c : []);
-      if (!nextFloors.some((floor) => String(floor.id) === String(selectedFloorId))) {
-        setSelectedFloorId(nextFloors.length ? String(nextFloors[0].id) : '');
-      }
+      setSelectedFloorId((prev) => {
+        if (nextFloors.some((floor) => String(floor.id) === String(prev))) return prev;
+        return nextFloors.length ? String(nextFloors[0].id) : '';
+      });
       return { offices: Array.isArray(o) ? o : [], floors: nextFloors, components: Array.isArray(c) ? c : [] };
     } catch (err) {
       setError(err.message);
@@ -94,7 +93,7 @@ function App() {
     } finally {
       setBusy(false);
     }
-  }, [selectedFloorId]);
+  }, []);
 
   const loadLayout = useCallback(async (floorId) => {
     if (!floorId || !tokenFromStorage()) {
@@ -242,6 +241,8 @@ function App() {
     }
   }
 
+  if (isInviteUrl) return <RegisterScreen />;
+
   if (!token) {
     return <LoginScreen busy={busy} error={error} onSubmit={handleLogin} />;
   }
@@ -324,7 +325,7 @@ function App() {
           </div>
         </header>
 
-        <Notice notice={notice} error={error} />
+        <Notice notice={notice} error={error} onDismissNotice={() => setNotice('')} onDismissError={() => setError('')} />
 
         {/* LayoutPanel stays mounted to preserve canvas viewport, undo history and selection */}
         <div style={{ display: activeTab === 'layout' ? 'contents' : 'none' }}>
@@ -383,6 +384,7 @@ function App() {
             localStorage.setItem('deskbook_onboarding_seen', '1');
           }}
           onNavigate={(tab) => {
+            setShowOnboarding(false);
             setActiveTab(tab);
             localStorage.setItem('deskbook_onboarding_seen', '1');
           }}

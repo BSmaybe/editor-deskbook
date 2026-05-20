@@ -395,15 +395,14 @@ export default function LayoutPanel({
   }
 
   function exportPdf() {
-    const svgContent = svgPreview || (canvasRef.current?.getCurrentLayout
-      ? null : null);
     if (!svgPreview) {
       onError('Сначала опубликуйте карту для экспорта в PDF');
       return;
     }
     const printWin = window.open('', '_blank');
     if (!printWin) { onError('Попап заблокирован браузером'); return; }
-    const floorName = selectedFloor ? selectedFloor.name : `Этаж ${floorId}`;
+    const rawName = selectedFloor ? selectedFloor.name : `Этаж ${floorId}`;
+    const floorName = rawName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     printWin.document.write(`<!DOCTYPE html>
 <html><head><title>${floorName} — PDF</title>
 <style>

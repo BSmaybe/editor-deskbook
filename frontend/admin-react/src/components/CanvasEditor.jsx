@@ -772,7 +772,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     const zoom = viewport.zoom || 1;
     const stepM = niceMetricStep(ppm * zoom);
     return Math.max(1, stepM * ppm);
-  }, [pixelsPerMeter, viewport.scale]);
+  }, [pixelsPerMeter, viewport.zoom]);
   const grid = useGrid({ defaultSize: metricGridStep, defaultSnap: false, defaultVisible: true });
 
   useEffect(() => {

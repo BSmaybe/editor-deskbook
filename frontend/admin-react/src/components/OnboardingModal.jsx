@@ -65,7 +65,6 @@ export default function OnboardingModal({ onClose, onNavigate }) {
 
   function finish() {
     onNavigate(current.tab);
-    onClose();
   }
 
   return (

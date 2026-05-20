@@ -7,20 +7,22 @@ export default function HistoryModal({ floorId, open, onClose, onRestored, onErr
   const [revisions, setRevisions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState(null);
+  const onErrorRef = React.useRef(onError);
+  onErrorRef.current = onError;
 
   const load = useCallback(async () => {
     if (!floorId || !open) return;
     setLoading(true);
-    onError('');
+    onErrorRef.current('');
     try {
       const data = await apiFetch(`/floors/${floorId}/layout/revisions`);
       setRevisions(Array.isArray(data) ? data : []);
     } catch (err) {
-      onError(err.message);
+      onErrorRef.current(err.message);
     } finally {
       setLoading(false);
     }
-  }, [floorId, open, onError]);
+  }, [floorId, open]);
 
   useEffect(() => { load(); }, [load]);
 

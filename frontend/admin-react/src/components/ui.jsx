@@ -14,12 +14,36 @@ export function EmptyState({ text }) {
   return <div className="empty-state">{text}</div>;
 }
 
-export function Notice({ notice, error }) {
-  if (!notice && !error) return null;
+export function Notice({ notice, error, onDismissNotice, onDismissError }) {
+  const [visible, setVisible] = useState(true);
+  const text = error || notice;
+
+  useEffect(() => {
+    if (!text) return;
+    setVisible(true);
+    if (error) return;
+    const timer = setTimeout(() => {
+      setVisible(false);
+      onDismissNotice?.();
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [text, error, onDismissNotice]);
+
+  if (!text || !visible) return null;
   return (
     <div className={`notice ${error ? 'error' : 'ok'}`}>
       {error ? <CircleAlert size={18} /> : <Save size={18} />}
-      <span>{error || notice}</span>
+      <span>{text}</span>
+      {error && (
+        <button
+          type="button"
+          className="notice-close"
+          onClick={() => { setVisible(false); onDismissError?.(); }}
+          aria-label="Закрыть"
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }
