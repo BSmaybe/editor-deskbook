@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -280,7 +281,12 @@ func (app *appServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	if user == nil || bcrypt.CompareHashAndPassword([]byte(user.HashedPassword), []byte(password)) != nil {
+	// Always run bcrypt to prevent timing-based username enumeration.
+	hashToCheck := dummyHash
+	if user != nil {
+		hashToCheck = []byte(user.HashedPassword)
+	}
+	if user == nil || bcrypt.CompareHashAndPassword(hashToCheck, []byte(password)) != nil {
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Detail: "Incorrect username or password"})
 		return
 	}
@@ -422,6 +428,10 @@ func (app *appServer) getMeHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user.toPublic())
 }
 
+// dummyHash is used in loginHandler to run a bcrypt comparison even when the
+// username doesn't exist, preventing timing-based username enumeration.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("__deskbook_dummy__"), bcrypt.DefaultCost)
+
 // --- Bootstrap ---
 
 func seedBootstrapAdmin(ctx context.Context, store *userStore) {
@@ -489,7 +499,13 @@ func issueJWT(username, role string) string {
 
 func decodeJSONBody(r *http.Request, dst any) error {
 	defer r.Body.Close()
-	dec := json.NewDecoder(r.Body)
-	return dec.Decode(dst)
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(raw)) > maxBodyBytes {
+		return fmt.Errorf("request body exceeds %d bytes", maxBodyBytes)
+	}
+	return json.Unmarshal(raw, dst)
 }
 

@@ -227,15 +227,32 @@ func secureStaticHandler(dir string) http.Handler {
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
+	// CORS_ALLOWED_ORIGINS: comma-separated list of allowed origins, e.g.
+	// "https://app.example.com,https://admin.example.com".
+	// When unset (dev), all origins are allowed but credentials are NOT echoed back.
+	allowedOrigins := map[string]bool{}
+	if raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS")); raw != "" {
+		for _, o := range strings.Split(raw, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				allowedOrigins[o] = true
+			}
 		}
-		w.Header().Set("Access-Control-Allow-Origin", origin)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if len(allowedOrigins) > 0 {
+			// Strict mode: only listed origins get CORS headers.
+			if allowedOrigins[origin] {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+			}
+		} else {
+			// Dev fallback: allow all, but without credentials so the combination
+			// is not exploitable (browsers reject credentials with wildcard origin).
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Role")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
