@@ -463,7 +463,7 @@ func issueJWT(username, role string) string {
 	if secret == "" {
 		secret = "change-me-in-production"
 	}
-	expMinutes := 480
+	expMinutes := 43200 // 30 days; override with ACCESS_TOKEN_EXPIRE_MINUTES env var
 	if v := os.Getenv("ACCESS_TOKEN_EXPIRE_MINUTES"); v != "" {
 		if m, err := strconv.Atoi(v); err == nil && m > 0 {
 			expMinutes = m

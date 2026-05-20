@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Boxes, Building2, Layers3, LogOut, Mail, PanelLeftClose, PanelLeftOpen, RefreshCw } from 'lucide-react';
-import { apiFetch, login, logout, tokenFromStorage, usernameFromStorage } from './lib/api.js';
+import { apiFetch, login, logout, setUnauthorizedHandler, tokenFromStorage, usernameFromStorage } from './lib/api.js';
 import { LoginScreen, Notice, RegisterScreen } from './components/ui.jsx';
 import LayoutPanel from './components/LayoutPanel.jsx';
 import ComponentPanel from './components/ComponentPanel.jsx';
@@ -113,6 +113,16 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }, []);
+
+  // Auto-logout when any API call gets 401 (token expired)
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setToken('');
+      setUsername('');
+      setLayout(null);
+      setSvgPreview('');
+    });
   }, []);
 
   useEffect(() => {
@@ -279,6 +289,20 @@ function App() {
             <p>{selectedFloor ? `${selectedFloor.name} · этаж #${selectedFloor.id}` : 'Создайте или выберите этаж'}</p>
           </div>
           <div className="toolbar">
+            {floors.length > 0 && (
+              <select
+                className="floor-select"
+                value={selectedFloorId}
+                onChange={(e) => setSelectedFloorId(e.target.value)}
+                title="Выбрать этаж"
+              >
+                {floors.map((f) => (
+                  <option key={f.id} value={String(f.id)}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            )}
             <button className="tool-button" onClick={refreshAll} disabled={busy} title="Обновить">
               <RefreshCw size={18} />
               <span>Обновить</span>

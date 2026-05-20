@@ -8,6 +8,12 @@ export function usernameFromStorage() {
   return localStorage.getItem('admin_username') || '';
 }
 
+// Called by App on mount so apiFetch can trigger re-login on 401
+let _onUnauthorized = null;
+export function setUnauthorizedHandler(fn) {
+  _onUnauthorized = fn;
+}
+
 export async function apiFetch(path, options = {}) {
   const token = tokenFromStorage();
   const headers = {
@@ -18,6 +24,11 @@ export async function apiFetch(path, options = {}) {
   };
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!response.ok) {
+    if (response.status === 401) {
+      logout();
+      _onUnauthorized?.();
+      throw new Error('Сессия истекла — войдите снова');
+    }
     const body = await response.json().catch(() => ({}));
     throw new Error(body.detail || `HTTP ${response.status}`);
   }
