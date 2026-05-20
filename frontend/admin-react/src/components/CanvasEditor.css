@@ -1327,17 +1327,28 @@
   flex: 1;
 }
 
-.ce-struct-thick-val {
-  min-width: 26px;
-  text-align: right;
-  color: #334155;
-  font-variant-numeric: tabular-nums;
-}
-
 .ce-struct-props .ce-prop-row {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.ce-struct-thick-input {
+  width: 52px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  padding: 3px 6px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  outline: none;
+}
+
+.ce-struct-thick-input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
 }
 
 .ce-struct-props .ce-prop-row span:first-child {

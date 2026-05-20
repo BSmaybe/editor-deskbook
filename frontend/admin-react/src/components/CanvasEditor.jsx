@@ -769,6 +769,76 @@ function PpmInlineEdit({ value, onChange }) {
   );
 }
 
+function formatThickness(value) {
+  const n = finiteNumber(value);
+  if (n === null) return '';
+  return String(Number(n.toFixed(2)));
+}
+
+function parseDecimalInput(value) {
+  const normalized = String(value).trim().replace(',', '.');
+  if (!normalized) return null;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+function snapNumberToStep(value, step) {
+  const s = Number(step);
+  if (!Number.isFinite(s) || s <= 0) return value;
+  return Math.round(value / s) * s;
+}
+
+function ThicknessNumberInput({ value, onCommit, min = 1, max = 24, step = 0.5 }) {
+  const [draft, setDraft] = useState(formatThickness(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(formatThickness(value));
+  }, [value, focused]);
+
+  function commit() {
+    const parsed = parseDecimalInput(draft);
+    if (parsed === null) {
+      setDraft(formatThickness(value));
+      setFocused(false);
+      return;
+    }
+    const clamped = Math.max(min, Math.min(max, parsed));
+    const next = Number(snapNumberToStep(clamped, step).toFixed(2));
+    setDraft(formatThickness(next));
+    setFocused(false);
+    if (Math.abs(next - value) > 0.001) onCommit(next);
+  }
+
+  function cancel() {
+    setDraft(formatThickness(value));
+    setFocused(false);
+  }
+
+  function handleChange(event) {
+    const next = event.target.value;
+    if (/^\d*(?:[.,]\d*)?$/.test(next)) setDraft(next);
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className="ce-struct-thick-input"
+      value={draft}
+      onFocus={(event) => { setFocused(true); event.currentTarget.select(); }}
+      onChange={handleChange}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur();
+        if (event.key === 'Escape') cancel();
+      }}
+      aria-label="Толщина линии"
+      title={`Толщина: ${min}-${max}`}
+    />
+  );
+}
+
 /* ── component ── */
 
 const CanvasEditor = forwardRef(function CanvasEditor({
@@ -4598,7 +4668,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                 onChange={(e) => patchStruct({ thick: Number(e.target.value) })}
                 style={{ flex: 1, minWidth: 60 }}
               />
-              <span className="ce-struct-thick-val">{thick}</span>
+              <ThicknessNumberInput
+                value={thick}
+                min={1}
+                max={24}
+                step={0.5}
+                onCommit={(next) => patchStruct({ thick: next })}
+              />
             </label>
             {selectedStruct.type === 'boundary' && (
               <label className="ce-prop-row">
