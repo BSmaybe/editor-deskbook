@@ -263,6 +263,7 @@ export default function LayoutPanel({
   onSync,
   onDownload,
   onLayoutChange,
+  onDirtyChange,
   onNotice,
   onError,
 }) {
@@ -275,6 +276,7 @@ export default function LayoutPanel({
   const [blocks, setBlocks] = useState([]);
   const [creatingBlank, setCreatingBlank] = useState(false);
   const [canvasDirty, setCanvasDirty] = useState(false);
+  const reportDirty = (v) => { setCanvasDirty(v); onDirtyChange?.(v); };
   const [validationIssues, setValidationIssues] = useState([]);
   const [validationOpen, setValidationOpen] = useState(false);
   const canvasRef = useRef(null);
@@ -292,13 +294,13 @@ export default function LayoutPanel({
   }, [blockLibOpen]);
 
   useEffect(() => {
-    setCanvasDirty(false);
+    reportDirty(false);
     setValidationIssues([]);
     setValidationOpen(false);
   }, [floorId, layout?.id]);
 
   useEffect(() => {
-    if (mode !== 'canvas') setCanvasDirty(false);
+    if (mode !== 'canvas') reportDirty(false);
   }, [mode]);
 
   async function createBlankDraft() {
@@ -484,9 +486,6 @@ ${svgPreview}
             <button className={`tab-btn ${mode === 'canvas' ? 'active' : ''}`} onClick={() => switchMode('canvas')}>
               <Move size={16} /> Холст
             </button>
-            <button className={`tab-btn ${mode === 'json' ? 'active' : ''}`} onClick={() => switchMode('json')}>
-              <FileJson size={16} /> JSON черновика
-            </button>
           </div>
           <div className="toolbar">
             {!layout && (
@@ -500,6 +499,9 @@ ${svgPreview}
                 <span>{creatingBlank ? 'Создание...' : 'Пустой черновик'}</span>
               </button>
             )}
+            <button className="icon-button" onClick={() => switchMode('json')} data-tip="JSON черновика" title="JSON черновика">
+              <FileJson size={18} />
+            </button>
             <button className="icon-button" onClick={() => setImportOpen(true)} data-tip="Импортировать SVG как черновик">
               <FileUp size={18} />
             </button>
@@ -545,12 +547,6 @@ ${svgPreview}
             </button>
           </div>
         </div>
-        <PublishStatusStrip
-          layout={layout}
-          svgPreview={svgPreview}
-          canvasDirty={canvasDirty}
-          validationIssues={validationIssues}
-        />
         {/* Template panel */}
         {templateOpen && (
           <div className="template-panel">
@@ -637,7 +633,7 @@ ${svgPreview}
             floorId={floorId}
             components={components}
             onLayoutChange={onLayoutChange}
-            onDirtyChange={setCanvasDirty}
+            onDirtyChange={reportDirty}
             onNotice={onNotice}
             onError={onError}
           />

@@ -50,6 +50,7 @@ function App() {
   const [selectedFloorId, setSelectedFloorId] = useState('');
   const [layout, setLayout] = useState(null);
   const [svgPreview, setSvgPreview] = useState('');
+  const [canvasDirty, setCanvasDirty] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -294,19 +295,27 @@ function App() {
             <p>{selectedFloor ? `${selectedFloor.name} · этаж #${selectedFloor.id}` : 'Создайте или выберите этаж'}</p>
           </div>
           <div className="toolbar">
-            {activeTab === 'layout' && floors.length > 0 && (
-              <select
-                className="floor-select"
-                value={selectedFloorId}
-                onChange={(e) => setSelectedFloorId(e.target.value)}
-                title="Выбрать этаж"
-              >
-                {floors.map((f) => (
-                  <option key={f.id} value={String(f.id)}>
-                    {f.name}
-                  </option>
-                ))}
-              </select>
+            {activeTab === 'layout' && (
+              <>
+                {layout && (
+                  <span className={`status-chip ${canvasDirty ? 'warning' : layout.status === 'draft' ? 'warning' : 'ok'}`}>
+                    {canvasDirty ? 'Изменён' : layout.status === 'draft' ? 'Черновик' : 'Опубликован'}
+                  </span>
+                )}
+                {svgPreview && <span className="status-chip ok">Предпросмотр доступен</span>}
+                {floors.length > 0 && (
+                  <select
+                    className="floor-select"
+                    value={selectedFloorId}
+                    onChange={(e) => { setSelectedFloorId(e.target.value); setCanvasDirty(false); }}
+                    title="Выбрать этаж"
+                  >
+                    {floors.map((f) => (
+                      <option key={f.id} value={String(f.id)}>{f.name}</option>
+                    ))}
+                  </select>
+                )}
+              </>
             )}
             <button className="tool-button" onClick={refreshAll} disabled={busy} title="Обновить">
               <RefreshCw size={18} />
@@ -330,6 +339,7 @@ function App() {
             onSync={syncDesks}
             onDownload={downloadSvg}
             onLayoutChange={() => loadLayout(selectedFloorId)}
+            onDirtyChange={setCanvasDirty}
             onNotice={setNotice}
             onError={setError}
           />
