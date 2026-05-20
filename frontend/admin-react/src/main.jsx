@@ -7,6 +7,7 @@ import LayoutPanel from './components/LayoutPanel.jsx';
 import ComponentPanel from './components/ComponentPanel.jsx';
 import BuildingPanel from './components/BuildingPanel.jsx';
 import InvitePanel from './components/InvitePanel.jsx';
+import OnboardingModal from './components/OnboardingModal.jsx';
 import { mergeComponentCatalog } from './lib/componentCatalog.js';
 import './styles.css';
 
@@ -56,6 +57,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem('deskbook_sidebar_collapsed') === '1',
   );
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   const selectedFloor = useMemo(
     () => floors.find((f) => String(f.id) === String(selectedFloorId)),
@@ -147,6 +149,9 @@ function App() {
       setToken(tokenFromStorage());
       setUsername(usernameFromStorage());
       setNotice('Сессия администратора активна');
+      if (!localStorage.getItem('deskbook_onboarding_seen')) {
+        setShowOnboarding(true);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -261,14 +266,14 @@ function App() {
           </button>
         </div>
         <nav className="tabs">
-          <button type="button" className={activeTab === 'layout' ? 'active' : ''} onClick={() => setActiveTab('layout')} title="План">
-            <Layers3 size={18} /> <span>План</span>
-          </button>
           <button type="button" className={activeTab === 'buildings' ? 'active' : ''} onClick={() => setActiveTab('buildings')} title="Здания">
             <Building2 size={18} /> <span>Здания</span>
           </button>
           <button type="button" className={activeTab === 'components' ? 'active' : ''} onClick={() => setActiveTab('components')} title="Компоненты">
             <Boxes size={18} /> <span>Компоненты</span>
+          </button>
+          <button type="button" className={activeTab === 'layout' ? 'active' : ''} onClick={() => setActiveTab('layout')} title="План">
+            <Layers3 size={18} /> <span>План</span>
           </button>
           <button type="button" className={activeTab === 'invites' ? 'active' : ''} onClick={() => setActiveTab('invites')} title="Приглашения">
             <Mail size={18} /> <span>Приглашения</span>
@@ -360,6 +365,19 @@ function App() {
           />
         )}
       </main>
+
+      {showOnboarding && (
+        <OnboardingModal
+          onClose={() => {
+            setShowOnboarding(false);
+            localStorage.setItem('deskbook_onboarding_seen', '1');
+          }}
+          onNavigate={(tab) => {
+            setActiveTab(tab);
+            localStorage.setItem('deskbook_onboarding_seen', '1');
+          }}
+        />
+      )}
     </div>
   );
 }
