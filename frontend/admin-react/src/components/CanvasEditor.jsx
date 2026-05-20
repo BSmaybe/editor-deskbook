@@ -151,6 +151,8 @@ const MIN_BOUNDARY_AREA = 100;
 const CANVAS_MIN_SIZE = 200;
 const CANVAS_MAX_SIZE = 8000;
 const MIN_BACKGROUND_SIZE = 40;
+const MIN_BACKGROUND_SCALE_PERCENT = 1;
+const MAX_BACKGROUND_SCALE_PERCENT = 2000;
 const METRIC_GRID_DIVISIONS = 4;
 // Nice metric step values in meters (small → large)
 const NICE_METRIC_STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
@@ -339,6 +341,42 @@ function fitBackgroundTransform(imageSize, canvasW, canvasH) {
 
 function backgroundCenter(transform) {
   return { x: transform.x + transform.w / 2, y: transform.y + transform.h / 2 };
+}
+
+function normalizeRotationDegrees(value) {
+  const n = finiteNumber(value);
+  if (n === null) return 0;
+  const normalized = ((n % 360) + 360) % 360;
+  return normalized > 180 ? normalized - 360 : normalized;
+}
+
+function scaledBackgroundTransform(transform, factor) {
+  const f = finiteNumber(factor);
+  if (f === null || f <= 0) return transform;
+  const center = backgroundCenter(transform);
+  const w = Math.max(MIN_BACKGROUND_SIZE, transform.w * f);
+  const h = Math.max(MIN_BACKGROUND_SIZE, transform.h * f);
+  return {
+    ...transform,
+    x: center.x - w / 2,
+    y: center.y - h / 2,
+    w,
+    h,
+  };
+}
+
+function backgroundScalePercent(transform, imageSize) {
+  const iw = finiteNumber(imageSize?.w);
+  if (iw === null || iw <= 0 || !transform?.w) return null;
+  return transform.w / iw * 100;
+}
+
+function backgroundTransformForScalePercent(transform, imageSize, percent) {
+  const currentPercent = backgroundScalePercent(transform, imageSize);
+  const nextPercent = finiteNumber(percent);
+  if (currentPercent === null || currentPercent <= 0 || nextPercent === null || nextPercent <= 0) return transform;
+  const clamped = Math.max(MIN_BACKGROUND_SCALE_PERCENT, Math.min(MAX_BACKGROUND_SCALE_PERCENT, nextPercent));
+  return scaledBackgroundTransform(transform, clamped / currentPercent);
 }
 
 function rotatePoint(pt, center, degrees) {
@@ -999,6 +1037,48 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setBgCalibrationPoints([]);
     setBgCalibrationInput('');
     setDirty(true);
+  }
+
+  function commitBackgroundTransform(nextTransform) {
+    if (!bgImage || bgLocked) return;
+    undoRedo.push(snapshot());
+    setBgTransform(nextTransform);
+    setTool('bg_edit');
+    setDirty(true);
+  }
+
+  function zoomBackgroundBy(factor) {
+    const orig = normalizeBackgroundTransform(bgTransform, canvasW, canvasH);
+    commitBackgroundTransform(scaledBackgroundTransform(orig, factor));
+  }
+
+  function rotateBackgroundBy(delta) {
+    const orig = normalizeBackgroundTransform(bgTransform, canvasW, canvasH);
+    commitBackgroundTransform({
+      ...orig,
+      rotation: normalizeRotationDegrees((orig.rotation || 0) + delta),
+    });
+  }
+
+  function applyBackgroundScalePercent(rawValue) {
+    const percent = Number(rawValue);
+    if (!Number.isFinite(percent) || percent <= 0) {
+      onError?.('Масштаб подложки должен быть больше 0%');
+      return;
+    }
+    const orig = normalizeBackgroundTransform(bgTransform, canvasW, canvasH);
+    const next = backgroundTransformForScalePercent(orig, bgNaturalSize, percent);
+    commitBackgroundTransform(next);
+  }
+
+  function applyBackgroundRotation(rawValue) {
+    const rotation = Number(rawValue);
+    if (!Number.isFinite(rotation)) {
+      onError?.('Поворот подложки должен быть числом');
+      return;
+    }
+    const orig = normalizeBackgroundTransform(bgTransform, canvasW, canvasH);
+    commitBackgroundTransform({ ...orig, rotation: normalizeRotationDegrees(rotation) });
   }
 
   function toggleBackgroundLock() {
@@ -2724,6 +2804,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   );
   const bgHandles = useMemo(() => backgroundHandlePoints(bgFrame), [bgFrame]);
   const bgCenter = backgroundCenter(bgFrame);
+  const bgScalePercent = useMemo(() => {
+    const percent = backgroundScalePercent(bgFrame, bgNaturalSize);
+    return percent === null ? null : Math.round(percent);
+  }, [bgFrame, bgNaturalSize]);
+  const bgRotationDegrees = Math.round(normalizeRotationDegrees(bgFrame.rotation || 0));
   const bgFramePoints = [bgHandles.nw, bgHandles.ne, bgHandles.se, bgHandles.sw]
     .map((p) => `${p.x},${p.y}`)
     .join(' ');
@@ -3068,6 +3153,46 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             >
               <Move size={12} />
             </button>
+            <span className="ce-bg-transform-controls" aria-label="Трансформация подложки">
+              <button
+                className="ce-tool-btn mini"
+                title="Уменьшить подложку на 10%"
+                disabled={bgLocked}
+                onClick={() => zoomBackgroundBy(0.9)}
+              >
+                <ZoomOut size={12} />
+              </button>
+              <span className="ce-bg-transform-readout" title="Масштаб подложки">
+                {bgScalePercent === null ? '—' : `${bgScalePercent}%`}
+              </span>
+              <button
+                className="ce-tool-btn mini"
+                title="Увеличить подложку на 10%"
+                disabled={bgLocked}
+                onClick={() => zoomBackgroundBy(1.1)}
+              >
+                <ZoomIn size={12} />
+              </button>
+              <button
+                className="ce-tool-btn mini"
+                title="Повернуть подложку влево на 15°"
+                disabled={bgLocked}
+                onClick={() => rotateBackgroundBy(-15)}
+              >
+                <RotateCcw size={12} />
+              </button>
+              <span className="ce-bg-transform-readout" title="Поворот подложки">
+                {bgRotationDegrees}°
+              </span>
+              <button
+                className="ce-tool-btn mini"
+                title="Повернуть подложку вправо на 15°"
+                disabled={bgLocked}
+                onClick={() => rotateBackgroundBy(15)}
+              >
+                <RotateCw size={12} />
+              </button>
+            </span>
             <button
               className="ce-tool-btn mini"
               title="Вписать фон в холст"
@@ -4285,6 +4410,80 @@ const CanvasEditor = forwardRef(function CanvasEditor({
               {bgLocked ? <Lock size={12} /> : <Unlock size={12} />}
             </button>
           </div>
+          {tool === 'bg_edit' && (
+            <div className="ce-bg-transform-panel">
+              <label className="ce-prop-row">
+                <span>Масштаб</span>
+                <button
+                  className="ce-tool-btn mini"
+                  title="Уменьшить подложку на 10%"
+                  disabled={bgLocked}
+                  onClick={() => zoomBackgroundBy(0.9)}
+                >
+                  <ZoomOut size={12} />
+                </button>
+                <input
+                  key={`bg-scale-${bgScalePercent ?? 'none'}`}
+                  type="number"
+                  min={MIN_BACKGROUND_SCALE_PERCENT}
+                  max={MAX_BACKGROUND_SCALE_PERCENT}
+                  step="1"
+                  defaultValue={bgScalePercent ?? ''}
+                  disabled={bgLocked || bgScalePercent === null}
+                  onBlur={(e) => applyBackgroundScalePercent(e.currentTarget.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                />
+                <span className="ce-prop-unit">%</span>
+                <button
+                  className="ce-tool-btn mini"
+                  title="Увеличить подложку на 10%"
+                  disabled={bgLocked}
+                  onClick={() => zoomBackgroundBy(1.1)}
+                >
+                  <ZoomIn size={12} />
+                </button>
+              </label>
+              <label className="ce-prop-row">
+                <span>Поворот</span>
+                <button
+                  className="ce-tool-btn mini"
+                  title="Повернуть подложку влево на 15°"
+                  disabled={bgLocked}
+                  onClick={() => rotateBackgroundBy(-15)}
+                >
+                  <RotateCcw size={12} />
+                </button>
+                <input
+                  key={`bg-rotation-${bgRotationDegrees}`}
+                  type="number"
+                  min="-180"
+                  max="180"
+                  step="1"
+                  defaultValue={bgRotationDegrees}
+                  disabled={bgLocked}
+                  onBlur={(e) => applyBackgroundRotation(e.currentTarget.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                />
+                <span className="ce-prop-unit">°</span>
+                <button
+                  className="ce-tool-btn mini"
+                  title="Повернуть подложку вправо на 15°"
+                  disabled={bgLocked}
+                  onClick={() => rotateBackgroundBy(15)}
+                >
+                  <RotateCw size={12} />
+                </button>
+                <button
+                  className="ce-tool-btn mini"
+                  title="Сбросить поворот подложки"
+                  disabled={bgLocked || bgRotationDegrees === 0}
+                  onClick={() => applyBackgroundRotation(0)}
+                >
+                  0°
+                </button>
+              </label>
+            </div>
+          )}
           {tool === 'bg_calibrate' && bgCalibrationPoints.length < 2 && (
             <div className="ce-bg-hint">Укажите две точки с известным расстоянием.</div>
           )}

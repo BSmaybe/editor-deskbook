@@ -183,6 +183,27 @@
   cursor: pointer;
 }
 
+.floor-canvas-editor .ce-bg-transform-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  flex-shrink: 0;
+}
+
+.floor-canvas-editor .ce-bg-transform-readout {
+  min-width: 42px;
+  padding: 0 3px;
+  color: #64748b;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .floor-canvas-editor .ce-pdf-nav {
   display: flex;
   align-items: center;
@@ -1234,6 +1255,25 @@
 .ce-bg-props input[type="number"]:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.ce-bg-transform-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0;
+}
+
+.ce-bg-transform-panel .ce-prop-row input[type="number"] {
+  flex: 0 0 80px;
+  min-width: 0;
+  text-align: right;
+}
+
+.ce-bg-transform-panel .ce-prop-unit {
+  color: #64748b;
+  font-size: 11px;
+  min-width: 12px;
 }
 
 .ce-bg-hint {
