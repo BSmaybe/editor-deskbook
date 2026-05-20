@@ -317,7 +317,7 @@ export default function LayoutPanel({
         }),
       });
       onNotice('Пустой черновик создан');
-      await onLayoutChange?.();
+      await onLayoutChange?.({ refreshPreview: false });
       setMode('canvas');
     } catch (err) {
       onError(err.message);
@@ -353,7 +353,7 @@ export default function LayoutPanel({
         body: JSON.stringify({ version: layout?.version || 0, layout: layoutData }),
       });
       onNotice(`Шаблон «${tmpl.name}» применён`);
-      await onLayoutChange?.();
+      await onLayoutChange?.({ refreshPreview: false });
       setMode('canvas');
       setTemplateOpen(false);
     } catch (err) {
@@ -660,14 +660,14 @@ ${svgPreview}
         layoutVersion={layout?.version || 0}
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onImported={() => { onLayoutChange(); onNotice('SVG импортирован как черновик'); }}
+        onImported={() => { onLayoutChange({ refreshPreview: false }); onNotice('SVG импортирован как черновик'); }}
         onError={onError}
       />
       <HistoryModal
         floorId={floorId}
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
-        onRestored={() => { onLayoutChange(); onNotice('Версия восстановлена'); }}
+        onRestored={() => { onLayoutChange({ refreshPreview: false }); onNotice('Версия восстановлена'); }}
         onError={onError}
       />
     </div>
@@ -797,7 +797,7 @@ function DraftJsonEditor({ layout, floorId, onLayoutChange, onNotice, onError })
       });
       setDirty(false);
       onNotice('Черновик сохранён');
-      onLayoutChange();
+      onLayoutChange({ refreshPreview: false });
     } catch (err) {
       onError(err.message);
     } finally {
@@ -813,7 +813,7 @@ function DraftJsonEditor({ layout, floorId, onLayoutChange, onNotice, onError })
     try {
       await apiFetch(`/floors/${floorId}/layout/draft`, { method: 'DELETE' });
       onNotice('Черновик удалён');
-      onLayoutChange();
+      onLayoutChange({ refreshPreview: false });
     } catch (err) {
       onError(err.message);
     } finally {

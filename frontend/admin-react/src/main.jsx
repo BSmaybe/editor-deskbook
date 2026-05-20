@@ -95,7 +95,7 @@ function App() {
     }
   }, []);
 
-  const loadLayout = useCallback(async (floorId) => {
+  const loadLayout = useCallback(async (floorId, { refreshPreview = true } = {}) => {
     if (!floorId || !tokenFromStorage()) {
       setLayout(null);
       setSvgPreview('');
@@ -104,12 +104,16 @@ function App() {
     setBusy(true);
     setError('');
     try {
-      const [lr, sr] = await Promise.allSettled([
-        apiFetch(`/floors/${floorId}/layout`),
-        loadPublishedSvgPreview(floorId),
-      ]);
-      setLayout(lr.status === 'fulfilled' ? lr.value : null);
-      setSvgPreview(sr.status === 'fulfilled' ? sr.value : '');
+      if (refreshPreview) {
+        const [lr, sr] = await Promise.allSettled([
+          apiFetch(`/floors/${floorId}/layout`),
+          loadPublishedSvgPreview(floorId),
+        ]);
+        setLayout(lr.status === 'fulfilled' ? lr.value : null);
+        setSvgPreview(sr.status === 'fulfilled' ? sr.value : '');
+      } else {
+        setLayout(await apiFetch(`/floors/${floorId}/layout`));
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -339,7 +343,7 @@ function App() {
             onPublish={publishDraft}
             onSync={syncDesks}
             onDownload={downloadSvg}
-            onLayoutChange={() => loadLayout(selectedFloorId)}
+            onLayoutChange={(options) => loadLayout(selectedFloorId, options)}
             onDirtyChange={setCanvasDirty}
             onNotice={setNotice}
             onError={setError}

@@ -2632,7 +2632,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       });
       setDirty(false);
       if (!silent) onNotice('Черновик сохранён');
-      await onLayoutChange?.();
+      await onLayoutChange?.({ refreshPreview: false });
       return response;
     } catch (err) {
       onError(err.message);
