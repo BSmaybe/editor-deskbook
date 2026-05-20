@@ -289,7 +289,7 @@ function App() {
             <p>{selectedFloor ? `${selectedFloor.name} · этаж #${selectedFloor.id}` : 'Создайте или выберите этаж'}</p>
           </div>
           <div className="toolbar">
-            {floors.length > 0 && (
+            {activeTab === 'layout' && floors.length > 0 && (
               <select
                 className="floor-select"
                 value={selectedFloorId}
