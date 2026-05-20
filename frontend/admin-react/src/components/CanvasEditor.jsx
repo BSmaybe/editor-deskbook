@@ -20,7 +20,6 @@
  *  layout          {object}   — layout document: { desks, walls, boundaries, ... }
  *  floorId         {string}
  *  components      {Array}    — component catalog for default sizes
- *  onLayoutChange  {Function} — called after a successful save
  *  onDirtyChange   {Function}
  *  onNotice        {Function}
  *  onError         {Function}
@@ -775,7 +774,6 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   layout,
   floorId,
   components,
-  onLayoutChange,
   onDirtyChange,
   onNotice,
   onError,
@@ -2632,7 +2630,6 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       });
       setDirty(false);
       if (!silent) onNotice('Черновик сохранён');
-      await onLayoutChange?.({ refreshPreview: false });
       return response;
     } catch (err) {
       onError(err.message);
@@ -2641,7 +2638,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       savingRef.current = false;
       setSaving(false);
     }
-  }, [currentLayoutDoc, dirty, floorId, layout?.version, onError, onLayoutChange, onNotice]);
+  }, [currentLayoutDoc, dirty, floorId, layout?.version, onError, onNotice]);
 
   useEffect(() => {
     if (!dirty || !floorId) return undefined;
