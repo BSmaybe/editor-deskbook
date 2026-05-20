@@ -152,6 +152,14 @@ const CANVAS_MIN_SIZE = 200;
 const CANVAS_MAX_SIZE = 8000;
 const MIN_BACKGROUND_SIZE = 40;
 const METRIC_GRID_DIVISIONS = 4;
+// Nice metric step values in meters (small → large)
+const NICE_METRIC_STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
+
+// Pick the smallest nice step whose pixel size is >= targetPx
+function niceMetricStep(pixelsPerMeter, targetPx = 40) {
+  const ppm = Math.max(0.1, pixelsPerMeter || 100);
+  return NICE_METRIC_STEPS.find((m) => m * ppm >= targetPx) ?? 100;
+}
 
 const PLACE_SIZE_MODES = [
   { id: 's', label: 'S', scale: 0.75 },
@@ -757,7 +765,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   /* ── hooks ── */
   const viewport = useViewport({ contentW: canvasW, contentH: canvasH });
-  const metricGridStep = Math.max(1, (Number(pixelsPerMeter) || 100) / METRIC_GRID_DIVISIONS);
+  // Adaptive grid: pick smallest nice metric step whose pixel size is visually comfortable,
+  // also accounting for current viewport zoom so the grid stays useful at any zoom level.
+  const metricGridStep = useMemo(() => {
+    const ppm = Math.max(0.1, Number(pixelsPerMeter) || 100);
+    const zoom = viewport.zoom || 1;
+    const stepM = niceMetricStep(ppm * zoom);
+    return Math.max(1, stepM * ppm);
+  }, [pixelsPerMeter, viewport.scale]);
   const grid = useGrid({ defaultSize: metricGridStep, defaultSnap: false, defaultVisible: true });
 
   useEffect(() => {
