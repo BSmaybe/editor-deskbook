@@ -21,6 +21,7 @@
  *  floorId         {string}
  *  components      {Array}    — component catalog for default sizes
  *  onDirtyChange   {Function}
+ *  onPreviewLayout {Function}
  *  onNotice        {Function}
  *  onError         {Function}
  */
@@ -775,6 +776,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   floorId,
   components,
   onDirtyChange,
+  onPreviewLayout,
   onNotice,
   onError,
 }, ref) {
@@ -2615,7 +2617,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   }, [componentCatalog, layout, desks, walls, boundaries, partitions, doors, groups, zones, infraLayers, structureLocked, bgImage, bgOpacity, bgVisible, bgLocked, bgTransform, bgCalibration, canvasW, canvasH]);
 
   /* ── save ── */
-  const saveDraft = useCallback(async ({ silent = false } = {}) => {
+  const saveDraft = useCallback(async ({ silent = false, updatePreview = !silent } = {}) => {
     if (!floorId) return null;
     if (!dirty) return { saved: false, layout: currentLayoutDoc() };
     if (savingRef.current) return null;
@@ -2629,6 +2631,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         body: JSON.stringify({ version: layout?.version || 0, layout: doc }),
       });
       setDirty(false);
+      if (updatePreview) {
+        try {
+          await onPreviewLayout?.(response?.layout || doc);
+        } catch (previewErr) {
+          onError(`Предпросмотр: ${previewErr.message}`);
+        }
+      }
       if (!silent) onNotice('Черновик сохранён');
       return response;
     } catch (err) {
@@ -2638,7 +2647,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       savingRef.current = false;
       setSaving(false);
     }
-  }, [currentLayoutDoc, dirty, floorId, layout?.version, onError, onNotice]);
+  }, [currentLayoutDoc, dirty, floorId, layout?.version, onError, onNotice, onPreviewLayout]);
 
   useEffect(() => {
     if (!dirty || !floorId) return undefined;
@@ -2711,7 +2720,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   useImperativeHandle(ref, () => ({
     hasDirty: () => dirty,
     getCurrentLayout: currentLayoutDoc,
-    saveIfDirty: () => saveDraft({ silent: true }),
+    saveIfDirty: (options) => saveDraft({ silent: true, ...options }),
     insertObjects,
     getSelectedDesks: () => desks.filter((d) => sel.selectedIds.has(d.id)),
     hasSelection: () => sel.selectedIds.size > 0,

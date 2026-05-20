@@ -263,6 +263,7 @@ export default function LayoutPanel({
   onSync,
   onDownload,
   onLayoutChange,
+  onPreviewLayout,
   onDirtyChange,
   onNotice,
   onError,
@@ -418,9 +419,9 @@ ${svgPreview}
     printWin.document.close();
   }
 
-  async function saveCanvasIfNeeded() {
+  async function saveCanvasIfNeeded(options) {
     if (mode !== 'canvas' || !canvasRef.current?.saveIfDirty) return null;
-    return canvasRef.current.saveIfDirty();
+    return canvasRef.current.saveIfDirty(options);
   }
 
   function currentLayoutDoc() {
@@ -538,7 +539,7 @@ ${svgPreview}
             {canvasDirty && mode === 'canvas' && (
               <button
                 className="tool-button secondary"
-                onClick={async () => { try { await saveCanvasIfNeeded(); } catch {} }}
+                onClick={async () => { try { await saveCanvasIfNeeded({ updatePreview: true }); } catch {} }}
                 disabled={busy}
                 data-tip="Сохранить черновик"
               >
@@ -643,13 +644,14 @@ ${svgPreview}
             floorId={floorId}
             components={components}
             onLayoutChange={onLayoutChange}
+            onPreviewLayout={onPreviewLayout}
             onDirtyChange={reportDirty}
             onNotice={onNotice}
             onError={onError}
           />
         )}
         {mode === 'json' && (
-          <DraftJsonEditor layout={layout} floorId={floorId} onLayoutChange={onLayoutChange} onNotice={onNotice} onError={onError} />
+          <DraftJsonEditor layout={layout} floorId={floorId} onLayoutChange={onLayoutChange} onPreviewLayout={onPreviewLayout} onNotice={onNotice} onError={onError} />
         )}
       </section>
 
@@ -751,13 +753,13 @@ function SvgPreview({ svgPreview, layout, onOpenCanvas }) {
       ) : layout ? (
         <div className="empty-state">
           <div className="empty-stack">
-            <strong>Опубликованный SVG недоступен</strong>
-            <span>Черновик есть. Откройте холст для редактирования или опубликуйте черновик, чтобы создать предпросмотр.</span>
+            <strong>Предпросмотр недоступен</strong>
+            <span>Черновик есть. Откройте холст, сохраните изменения или опубликуйте карту.</span>
             <button className="tool-button secondary" onClick={onOpenCanvas}>Открыть холст</button>
           </div>
         </div>
       ) : (
-        <EmptyState text="Опубликованного предпросмотра пока нет" />
+        <EmptyState text="Предпросмотра пока нет" />
       )}
     </div>
   );
@@ -765,7 +767,7 @@ function SvgPreview({ svgPreview, layout, onOpenCanvas }) {
 
 /* ───────────── Draft JSON editor ───────────── */
 
-function DraftJsonEditor({ layout, floorId, onLayoutChange, onNotice, onError }) {
+function DraftJsonEditor({ layout, floorId, onLayoutChange, onPreviewLayout, onNotice, onError }) {
   const [jsonText, setJsonText] = useState('');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -791,11 +793,16 @@ function DraftJsonEditor({ layout, floorId, onLayoutChange, onNotice, onError })
     }
     setSaving(true);
     try {
-      await apiFetch(`/floors/${floorId}/layout/draft`, {
+      const response = await apiFetch(`/floors/${floorId}/layout/draft`, {
         method: 'PUT',
         body: JSON.stringify({ version: layout?.version || 0, layout: parsed }),
       });
       setDirty(false);
+      try {
+        await onPreviewLayout?.(response?.layout || parsed);
+      } catch (previewErr) {
+        onError(`Предпросмотр: ${previewErr.message}`);
+      }
       onNotice('Черновик сохранён');
       onLayoutChange({ refreshPreview: false });
     } catch (err) {

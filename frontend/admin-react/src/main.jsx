@@ -36,6 +36,16 @@ async function loadPublishedSvgPreview(floorId) {
   }
 }
 
+async function renderLayoutSvgPreview(layoutDoc) {
+  if (!layoutDoc) return '';
+  const rendered = await apiFetch('/render/svg', {
+    method: 'POST',
+    headers: { Accept: 'image/svg+xml' },
+    body: JSON.stringify(layoutDoc),
+  });
+  return typeof rendered === 'string' && rendered.includes('<svg') ? rendered : '';
+}
+
 const isInviteUrl = new URLSearchParams(window.location.search).has('invite');
 
 function App() {
@@ -119,6 +129,12 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }, []);
+
+  const updateDraftPreview = useCallback(async (layoutDoc) => {
+    const svg = await renderLayoutSvgPreview(layoutDoc);
+    setSvgPreview(svg);
+    return svg;
   }, []);
 
   // Auto-logout when any API call gets 401 (token expired)
@@ -344,6 +360,7 @@ function App() {
             onSync={syncDesks}
             onDownload={downloadSvg}
             onLayoutChange={(options) => loadLayout(selectedFloorId, options)}
+            onPreviewLayout={updateDraftPreview}
             onDirtyChange={setCanvasDirty}
             onNotice={setNotice}
             onError={setError}
