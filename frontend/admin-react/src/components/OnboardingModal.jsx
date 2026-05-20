@@ -1,101 +1,129 @@
-import React, { useState } from 'react';
-import { Building2, Boxes, Layers3, Mail, ChevronRight, ChevronLeft, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Building2, Boxes, Layers3, ChevronRight, ChevronLeft, X } from 'lucide-react';
 
 const STEPS = [
   {
-    icon: <Building2 size={32} />,
-    tab: 'buildings',
-    title: 'Создайте здание и этажи',
-    description: 'Начните с раздела «Здания». Добавьте офис, затем создайте этажи — каждый этаж будет иметь свою карту.',
-    action: 'Перейти в Здания',
+    target: 'button[title="Здания"]',
+    icon: <Building2 size={24} />,
     color: '#2563eb',
+    title: 'Создайте здание и этажи',
+    description: 'Начните отсюда. Добавьте офис, затем этажи — каждый получит свою карту.',
+    tab: 'buildings',
   },
   {
-    icon: <Boxes size={32} />,
-    tab: 'components',
-    title: 'Настройте компоненты',
-    description: 'В разделе «Компоненты» создайте типы мест: столы, переговорки, телефонные будки. Задайте их внешний вид и размеры.',
-    action: 'Перейти в Компоненты',
+    target: 'button[title="Компоненты"]',
+    icon: <Boxes size={24} />,
     color: '#7c3aed',
+    title: 'Настройте компоненты',
+    description: 'Создайте типы мест: столы, переговорки, будки. Задайте внешний вид и размеры.',
+    tab: 'components',
   },
   {
-    icon: <Layers3 size={32} />,
-    tab: 'layout',
-    title: 'Нарисуйте план этажа',
-    description: 'Выберите этаж в разделе «План». Загрузите подложку (PNG/PDF) для обрисовки или сразу рисуйте стены и расставляйте рабочие места. Сохраните черновик и опубликуйте.',
-    action: 'Перейти в План',
+    target: 'button[title="План"]',
+    icon: <Layers3 size={24} />,
     color: '#059669',
-  },
-  {
-    icon: <Mail size={32} />,
-    tab: 'invites',
-    title: 'Пригласите сотрудников',
-    description: 'Создайте пригласительные ссылки для сотрудников. Каждый получит доступ к карте и сможет бронировать рабочие места.',
-    action: 'Перейти в Приглашения',
-    color: '#d97706',
+    title: 'Редактируйте план этажа',
+    description: 'Выберите этаж, загрузите подложку или сразу рисуйте стены, расставляйте места. Сохраните и опубликуйте.',
+    tab: 'layout',
   },
 ];
 
+const PAD = 6; // spotlight padding around target
+
 export default function OnboardingModal({ onClose, onNavigate }) {
   const [step, setStep] = useState(0);
+  const [rect, setRect] = useState(null);
+  const tooltipRef = useRef(null);
   const current = STEPS[step];
   const isLast = step === STEPS.length - 1;
 
-  function handleAction() {
+  // Find target element and get its bounding rect
+  useEffect(() => {
+    function measure() {
+      const el = document.querySelector(current.target);
+      if (el) setRect(el.getBoundingClientRect());
+    }
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [step, current.target]);
+
+  // Tooltip position: to the right of the spotlight
+  const tooltipStyle = rect ? (() => {
+    const top = Math.max(8, rect.top + rect.height / 2 - 110);
+    const left = rect.right + PAD + 20;
+    return { top, left };
+  })() : { top: '50%', left: '50%', transform: 'translate(-50%,-50%)' };
+
+  // Spotlight rect with padding
+  const spotStyle = rect ? {
+    top: rect.top - PAD,
+    left: rect.left - PAD,
+    width: rect.width + PAD * 2,
+    height: rect.height + PAD * 2,
+  } : null;
+
+  function finish() {
     onNavigate(current.tab);
     onClose();
   }
 
   return (
-    <div className="onboarding-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="onboarding-modal">
-        <button className="onboarding-close" onClick={onClose} title="Закрыть">
-          <X size={18} />
-        </button>
+    <div className="ob-root">
+      {/* Dark overlay — pointer events blocked except tooltip */}
+      <div className="ob-overlay" onClick={onClose} />
 
-        <div className="onboarding-steps-bar">
-          {STEPS.map((s, i) => (
+      {/* Spotlight cutout */}
+      {spotStyle && (
+        <div className="ob-spotlight" style={spotStyle} />
+      )}
+
+      {/* Tooltip card */}
+      <div className="ob-tooltip" style={tooltipStyle} ref={tooltipRef}>
+        {/* Arrow pointing left toward the spotlight */}
+        <div className="ob-arrow" />
+
+        <button className="ob-close" onClick={onClose}><X size={14} /></button>
+
+        {/* Step dots */}
+        <div className="ob-dots">
+          {STEPS.map((_, i) => (
             <button
               key={i}
-              className={`onboarding-dot ${i === step ? 'active' : ''} ${i < step ? 'done' : ''}`}
+              className={`ob-dot ${i === step ? 'active' : i < step ? 'done' : ''}`}
               onClick={() => setStep(i)}
             />
           ))}
         </div>
 
-        <div className="onboarding-icon" style={{ color: current.color }}>
+        <div className="ob-icon" style={{ background: current.color + '18', color: current.color }}>
           {current.icon}
         </div>
 
-        <div className="onboarding-step-label">Шаг {step + 1} из {STEPS.length}</div>
-        <h2 className="onboarding-title">{current.title}</h2>
-        <p className="onboarding-desc">{current.description}</p>
+        <h3 className="ob-title">{current.title}</h3>
+        <p className="ob-desc">{current.description}</p>
 
-        <div className="onboarding-actions">
+        <div className="ob-actions">
           <button
-            className="onboarding-btn secondary"
-            onClick={() => setStep((s) => s - 1)}
+            className="ob-btn secondary"
+            onClick={() => setStep(s => s - 1)}
             disabled={step === 0}
           >
-            <ChevronLeft size={16} /> Назад
+            <ChevronLeft size={15} />
           </button>
 
-          {!isLast ? (
-            <button className="onboarding-btn primary" onClick={() => setStep((s) => s + 1)}>
-              Далее <ChevronRight size={16} />
+          {isLast ? (
+            <button className="ob-btn primary" style={{ background: current.color }} onClick={finish}>
+              Начать работу <ChevronRight size={15} />
             </button>
           ) : (
-            <button className="onboarding-btn primary" onClick={handleAction} style={{ background: current.color }}>
-              Начать <ChevronRight size={16} />
+            <button className="ob-btn primary" onClick={() => setStep(s => s + 1)}>
+              Далее <ChevronRight size={15} />
             </button>
           )}
         </div>
 
-        {!isLast && (
-          <button className="onboarding-skip" onClick={onClose}>
-            Пропустить
-          </button>
-        )}
+        <button className="ob-skip" onClick={onClose}>Пропустить</button>
       </div>
     </div>
   );
