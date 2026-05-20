@@ -12,6 +12,7 @@ import {
   FileJson,
   FileUp,
   GitCompareArrows,
+  ImageIcon,
   ListChecks,
   Move,
   Package,
@@ -501,6 +502,14 @@ ${svgPreview}
             )}
             <button className="icon-button" onClick={() => setImportOpen(true)} data-tip="Импортировать SVG как черновик">
               <FileUp size={18} />
+            </button>
+            <button
+              className="icon-button"
+              onClick={() => { switchMode('canvas'); setTimeout(() => canvasRef.current?.triggerBgUpload?.(), 100); }}
+              data-tip="Загрузить подложку (PNG, JPEG, PDF) для обрисовки"
+              title="Загрузить подложку (PNG, JPEG, PDF)"
+            >
+              <ImageIcon size={18} />
             </button>
             <button className="icon-button" onClick={() => setTemplateOpen(!templateOpen)} data-tip="Шаблоны планировок">
               <BookTemplate size={18} />

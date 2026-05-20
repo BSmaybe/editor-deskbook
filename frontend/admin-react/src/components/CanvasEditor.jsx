@@ -2623,6 +2623,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     insertObjects,
     getSelectedDesks: () => desks.filter((d) => sel.selectedIds.has(d.id)),
     hasSelection: () => sel.selectedIds.size > 0,
+    triggerBgUpload: () => bgFileRef.current?.click(),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [currentLayoutDoc, dirty, saveDraft, desks, sel.selectedIds]);
 
