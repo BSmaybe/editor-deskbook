@@ -5,6 +5,7 @@
 # Node
 node_modules/
 dist/
+.vite/
 npm-debug.log*
 
 # IDE
@@ -15,10 +16,14 @@ npm-debug.log*
 .DS_Store
 
 # Claude Code local config
+.claude/
 .claude/settings.local.json
 
 # Backups
 backups/
+
+# Runtime/static uploads
+backend/static/
 
 # Go build artifacts
 backend-go/server
