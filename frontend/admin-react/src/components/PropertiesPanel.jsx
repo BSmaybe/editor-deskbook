@@ -24,6 +24,13 @@ const SPACE_TYPES = [
   'asset',
 ];
 
+const STRUCT_LABELS = {
+  wall: 'Стена',
+  partition: 'Перегородка',
+  boundary: 'Контур',
+  door: 'Дверь',
+};
+
 export default function PropertiesPanel({
   desks,
   selectedIds,
@@ -41,6 +48,11 @@ export default function PropertiesPanel({
   canUngroup,
   collapsed = false,
   onToggleCollapsed,
+  selectedStruct = null,
+  structItem = null,
+  structThick = null,
+  onPatchStruct = null,
+  onDeleteStruct = null,
 }) {
   const selected = desks.filter((d) => selectedIds.has(d.id));
 
@@ -55,6 +67,61 @@ export default function PropertiesPanel({
         >
           <PanelRightOpen size={15} />
         </button>
+      </div>
+    );
+  }
+
+  // Structure selected (wall / partition / boundary)
+  if (selectedStruct && structItem) {
+    const typeLabel = STRUCT_LABELS[selectedStruct.type] || selectedStruct.type;
+    const ptCount = (structItem.pts || structItem.points || []).length;
+    const showThickness = selectedStruct.type === 'wall' || selectedStruct.type === 'partition';
+    return (
+      <div className="properties-panel">
+        <div className="prop-header">
+          <div className="prop-header-title">
+            <button className="prop-panel-toggle" onClick={onToggleCollapsed} title="Скрыть свойства" type="button">
+              <PanelRightClose size={15} />
+            </button>
+            <h3>{typeLabel}</h3>
+          </div>
+          <button className="icon-button danger" onClick={onDeleteStruct} title="Удалить (Del)">
+            <Trash2 size={16} />
+          </button>
+        </div>
+
+        <div className="prop-group">
+          <label>Точек</label>
+          <span style={{ paddingTop: 2, color: '#64748b', fontSize: 13 }}>{ptCount}</span>
+        </div>
+
+        {showThickness && structThick !== null && (
+          <div className="prop-group">
+            <label>Толщина</label>
+            <div className="prop-row" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="range"
+                min={1} max={24} step={0.5}
+                value={structThick}
+                onChange={(e) => onPatchStruct?.({ thick: Number(e.target.value) })}
+                style={{ flex: 1, minWidth: 60 }}
+              />
+              <span style={{ minWidth: 24, textAlign: 'right', fontSize: 13, color: '#374151' }}>{structThick}</span>
+            </div>
+          </div>
+        )}
+
+        {selectedStruct.type === 'boundary' && (
+          <div className="prop-group">
+            <label>Метка</label>
+            <input
+              type="text"
+              value={structItem.label || ''}
+              placeholder="—"
+              onChange={(e) => onPatchStruct?.({ label: e.target.value })}
+            />
+          </div>
+        )}
       </div>
     );
   }

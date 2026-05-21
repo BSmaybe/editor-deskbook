@@ -4616,59 +4616,6 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         );
       })()}
 
-      {/* ── Structure properties panel ── */}
-      {selectedStruct && !structureLocked && (() => {
-        const item = getStructList(selectedStruct.type).find((s) => s.id === selectedStruct.id);
-        if (!item) return null;
-        const thick = structureThickness(item, selectedStruct.type);
-        const setter = getStructSetter(selectedStruct.type);
-        function patchStruct(patch) {
-          setter((prev) => prev.map((s) => s.id === selectedStruct.id ? { ...s, ...patch } : s));
-          setDirty(true);
-        }
-        return (
-          <div className="ce-struct-props">
-            <div className="ce-struct-props-header">
-              <span>{structureLabel(selectedStruct.type)}</span>
-              <span className="ce-struct-pts-count">
-                {(item.pts || item.points || []).length} точек
-              </span>
-              <button className="ce-tool-btn mini danger" title="Удалить (Del)" onClick={deleteSelectedStruct}>
-                <Trash2 size={12} />
-              </button>
-            </div>
-            <label className="ce-prop-row">
-              <span>Толщина</span>
-              <input
-                type="range"
-                min={1} max={24} step={0.5}
-                value={thick}
-                onChange={(e) => patchStruct({ thick: Number(e.target.value) })}
-                style={{ flex: 1, minWidth: 60 }}
-              />
-              <ThicknessNumberInput
-                value={thick}
-                min={1}
-                max={24}
-                step={0.5}
-                onCommit={(next) => patchStruct({ thick: next })}
-              />
-            </label>
-            {selectedStruct.type === 'boundary' && (
-              <label className="ce-prop-row">
-                <span>Метка</span>
-                <input
-                  type="text"
-                  value={item.label || ''}
-                  placeholder="—"
-                  onChange={(e) => patchStruct({ label: e.target.value })}
-                  style={{ flex: 1 }}
-                />
-              </label>
-            )}
-          </div>
-        );
-      })()}
 
       {/* ── Infra item properties panel ── */}
       {selectedInfraItem && (() => {
@@ -4727,6 +4674,24 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         canUngroup={canUngroup}
         collapsed={propertiesCollapsed}
         onToggleCollapsed={() => setPropertiesCollapsed((prev) => !prev)}
+        selectedStruct={(!structureLocked && selectedStruct) || null}
+        structItem={(() => {
+          if (!selectedStruct || structureLocked) return null;
+          return getStructList(selectedStruct.type).find((s) => s.id === selectedStruct.id) ?? null;
+        })()}
+        structThick={(() => {
+          if (!selectedStruct || structureLocked) return null;
+          const item = getStructList(selectedStruct.type).find((s) => s.id === selectedStruct.id);
+          return item ? structureThickness(item, selectedStruct.type) : null;
+        })()}
+        onPatchStruct={(patch) => {
+          if (!selectedStruct) return;
+          getStructSetter(selectedStruct.type)((prev) =>
+            prev.map((s) => s.id === selectedStruct.id ? { ...s, ...patch } : s)
+          );
+          setDirty(true);
+        }}
+        onDeleteStruct={deleteSelectedStruct}
       />
 
       {/* ── Status bar ── */}

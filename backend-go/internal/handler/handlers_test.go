@@ -1,14 +1,206 @@
-package main
+package handler
 
 import (
+	crypto_rand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+	"unicode"
+
+	"deskbook/backend-go/internal/auth"
+	"deskbook/backend-go/internal/exporter"
+	"deskbook/backend-go/internal/store"
 )
+
+// --- Types & Aliases for tests compatibility ---
+type appServer = Server
+type lockHeldError = store.LockHeldError
+type layoutTemplate = store.LayoutTemplate
+
+var (
+	errForbidden       = ErrForbidden
+	errAccountDisabled = ErrAccountDisabled
+	errFloorNotFound   = store.ErrFloorNotFound
+	errConflict        = store.ErrConflict
+	errInvalidLayout   = store.ErrInvalidLayout
+)
+
+// --- Helper functions for tests ---
+func issueJWT(username, role string) string {
+	secret := EnvDefault("SECRET_KEY", "change-me-in-production")
+	token, _ := auth.IssueToken(username, role, secret, 60)
+	return token
+}
+
+func requireAuthContext(r *http.Request) (AuthContext, error) {
+	s := &Server{}
+	return s.requireActiveAuth(r)
+}
+
+func requireAdmin(r *http.Request) error {
+	s := &Server{}
+	_, err := s.requireActiveAdmin(r)
+	return err
+}
+
+func writeAuthError(w http.ResponseWriter, err error) {
+	WriteAuthError(w, err)
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	WriteJSON(w, status, value)
+}
+
+func writeError(w http.ResponseWriter, status int, err error) {
+	WriteError(w, status, err)
+}
+
+func floorIDFromPath(w http.ResponseWriter, r *http.Request) (int, bool) {
+	return FloorIDFromPath(w, r)
+}
+
+func envDefault(name string, fallback string) string {
+	return EnvDefault(name, fallback)
+}
+
+func viewBoxString(vb []float64) string {
+	if len(vb) < 4 {
+		return "0 0 100 60"
+	}
+	return fmt.Sprintf("%g %g %g %g", vb[0], vb[1], vb[2], vb[3])
+}
+
+func parseViewBoxString(s string) []float64 {
+	parts := strings.Fields(s)
+	if len(parts) < 4 {
+		return []float64{0, 0, 100, 60}
+	}
+	res := make([]float64, 4)
+	for i := 0; i < 4; i++ {
+		val, err := strconv.ParseFloat(parts[i], 64)
+		if err != nil {
+			return []float64{0, 0, 100, 60}
+		}
+		res[i] = val
+	}
+	return res
+}
+
+func normalizedLabel(value string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(value) {
+		upper := unicode.ToUpper(r)
+		if unicode.IsDigit(upper) || (upper >= 'A' && upper <= 'Z') || (upper >= 'А' && upper <= 'Я') || upper == 'Ё' {
+			b.WriteRune(upper)
+		}
+	}
+	return b.String()
+}
+
+func clamp(value, lo, hi float64) float64 {
+	if value < lo || math.IsNaN(value) || math.IsInf(value, 0) {
+		return lo
+	}
+	if value > hi {
+		return hi
+	}
+	return value
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func uuidV4() string {
+	var b [16]byte
+	if _, err := crypto_rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("go-%d", time.Now().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	hexed := hex.EncodeToString(b[:])
+	return hexed[0:8] + "-" + hexed[8:12] + "-" + hexed[12:16] + "-" + hexed[16:20] + "-" + hexed[20:32]
+}
+
+func defaultLayoutDocument() exporter.LayoutDocument {
+	doc := exporter.LayoutDocument{
+		Version: 2,
+		ViewBox: []float64{0, 0, 1000, 1000},
+	}
+	doc.Components = []exporter.LayoutComponent{}
+	doc.Walls = []exporter.StructureElement{}
+	doc.Boundaries = []exporter.StructureElement{}
+	doc.Partitions = []exporter.StructureElement{}
+	doc.Doors = []exporter.StructureElement{}
+	doc.Desks = []exporter.LayoutDesk{}
+	return doc
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	s := &Server{}
+	return s.corsMiddleware(next)
+}
+
+func lockUsername(username string, userID int) string {
+	if value := strings.TrimSpace(username); value != "" {
+		return value
+	}
+	return strconv.Itoa(userID)
+}
+
+// --- Server lowercase handler wrappers ---
+func (s *Server) listOfficesHandler(w http.ResponseWriter, r *http.Request) {
+	s.ListOfficesHandler(w, r)
+}
+
+func (s *Server) createOfficeHandler(w http.ResponseWriter, r *http.Request) {
+	s.CreateOfficeHandler(w, r)
+}
+
+func (s *Server) listFloorsHandler(w http.ResponseWriter, r *http.Request) {
+	s.ListFloorsHandler(w, r)
+}
+
+func (s *Server) listDesksHandler(w http.ResponseWriter, r *http.Request) {
+	s.ListDesksHandler(w, r)
+}
+
+func (s *Server) listTemplatesHandler(w http.ResponseWriter, r *http.Request) {
+	s.ListTemplatesHandler(w, r)
+}
+
+func (s *Server) listBlocksHandler(w http.ResponseWriter, r *http.Request) {
+	s.ListBlocksHandler(w, r)
+}
+
+func (s *Server) createTemplateHandler(w http.ResponseWriter, r *http.Request) {
+	s.CreateTemplateHandler(w, r)
+}
+
+func (s *Server) createBlockHandler(w http.ResponseWriter, r *http.Request) {
+	s.CreateBlockHandler(w, r)
+}
+
+func (s *Server) createInviteHandler(w http.ResponseWriter, r *http.Request) {
+	s.CreateInviteHandler(w, r)
+}
 
 // --- JWT / Auth ---
 
