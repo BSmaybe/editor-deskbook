@@ -20,7 +20,7 @@ import {
   Save,
   Trash2,
 } from 'lucide-react';
-import { apiFetch } from '../lib/api.js';
+import { apiFetch, usernameFromStorage, floorEventsSource } from '../lib/api.js';
 import { statusLabel } from '../lib/i18n.js';
 import { EmptyState, Metric } from './ui.jsx';
 import CanvasEditor from './CanvasEditor.jsx';
@@ -300,9 +300,85 @@ export default function LayoutPanel({
     setValidationOpen(false);
   }, [floorId, layout?.id]);
 
+  const [floorLock, setFloorLock] = useState(null);
+  const currentUser = usernameFromStorage();
+  const isLockedByOther = !!(floorLock?.locked && floorLock?.locked_by_username !== currentUser);
+
   useEffect(() => {
     if (mode !== 'canvas') reportDirty(false);
   }, [mode]);
+
+  useEffect(() => {
+    if (!floorId) {
+      setFloorLock(null);
+      return;
+    }
+
+    // Fetch current lock status
+    apiFetch(`/floors/${floorId}/lock`)
+      .then((data) => {
+        setFloorLock(data);
+      })
+      .catch((err) => {
+        console.error('Ошибка при получении блокировки этажа:', err);
+      });
+
+    // Subscribe to SSE events
+    let es;
+    try {
+      es = floorEventsSource(floorId);
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          setFloorLock(data);
+        } catch (e) {
+          console.error('Ошибка парсинга события блокировки:', e);
+        }
+      };
+      es.onerror = (err) => {
+        console.error('Ошибка SSE соединения для блокировок:', err);
+      };
+    } catch (err) {
+      console.error('Не удалось инициализировать SSE:', err);
+    }
+
+    return () => {
+      if (es) {
+        es.close();
+      }
+    };
+  }, [floorId]);
+
+  useEffect(() => {
+    if (isLockedByOther && mode === 'canvas') {
+      setMode('preview');
+      onError(`Этот этаж заблокирован пользователем ${floorLock.locked_by_username} для редактирования`);
+    }
+  }, [isLockedByOther, mode, floorLock]);
+
+  const modeRef = useRef(mode);
+  const floorIdRef = useRef(floorId);
+  useEffect(() => {
+    modeRef.current = mode;
+    floorIdRef.current = floorId;
+  }, [mode, floorId]);
+
+  useEffect(() => {
+    return () => {
+      if (modeRef.current === 'canvas' && floorIdRef.current) {
+        const token = localStorage.getItem('admin_token') || '';
+        if (token) {
+          fetch(`/api/floors/${floorIdRef.current}/lock`, {
+            method: 'DELETE',
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            keepalive: true,
+          }).catch(console.error);
+        }
+      }
+    };
+  }, []);
 
   async function createBlankDraft() {
     if (!floorId) return;
@@ -452,6 +528,24 @@ ${svgPreview}
         return;
       }
     }
+
+    if (nextMode === 'canvas') {
+      try {
+        const lockData = await apiFetch(`/floors/${floorId}/lock`, { method: 'POST' });
+        setFloorLock(lockData);
+      } catch (err) {
+        onError(`Не удалось начать редактирование: ${err.message}`);
+        return;
+      }
+    } else if (mode === 'canvas' && nextMode === 'preview') {
+      try {
+        await apiFetch(`/floors/${floorId}/lock`, { method: 'DELETE' });
+        setFloorLock({ locked: false });
+      } catch (err) {
+        console.error('Не удалось освободить блокировку:', err);
+      }
+    }
+
     setMode(nextMode);
   }
 
@@ -483,7 +577,12 @@ ${svgPreview}
             <button className={`tab-btn ${mode === 'preview' ? 'active' : ''}`} onClick={() => switchMode('preview')}>
               <Eye size={16} /> Предпросмотр
             </button>
-            <button className={`tab-btn ${mode === 'canvas' ? 'active' : ''}`} onClick={() => switchMode('canvas')}>
+            <button
+              className={`tab-btn ${mode === 'canvas' ? 'active' : ''}`}
+              onClick={() => switchMode('canvas')}
+              disabled={isLockedByOther}
+              title={isLockedByOther ? `Редактируется пользователем ${floorLock.locked_by_username}` : ''}
+            >
               <Move size={16} /> Холст
             </button>
           </div>
@@ -492,22 +591,35 @@ ${svgPreview}
               <button
                 className="tool-button secondary"
                 onClick={createBlankDraft}
-                disabled={!floorId || creatingBlank}
-                title="Создать пустой черновик"
+                disabled={!floorId || creatingBlank || isLockedByOther}
+                title={isLockedByOther ? `Редактируется пользователем ${floorLock.locked_by_username}` : "Создать пустой черновик"}
               >
                 <FilePlus2 size={18} />
                 <span>{creatingBlank ? 'Создание...' : 'Пустой черновик'}</span>
               </button>
             )}
-            <button className="icon-button" onClick={() => switchMode('json')} data-tip="JSON черновика" title="JSON черновика">
+            <button
+              className="icon-button"
+              onClick={() => switchMode('json')}
+              disabled={isLockedByOther}
+              data-tip="JSON черновика"
+              title="JSON черновика"
+            >
               <FileJson size={18} />
             </button>
-            <button className="icon-button" onClick={() => setImportOpen(true)} data-tip="Импортировать SVG как черновик">
+            <button
+              className="icon-button"
+              onClick={() => setImportOpen(true)}
+              disabled={isLockedByOther}
+              data-tip="Импортировать SVG как черновик"
+              title="Импортировать SVG"
+            >
               <FileUp size={18} />
             </button>
             <button
               className="icon-button"
               onClick={() => { switchMode('canvas'); setTimeout(() => canvasRef.current?.triggerBgUpload?.(), 100); }}
+              disabled={isLockedByOther}
               data-tip="Загрузить подложку (PNG, JPEG, PDF) для обрисовки"
               title="Загрузить подложку (PNG, JPEG, PDF)"
             >
@@ -540,7 +652,7 @@ ${svgPreview}
               <button
                 className="tool-button secondary"
                 onClick={async () => { try { await saveCanvasIfNeeded({ updatePreview: true }); } catch {} }}
-                disabled={busy}
+                disabled={busy || isLockedByOther}
                 data-tip="Сохранить черновик"
               >
                 <Save size={18} />
@@ -550,7 +662,7 @@ ${svgPreview}
             <button
               className="tool-button"
               onClick={handlePublish}
-              disabled={busy || !layout || (layout.status !== 'draft' && !canvasDirty)}
+              disabled={busy || !layout || (layout.status !== 'draft' && !canvasDirty) || isLockedByOther}
               data-tip="Опубликовать черновик"
             >
               <Rocket size={18} />
@@ -558,6 +670,22 @@ ${svgPreview}
             </button>
           </div>
         </div>
+        {isLockedByOther && (
+          <div className="lock-banner" style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            backgroundColor: '#fef2f2',
+            borderBottom: '1px solid #fee2e2',
+            padding: '10px 16px',
+            color: '#991b1b',
+            fontSize: '14px',
+            fontWeight: '500'
+          }}>
+            <CircleAlert size={16} />
+            <span>Этот этаж сейчас редактирует: <strong>{floorLock.locked_by_username}</strong>. Доступ только для чтения.</span>
+          </div>
+        )}
         {/* Template panel */}
         {templateOpen && (
           <div className="template-panel">
@@ -579,7 +707,7 @@ ${svgPreview}
                     <span className="template-category">{t.category}</span>
                   </div>
                   <div className="template-actions">
-                    <button className="tool-button" onClick={() => applyTemplate(t)} disabled={!floorId}>
+                    <button className="tool-button" onClick={() => applyTemplate(t)} disabled={!floorId || isLockedByOther}>
                       Применить
                     </button>
                     <button className="icon-button danger" onClick={() => deleteTemplate(t.id)} title="Удалить">

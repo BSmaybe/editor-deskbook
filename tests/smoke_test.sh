@@ -238,7 +238,7 @@ else
   fail "Layout draft/publish/export" "draft=${DRAFT_STATUS} publish=${PUBLISH_STATUS}"
 fi
 
-DESKS_BODY="$(http_body "${BASE_URL}/desks?floor_id=${FLOOR_ID}")"
+DESKS_BODY="$(http_body "${BASE_URL}/desks?floor_id=${FLOOR_ID}" "${AUTH[@]}")"
 if echo "$DESKS_BODY" | jq -e 'any(.[]; .label == "SMOKE-1") and (any(.[]; .label == "SMOKE-CHAIR") | not)' >/dev/null; then
   pass "Publish syncs workplace objects only"
 else

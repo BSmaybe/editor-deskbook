@@ -309,7 +309,7 @@ else
   fail "Published HTML contract" "missing wrapper or click hook"
 fi
 
-DESKS_AFTER_LAYOUT="$(http_body "${BASE_URL}/desks?floor_id=${FLOOR_ID}")"
+DESKS_AFTER_LAYOUT="$(http_body "${BASE_URL}/desks?floor_id=${FLOOR_ID}" "${AUTH[@]}")"
 if echo "$DESKS_AFTER_LAYOUT" | jq -e 'any(.[]; .label == "GO-SVG-1") and (any(.[]; .label == "GO-CHAIR") | not) and (any(.[]; .label == "GO-CUSTOM") | not)' >/dev/null; then
   pass "Publish syncs workplace desks only"
 else

@@ -61,3 +61,8 @@ export function logout() {
   localStorage.removeItem('admin_token');
   localStorage.removeItem('admin_username');
 }
+
+export function floorEventsSource(floorId) {
+  const token = tokenFromStorage();
+  return new EventSource(`${API_BASE}/floors/${floorId}/lock/sse?token=${token}`);
+}

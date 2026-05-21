@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"embed"
@@ -9,11 +9,11 @@ import (
 //go:embed swagger-ui
 var swaggerUIFS embed.FS
 
-// swaggerUIHandler serves the Swagger UI at /docs.
+// SwaggerUIHandler serves the Swagger UI at /docs.
 // GET /docs          → redirect to /docs/
 // GET /docs/         → index.html with embedded Swagger UI
 // GET /docs/openapi.yaml → the OpenAPI spec
-func swaggerUIHandler() http.Handler {
+func SwaggerUIHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/docs")
 		if path == "" {
@@ -32,7 +32,7 @@ func swaggerUIHandler() http.Handler {
 		if path == "openapi.yaml" {
 			data, err := swaggerUIFS.ReadFile("swagger-ui/openapi.yaml")
 			if err != nil {
-				writeError(w, http.StatusNotFound, err)
+				WriteError(w, http.StatusNotFound, err)
 				return
 			}
 			w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
@@ -72,6 +72,7 @@ const swaggerIndexHTML = `<!DOCTYPE html>
         SwaggerUIBundle.SwaggerUIStandalonePreset
       ],
       layout: 'BaseLayout',
+      supportedSubmitMethods: [] // Read-only / interactive docs
     });
   </script>
 </body>
