@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Boxes, Building2, Layers3, LogOut, Mail, PanelLeftClose, PanelLeftOpen, RefreshCw } from 'lucide-react';
+import { Boxes, Building2, Layers3, LogOut, Mail, PanelLeftClose, PanelLeftOpen, RefreshCw, Sun, Moon } from 'lucide-react';
 import { apiFetch, login, logout, setUnauthorizedHandler, tokenFromStorage, usernameFromStorage } from './lib/api.js';
 import { LoginScreen, Notice, RegisterScreen } from './components/ui.jsx';
 import LayoutPanel from './components/LayoutPanel.jsx';
@@ -67,6 +67,21 @@ function App() {
     () => localStorage.getItem('deskbook_sidebar_collapsed') === '1',
   );
   const [showOnboarding, setShowOnboarding] = useState(false);
+
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem('deskbook_theme');
+    if (saved) return saved;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('deskbook_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
 
   const selectedFloor = useMemo(
     () => floors.find((f) => String(f.id) === String(selectedFloorId)),
@@ -303,6 +318,15 @@ function App() {
         </nav>
         <div className="session">
           <span>{username}</span>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={toggleTheme}
+            title={theme === 'light' ? 'Темная тема' : 'Светлая тема'}
+            aria-label={theme === 'light' ? 'Темная тема' : 'Светлая тема'}
+          >
+            {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+          </button>
           <button type="button" className="icon-button" onClick={handleLogout} title="Выйти">
             <LogOut size={18} />
           </button>

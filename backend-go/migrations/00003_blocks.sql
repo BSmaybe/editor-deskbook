@@ -1,3 +1,4 @@
+-- +goose Up
 -- Composite blocks: named groups of canvas objects insertable as one unit
 CREATE TABLE IF NOT EXISTS layout_blocks (
     id SERIAL PRIMARY KEY,
@@ -10,3 +11,6 @@ CREATE TABLE IF NOT EXISTS layout_blocks (
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
+
+-- +goose Down
+DROP TABLE IF EXISTS layout_blocks CASCADE;

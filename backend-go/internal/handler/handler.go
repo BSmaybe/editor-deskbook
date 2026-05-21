@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -251,11 +251,11 @@ func (s *Server) checkAndCleanupExpiredLocks(ctx context.Context) {
 	}
 	floorIDs, err := s.Layouts.GetAndCleanupExpiredLocks(ctx)
 	if err != nil {
-		log.Printf("janitor: failed to cleanup expired locks: %v", err)
+		slog.Error("janitor: failed to cleanup expired locks", "error", err)
 		return
 	}
 	for _, id := range floorIDs {
-		log.Printf("janitor: lock expired for floor %d, broadcasting unlock", id)
+		slog.Info("janitor: lock expired for floor, broadcasting unlock", "floor_id", id)
 		s.LockBroker.Broadcast(id, LockEvent{
 			Locked:  false,
 			FloorID: id,
@@ -388,7 +388,11 @@ func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
+		slog.Info("http request",
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Duration("duration", time.Since(start).Round(time.Millisecond)),
+		)
 	})
 }
 

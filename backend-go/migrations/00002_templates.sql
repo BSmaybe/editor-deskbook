@@ -1,3 +1,4 @@
+-- +goose Up
 -- Floor layout templates
 CREATE TABLE IF NOT EXISTS layout_templates (
     id SERIAL PRIMARY KEY,
@@ -10,3 +11,6 @@ CREATE TABLE IF NOT EXISTS layout_templates (
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
+
+-- +goose Down
+DROP TABLE IF EXISTS layout_templates CASCADE;

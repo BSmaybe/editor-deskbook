@@ -2,56 +2,103 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"deskbook/backend-go/internal/handler"
 	"deskbook/backend-go/internal/store"
+	"deskbook/backend-go/migrations"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pressly/goose/v3"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
+	// Set up structured logging
+	var logHandler slog.Handler
+	if os.Getenv("APP_ENV") == "production" {
+		logHandler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	} else {
+		logHandler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	}
+	slog.SetDefault(slog.New(logHandler))
+
 	addr := ":" + handler.EnvDefault("PORT", "8080")
-	ctx := context.Background()
+
+	// Set up graceful shutdown context
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	var (
-		cs  *store.ComponentStore
-		ls  *store.LayoutStore
-		us  *store.UserStore
-		os2 *store.OfficeStore
-		fs  *store.FloorStore
-		ds  *store.DeskStore
-		ts  *store.TemplateStore
-		bs  *store.BlockStore
-		is  *store.InviteStore
+		pool *pgxpool.Pool
+		cs   *store.ComponentStore
+		ls   *store.LayoutStore
+		us   *store.UserStore
+		os2  *store.OfficeStore
+		fs   *store.FloorStore
+		ds   *store.DeskStore
+		ts   *store.TemplateStore
+		bs   *store.BlockStore
+		is   *store.InviteStore
 	)
 
 	if databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL")); databaseURL != "" {
-		pool, err := pgxpool.New(ctx, databaseURL)
+		// 1. Run migrations using goose
+		db, err := sql.Open("pgx", databaseURL)
 		if err != nil {
-			log.Fatalf("failed to connect to database: %v", err)
+			slog.Error("failed to open database for migrations", "error", err)
+			os.Exit(1)
 		}
-		defer pool.Close()
+
+		goose.SetBaseFS(migrations.EmbedFS)
+		if err := goose.SetDialect("postgres"); err != nil {
+			slog.Error("failed to set goose dialect", "error", err)
+			db.Close()
+			os.Exit(1)
+		}
+
+		slog.Info("running database migrations")
+		if err := goose.Up(db, "."); err != nil {
+			slog.Error("migration failed", "error", err)
+			db.Close()
+			os.Exit(1)
+		}
+		db.Close()
+		slog.Info("database migrations completed successfully")
+
+		// 2. Setup connection pool for runtime stores
+		var errPool error
+		pool, errPool = pgxpool.New(ctx, databaseURL)
+		if errPool != nil {
+			slog.Error("failed to connect to database pool", "error", errPool)
+			os.Exit(1)
+		}
 
 		if err := pool.Ping(ctx); err != nil {
-			log.Fatalf("failed to ping database: %v", err)
+			slog.Error("failed to ping database pool", "error", err)
+			pool.Close()
+			os.Exit(1)
 		}
 
-		log.Printf("database connection established")
+		slog.Info("database connection pool established")
 
 		cs = store.NewComponentStore(pool)
 		if err := cs.EnsureSchema(ctx); err != nil {
-			log.Printf("component schema error: %v", err)
+			slog.Warn("component schema ensure error", "error", err)
 		}
 
 		ls = store.NewLayoutStore(pool)
 		if err := ls.EnsureSchema(ctx); err != nil {
-			log.Printf("layout schema error: %v", err)
+			slog.Warn("layout schema ensure error", "error", err)
 		}
 
 		us = store.NewUserStore(pool)
@@ -66,10 +113,10 @@ func main() {
 			seedBootstrapAdmin(ctx, us)
 		}
 	} else {
-		log.Println("warning: DATABASE_URL not set, database stores are disabled")
+		slog.Warn("DATABASE_URL not set, database stores are disabled")
 	}
 
-	// Create and start the refactored server
+	// Create and start the server
 	server := handler.NewServer(cs, ls, us, os2, fs, ds, ts, bs, is)
 	server.StartLockJanitor(ctx)
 
@@ -79,10 +126,35 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("DeskBook Go API listening on %s", addr)
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+	// Run HTTP server in a goroutine
+	go func() {
+		slog.Info("DeskBook Go API listening", "addr", addr)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("HTTP server ListenAndServe error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for OS interrupt signal
+	<-ctx.Done()
+	slog.Info("shutting down HTTP server gracefully...")
+
+	// Attempt graceful shutdown with 10s timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		slog.Error("HTTP server Shutdown forced", "error", err)
+	} else {
+		slog.Info("HTTP server gracefully stopped")
 	}
+
+	if pool != nil {
+		slog.Info("closing database connection pool...")
+		pool.Close()
+		slog.Info("database connection pool closed")
+	}
+	slog.Info("shutdown complete")
 }
 
 func seedBootstrapAdmin(ctx context.Context, s *store.UserStore) {
@@ -93,7 +165,7 @@ func seedBootstrapAdmin(ctx context.Context, s *store.UserStore) {
 	}
 	users, err := s.List(ctx)
 	if err != nil {
-		log.Printf("bootstrap: cannot list users: %v", err)
+		slog.Error("bootstrap: cannot list users", "error", err)
 		return
 	}
 	for _, u := range users {
@@ -107,12 +179,12 @@ func seedBootstrapAdmin(ctx context.Context, s *store.UserStore) {
 	}
 	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		log.Printf("bootstrap: bcrypt error: %v", err)
+		slog.Error("bootstrap: bcrypt error", "error", err)
 		return
 	}
 	if _, err := s.Create(ctx, username, email, string(hashed), "admin"); err != nil {
-		log.Printf("bootstrap: create admin error: %v", err)
+		slog.Error("bootstrap: create admin error", "error", err)
 		return
 	}
-	log.Printf("bootstrap: created admin user %q (%s)", username, email)
+	slog.Info("bootstrap: created admin user", "username", username, "email", email)
 }

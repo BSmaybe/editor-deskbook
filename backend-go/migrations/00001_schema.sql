@@ -1,3 +1,4 @@
+-- +goose Up
 -- DeskBook schema (migrated from SQLAlchemy models)
 
 CREATE TABLE IF NOT EXISTS users (
@@ -120,3 +121,16 @@ CREATE TABLE IF NOT EXISTS global_components (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- +goose Down
+DROP TABLE IF EXISTS global_components CASCADE;
+DROP TABLE IF EXISTS invites CASCADE;
+DROP TABLE IF EXISTS map_audit_log CASCADE;
+DROP TABLE IF EXISTS floor_locks CASCADE;
+ALTER TABLE floors DROP CONSTRAINT IF EXISTS fk_floor_published_rev;
+ALTER TABLE floors DROP CONSTRAINT IF EXISTS fk_floor_draft_rev;
+DROP TABLE IF EXISTS floor_map_revisions CASCADE;
+DROP TABLE IF EXISTS desks CASCADE;
+DROP TABLE IF EXISTS floors CASCADE;
+DROP TABLE IF EXISTS offices CASCADE;
+DROP TABLE IF EXISTS users CASCADE;

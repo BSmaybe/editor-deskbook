@@ -81,6 +81,10 @@ import {
   X,
   ZoomIn,
   ZoomOut,
+  Cloud,
+  CloudOff,
+  CloudUpload,
+  Loader2,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api.js';
 import { loadPdfPage, renderPdfPage } from '../lib/pdfBackground.js';
@@ -994,6 +998,19 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   /* ── saving ── */
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'unsaved' | 'saving' | 'saved' | 'error'
+
+  useEffect(() => {
+    if (dirty) {
+      setSaveStatus((prev) => (prev === 'saving' ? 'saving' : 'unsaved'));
+    } else {
+      setSaveStatus((prev) => (prev === 'saved' || prev === 'saving' || prev === 'error' ? prev : 'idle'));
+    }
+  }, [dirty]);
+
+  useEffect(() => {
+    setSaveStatus('idle');
+  }, [floorId]);
 
   /* ── layers visibility ── */
   const [layerVis, setLayerVis] = useState({
@@ -2693,6 +2710,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     if (savingRef.current) return null;
     savingRef.current = true;
     setSaving(true);
+    setSaveStatus('saving');
     onError('');
     try {
       const doc = currentLayoutDoc();
@@ -2701,6 +2719,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         body: JSON.stringify({ version: layout?.version || 0, layout: doc }),
       });
       setDirty(false);
+      setSaveStatus('saved');
+      setTimeout(() => {
+        setSaveStatus((prev) => (prev === 'saved' ? 'idle' : prev));
+      }, 3000);
       if (updatePreview) {
         try {
           await onPreviewLayout?.(response?.layout || doc);
@@ -2711,6 +2733,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       if (!silent) onNotice('Черновик сохранён');
       return response;
     } catch (err) {
+      setSaveStatus('error');
       onError(err.message);
       throw err;
     } finally {
@@ -4830,12 +4853,41 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             {canvasW}×{canvasH}
           </span>
         </>
-        {dirty && (
-          <>
-            <span className="ce-statusbar-sep">·</span>
-            <span className="ce-statusbar-item" style={{ color: '#d97706' }}>не сохранено</span>
-          </>
-        )}
+        <>
+          <span className="ce-statusbar-sep">·</span>
+          <span className={`ce-statusbar-item ce-save-status ce-save-status-${saveStatus}`}>
+            {saveStatus === 'saving' && (
+              <>
+                <Loader2 size={12} className="ce-spin" style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                <span>Сохранение...</span>
+              </>
+            )}
+            {saveStatus === 'saved' && (
+              <>
+                <Cloud size={12} style={{ marginRight: 4, verticalAlign: 'middle', color: '#16a34a' }} />
+                <span style={{ color: '#16a34a' }}>Сохранено</span>
+              </>
+            )}
+            {saveStatus === 'unsaved' && (
+              <>
+                <CloudUpload size={12} style={{ marginRight: 4, verticalAlign: 'middle', color: '#d97706' }} />
+                <span style={{ color: '#d97706' }}>Не сохранено</span>
+              </>
+            )}
+            {saveStatus === 'error' && (
+              <>
+                <CloudOff size={12} style={{ marginRight: 4, verticalAlign: 'middle', color: '#dc2626' }} />
+                <span style={{ color: '#dc2626' }}>Ошибка</span>
+              </>
+            )}
+            {saveStatus === 'idle' && (
+              <>
+                <Cloud size={12} style={{ marginRight: 4, verticalAlign: 'middle', opacity: 0.6 }} />
+                <span style={{ opacity: 0.6 }}>Сохранено</span>
+              </>
+            )}
+          </span>
+        </>
       </div>
     </div>
   );

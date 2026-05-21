@@ -20,19 +20,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Run migrations before API starts
-  migrate:
-    image: postgres:16-alpine
-    env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./backend-go/migrations:/migrations:ro
-    entrypoint: >
-      sh -c "PGPASSWORD=$$POSTGRES_PASSWORD psql -h postgres -U $$POSTGRES_USER -d $$POSTGRES_DB -f /migrations/001_schema.sql && PGPASSWORD=$$POSTGRES_PASSWORD psql -h postgres -U $$POSTGRES_USER -d $$POSTGRES_DB -f /migrations/002_templates.sql && PGPASSWORD=$$POSTGRES_PASSWORD psql -h postgres -U $$POSTGRES_USER -d $$POSTGRES_DB -f /migrations/003_blocks.sql"
-    restart: "no"
-
   # Go API — single backend for all endpoints
   api:
     build: ./backend-go
@@ -41,8 +28,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
     volumes:
       - api_static:/app/static
     healthcheck:
