@@ -30,3 +30,6 @@ backend-go/server
 
 # Docker (uncomment on server to ignore dev overrides)
 # docker-compose.override.yml
+
+# Git token
+.git_token
