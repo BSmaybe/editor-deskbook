@@ -2,189 +2,403 @@ package main
 
 import (
 	"context"
-	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
-	"deskbook/backend-go/internal/handler"
-	"deskbook/backend-go/internal/store"
-	"deskbook/backend-go/migrations"
-
-	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pressly/goose/v3"
-	"golang.org/x/crypto/bcrypt"
+	"deskbook/backend-go/internal/exporter"
+	"deskbook/backend-go/internal/svgimport"
 )
 
+const maxBodyBytes = 8 << 20 // 8 MiB
+
+type renderRequest struct {
+	Layout json.RawMessage `json:"layout"`
+	Title  string          `json:"title"`
+}
+
+type errorResponse struct {
+	Detail string `json:"detail"`
+}
+
 func main() {
-	// Set up structured logging
-	var logHandler slog.Handler
-	if os.Getenv("APP_ENV") == "production" {
-		logHandler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	// Configure structured logger: JSON for production, text for development.
+	if os.Getenv("LOG_FORMAT") == "json" {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	} else {
-		logHandler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	}
-	slog.SetDefault(slog.New(logHandler))
 
-	addr := ":" + handler.EnvDefault("PORT", "8080")
-
-	// Set up graceful shutdown context
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	addr := ":" + envDefault("PORT", "8080")
+	ctx := context.Background()
 
 	var (
-		pool *pgxpool.Pool
-		cs   *store.ComponentStore
-		ls   *store.LayoutStore
-		us   *store.UserStore
-		os2  *store.OfficeStore
-		fs   *store.FloorStore
-		ds   *store.DeskStore
-		ts   *store.TemplateStore
-		bs   *store.BlockStore
-		is   *store.InviteStore
+		cs  *componentStore
+		ls  *layoutStore
+		us  *userStore
+		os2 *officeStore
+		fs  *floorStore
+		ds  *deskStore
+		ts  *templateStore
+		bs  *blockStore
+		is  *inviteStore
 	)
 
 	if databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL")); databaseURL != "" {
-		// 1. Run migrations using goose
-		db, err := sql.Open("pgx", databaseURL)
-		if err != nil {
-			slog.Error("failed to open database for migrations", "error", err)
-			os.Exit(1)
+		if store, err := newComponentStore(ctx, databaseURL); err != nil {
+			slog.Warn("store disabled", "store", "component", "error", err)
+		} else {
+			cs = store
+			defer cs.close()
 		}
-
-		goose.SetBaseFS(migrations.EmbedFS)
-		if err := goose.SetDialect("postgres"); err != nil {
-			slog.Error("failed to set goose dialect", "error", err)
-			db.Close()
-			os.Exit(1)
+		if store, err := newLayoutStore(ctx, databaseURL); err != nil {
+			slog.Warn("store disabled", "store", "layout", "error", err)
+		} else {
+			ls = store
+			defer ls.close()
 		}
-
-		slog.Info("running database migrations")
-		if err := goose.Up(db, "."); err != nil {
-			slog.Error("migration failed", "error", err)
-			db.Close()
-			os.Exit(1)
+		if store, err := newUserStore(ctx, databaseURL); err != nil {
+			slog.Warn("store disabled", "store", "user", "error", err)
+		} else {
+			us = store
+			defer us.close()
 		}
-		db.Close()
-		slog.Info("database migrations completed successfully")
-
-		// 2. Setup connection pool for runtime stores
-		var errPool error
-		pool, errPool = pgxpool.New(ctx, databaseURL)
-		if errPool != nil {
-			slog.Error("failed to connect to database pool", "error", errPool)
-			os.Exit(1)
+		if store, err := newOfficeStore(ctx, databaseURL); err != nil {
+			slog.Warn("store disabled", "store", "office", "error", err)
+		} else {
+			os2 = store
+			defer os2.close()
 		}
-
-		if err := pool.Ping(ctx); err != nil {
-			slog.Error("failed to ping database pool", "error", err)
-			pool.Close()
-			os.Exit(1)
+		if store, err := newFloorStore(ctx, databaseURL); err != nil {
+			slog.Warn("store disabled", "store", "floor", "error", err)
+		} else {
+			fs = store
+			defer fs.close()
 		}
-
-		slog.Info("database connection pool established")
-
-		cs = store.NewComponentStore(pool)
-		if err := cs.EnsureSchema(ctx); err != nil {
-			slog.Warn("component schema ensure error", "error", err)
+		if store, err := newDeskStore(ctx, databaseURL); err != nil {
+			slog.Warn("store disabled", "store", "desk", "error", err)
+		} else {
+			ds = store
+			defer ds.close()
 		}
-
-		ls = store.NewLayoutStore(pool)
-		if err := ls.EnsureSchema(ctx); err != nil {
-			slog.Warn("layout schema ensure error", "error", err)
+		if store, err := newTemplateStore(ctx, databaseURL); err != nil {
+			slog.Warn("store disabled", "store", "template", "error", err)
+		} else {
+			ts = store
+			defer ts.close()
 		}
-
-		us = store.NewUserStore(pool)
-		os2 = store.NewOfficeStore(pool)
-		fs = store.NewFloorStore(pool)
-		ds = store.NewDeskStore(pool)
-		ts = store.NewTemplateStore(pool)
-		bs = store.NewBlockStore(pool)
-		is = store.NewInviteStore(pool)
+		if store, err := newBlockStore(ctx, databaseURL); err != nil {
+			slog.Warn("store disabled", "store", "block", "error", err)
+		} else {
+			bs = store
+			defer bs.close()
+		}
+		if store, err := newInviteStore(ctx, databaseURL); err != nil {
+			slog.Warn("store disabled", "store", "invite", "error", err)
+		} else {
+			is = store
+			defer is.close()
+		}
+		slog.Info("database stores initialized")
 
 		if us != nil {
 			seedBootstrapAdmin(ctx, us)
 		}
-	} else {
-		slog.Warn("DATABASE_URL not set, database stores are disabled")
 	}
 
-	// Create and start the server
-	server := handler.NewServer(cs, ls, us, os2, fs, ds, ts, bs, is)
-	server.StartLockJanitor(ctx)
+	app := &appServer{components: cs, layouts: ls, users: us, offices: os2, floors: fs, desks: ds, templates: ts, blocks: bs, invites: is}
+	mux := http.NewServeMux()
 
-	httpServer := &http.Server{
+	// Health
+	mux.HandleFunc("GET /health", healthHandler)
+
+	// Renderer
+	mux.HandleFunc("POST /render/svg", renderSVGHandler)
+	mux.HandleFunc("POST /render/html", renderHTMLHandler)
+
+	// Auth
+	mux.HandleFunc("POST /auth/register", app.registerHandler)
+	mux.HandleFunc("POST /auth/login", app.loginHandler)
+
+	// Invites (admin)
+	mux.HandleFunc("POST /admin/invites", app.createInviteHandler)
+	mux.HandleFunc("GET /admin/invites", app.listInvitesHandler)
+	mux.HandleFunc("DELETE /admin/invites/{invite_id}", app.deleteInviteHandler)
+	mux.HandleFunc("GET /invites/{token}", app.getInviteInfoHandler)
+
+	// Users
+	mux.HandleFunc("GET /users/me", app.getMeHandler)
+	mux.HandleFunc("GET /users", app.listUsersHandler)
+	mux.HandleFunc("GET /admin/users", app.adminListUsersHandler)
+	mux.HandleFunc("PATCH /admin/users/{username}", app.adminUpdateUserHandler)
+	mux.HandleFunc("DELETE /admin/users/{username}", app.adminDeleteUserHandler)
+
+	// Components
+	mux.HandleFunc("GET /components", app.listComponentsHandler)
+	mux.HandleFunc("POST /components", app.createComponentHandler)
+	mux.HandleFunc("PUT /components/{component_id}", app.updateComponentHandler)
+	mux.HandleFunc("DELETE /components/{component_id}", app.deleteComponentHandler)
+
+	// Offices
+	mux.HandleFunc("GET /offices", app.listOfficesHandler)
+	mux.HandleFunc("POST /offices", app.createOfficeHandler)
+	mux.HandleFunc("PATCH /offices/{office_id}", app.updateOfficeHandler)
+	mux.HandleFunc("DELETE /offices/{office_id}", app.deleteOfficeHandler)
+
+	// Floors CRUD
+	mux.HandleFunc("GET /floors", app.listFloorsHandler)
+	mux.HandleFunc("POST /floors", app.createFloorHandler)
+	mux.HandleFunc("PATCH /floors/{floor_id}", app.updateFloorHandler)
+	mux.HandleFunc("DELETE /floors/{floor_id}", app.deleteFloorHandler)
+	mux.HandleFunc("POST /floors/{floor_id}/plan", app.uploadFloorPlanHandler)
+
+	// Layout editor
+	mux.HandleFunc("GET /floors/{floor_id}/layout", app.getLayoutHandler)
+	mux.HandleFunc("GET /floors/{floor_id}/layout/published", app.getPublishedLayoutHandler)
+	mux.HandleFunc("GET /floors/{floor_id}/layout/published.svg", app.getPublishedSVGHandler)
+	mux.HandleFunc("GET /floors/{floor_id}/layout/published.html", app.getPublishedHTMLHandler)
+	mux.HandleFunc("PUT /floors/{floor_id}/layout/draft", app.saveLayoutDraftHandler)
+	mux.HandleFunc("DELETE /floors/{floor_id}/layout/draft", app.discardLayoutDraftHandler)
+	mux.HandleFunc("POST /floors/{floor_id}/layout/import", app.importLayoutSVGHandler)
+	mux.HandleFunc("POST /floors/{floor_id}/layout/publish", app.publishLayoutHandler)
+	mux.HandleFunc("POST /floors/{floor_id}/layout/sync-desks", app.syncLayoutDesksHandler)
+	mux.HandleFunc("GET /floors/{floor_id}/layout/history", app.getLayoutHistoryHandler)
+	mux.HandleFunc("GET /floors/{floor_id}/layout/revisions", app.listLayoutRevisionsHandler)
+	mux.HandleFunc("GET /floors/{floor_id}/layout/revisions/{revision_id}", app.getLayoutRevisionHandler)
+	mux.HandleFunc("POST /floors/{floor_id}/layout/revisions/{revision_id}/restore", app.restoreLayoutRevisionHandler)
+	mux.HandleFunc("GET /floors/{floor_id}/lock", app.getFloorLockHandler)
+	mux.HandleFunc("POST /floors/{floor_id}/lock", app.acquireFloorLockHandler)
+	mux.HandleFunc("DELETE /floors/{floor_id}/lock", app.releaseFloorLockHandler)
+
+	// Admin maintenance
+	mux.HandleFunc("POST /admin/cleanup/revisions", app.cleanupRevisionsHandler)
+
+	// Templates
+	mux.HandleFunc("GET /templates", app.listTemplatesHandler)
+	mux.HandleFunc("POST /templates", app.createTemplateHandler)
+	mux.HandleFunc("DELETE /templates/{template_id}", app.deleteTemplateHandler)
+
+	// Blocks
+	mux.HandleFunc("GET /blocks", app.listBlocksHandler)
+	mux.HandleFunc("POST /blocks", app.createBlockHandler)
+	mux.HandleFunc("DELETE /blocks/{block_id}", app.deleteBlockHandler)
+
+	// Desks
+	mux.HandleFunc("GET /desks", app.listDesksHandler)
+	mux.HandleFunc("GET /desks/{desk_id}", app.getDeskHandler)
+	mux.HandleFunc("PATCH /desks/{desk_id}", app.updateDeskHandler)
+	mux.HandleFunc("DELETE /desks/{desk_id}", app.deleteDeskHandler)
+
+	// Public embed (no auth — read-only published floor plan)
+	mux.HandleFunc("GET /embed/floors/{floor_id}", app.embedFloorHandler)
+
+	// Swagger UI — interactive API documentation
+	mux.Handle("/docs", swaggerUIHandler())
+	mux.Handle("/docs/", swaggerUIHandler())
+
+	// Static file serving — nosniff header prevents browsers from treating
+	// uploaded assets as executable content even if the extension were wrong.
+	staticDir := envDefault("STATIC_DIR", "static")
+	mux.Handle("GET /static/", secureStaticHandler(staticDir))
+
+	// CORS middleware
+	handler := corsMiddleware(logRequests(mux))
+
+	server := &http.Server{
 		Addr:              addr,
-		Handler:           server.Routes(),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	// Run HTTP server in a goroutine
-	go func() {
-		slog.Info("DeskBook Go API listening", "addr", addr)
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("HTTP server ListenAndServe error", "error", err)
-			os.Exit(1)
-		}
-	}()
-
-	// Wait for OS interrupt signal
-	<-ctx.Done()
-	slog.Info("shutting down HTTP server gracefully...")
-
-	// Attempt graceful shutdown with 10s timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		slog.Error("HTTP server Shutdown forced", "error", err)
-	} else {
-		slog.Info("HTTP server gracefully stopped")
+	slog.Info("server starting", "addr", addr)
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
 	}
-
-	if pool != nil {
-		slog.Info("closing database connection pool...")
-		pool.Close()
-		slog.Info("database connection pool closed")
-	}
-	slog.Info("shutdown complete")
 }
 
-func seedBootstrapAdmin(ctx context.Context, s *store.UserStore) {
-	email := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_EMAIL"))
-	password := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"))
-	if email == "" || password == "" {
-		return
-	}
-	users, err := s.List(ctx)
-	if err != nil {
-		slog.Error("bootstrap: cannot list users", "error", err)
-		return
-	}
-	for _, u := range users {
-		if u.Role == "admin" {
-			return
+// secureStaticHandler serves files from dir under /static/ with security headers
+// that prevent browsers from executing uploaded content as scripts.
+func secureStaticHandler(dir string) http.Handler {
+	fs := http.StripPrefix("/static/", http.FileServer(http.Dir(dir)))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		fs.ServeHTTP(w, r)
+	})
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	// CORS_ALLOWED_ORIGINS: comma-separated list of allowed origins, e.g.
+	// "https://app.example.com,https://admin.example.com".
+	// When unset (dev), all origins are allowed but credentials are NOT echoed back.
+	allowedOrigins := map[string]bool{}
+	if raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS")); raw != "" {
+		for _, o := range strings.Split(raw, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				allowedOrigins[o] = true
+			}
 		}
 	}
-	username := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_USERNAME"))
-	if username == "" {
-		username = "admin"
-	}
-	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if len(allowedOrigins) > 0 {
+			// Strict mode: only listed origins get CORS headers.
+			if allowedOrigins[origin] {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+			}
+		} else {
+			// Dev fallback: allow all, but without credentials so the combination
+			// is not exploitable (browsers reject credentials with wildcard origin).
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func healthHandler(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"message": "ok"})
+}
+
+func renderSVGHandler(w http.ResponseWriter, r *http.Request) {
+	layout, _, err := decodeRenderRequest(r)
 	if err != nil {
-		slog.Error("bootstrap: bcrypt error", "error", err)
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if _, err := s.Create(ctx, username, email, string(hashed), "admin"); err != nil {
-		slog.Error("bootstrap: create admin error", "error", err)
+	svg, err := exporter.RenderSVG(layout)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
-	slog.Info("bootstrap: created admin user", "username", username, "email", email)
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(svg))
+}
+
+func renderHTMLHandler(w http.ResponseWriter, r *http.Request) {
+	layout, title, err := decodeRenderRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(title) == "" {
+		title = r.URL.Query().Get("title")
+	}
+	svg, err := exporter.RenderSVG(layout)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(exporter.RenderHTML(svg, title)))
+}
+
+func (app *appServer) importLayoutSVGHandler(w http.ResponseWriter, r *http.Request) {
+	if _, err := app.requireActiveAuth(r); err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	if _, ok := floorIDFromPath(w, r); !ok {
+		return
+	}
+	raw, err := ioReadLimited(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	result, err := svgimport.Classify(string(raw))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func decodeRenderRequest(r *http.Request) (exporter.LayoutDocument, string, error) {
+	defer r.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+	if err != nil {
+		return exporter.LayoutDocument{}, "", err
+	}
+	if len(raw) > maxBodyBytes {
+		return exporter.LayoutDocument{}, "", fmt.Errorf("request body exceeds %d bytes", maxBodyBytes)
+	}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return exporter.LayoutDocument{}, "", errors.New("empty request body")
+	}
+
+	var wrapped renderRequest
+	if err := json.Unmarshal(raw, &wrapped); err == nil && len(wrapped.Layout) > 0 {
+		layout, err := exporter.ParseLayoutJSON(wrapped.Layout)
+		return layout, wrapped.Title, err
+	}
+	layout, err := exporter.ParseLayoutJSON(raw)
+	return layout, "", err
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeError(w http.ResponseWriter, status int, err error) {
+	writeJSON(w, status, errorResponse{Detail: err.Error()})
+}
+
+// statusWriter wraps ResponseWriter to capture the HTTP status code for logging.
+type statusWriter struct {
+	http.ResponseWriter
+	status  int
+	written bool
+}
+
+func (sw *statusWriter) WriteHeader(status int) {
+	if !sw.written {
+		sw.status = status
+		sw.written = true
+	}
+	sw.ResponseWriter.WriteHeader(status)
+}
+
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := r.Header.Get("X-Request-Id")
+		if requestID == "" {
+			requestID = uuidV4()
+		}
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		sw.Header().Set("X-Request-Id", requestID)
+		start := time.Now()
+		next.ServeHTTP(sw, r)
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", sw.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"request_id", requestID,
+		)
+	})
+}
+
+func envDefault(name string, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
 }
