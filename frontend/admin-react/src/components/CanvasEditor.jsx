@@ -3036,20 +3036,6 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         </button>
         </div>
 
-        {/* ── Масштаб ── */}
-        <div className="ce-toolbar-group">
-        <button className="ce-tool-btn" title="Приблизить (+)" onClick={() => viewport.zoomBy(1 / 1.25)}>
-          <ZoomIn size={14} />
-        </button>
-        <button className="ce-tool-btn" title="Отдалить (−)" onClick={() => viewport.zoomBy(1.25)}>
-          <ZoomOut size={14} />
-        </button>
-        <span className="ce-zoom-label">{Math.round(viewport.zoom * 100)}%</span>
-        <button className="ce-tool-btn" title="Показать всё (F)" onClick={handleZoomToFit}>
-          <Maximize size={14} /><KBD>F</KBD>
-        </button>
-        </div>
-
         {/* ── Холст ── */}
         <div className="ce-toolbar-group">
         <button
@@ -3220,7 +3206,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           </div>
         )}
 
-        {/* ── Фон (кнопка + popover) ── */}
+        {/* hidden file input for bg image — actual button lives in HUD */}
         <input
           ref={bgFileRef}
           type="file"
@@ -3228,185 +3214,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           style={{ display: 'none' }}
           onChange={onBgFileChange}
         />
-        {/* Фон-кнопка с popover — контролы скрыты до клика */}
-        <div className="ce-toolbar-group ce-bg-btn-group" ref={bgPopoverRef}>
-          <button
-            className={`ce-tool-btn icon-text ${bgImage ? 'active' : ''}`}
-            title={bgImage ? 'Настройки фонового изображения' : 'Загрузить фоновое изображение для обводки стен'}
-            onClick={() => (bgImage ? setBgPopoverOpen((v) => !v) : bgFileRef.current?.click())}
-          >
-            <ImageIcon size={14} />
-            <span>Фон</span>
-            {bgImage && <span className="ce-bg-indicator" />}
-          </button>
 
-          {bgPopoverOpen && bgImage && (
-            <div className="ce-bg-popover">
-              {/* Строка 1: загрузить новый / видимость / прозрачность */}
-              <div className="ce-bg-popover-row">
-                <button
-                  className="ce-tool-btn mini"
-                  title="Заменить изображение"
-                  onClick={() => bgFileRef.current?.click()}
-                >
-                  <ImageIcon size={12} />
-                </button>
-                <button
-                  className={`ce-tool-btn mini ${bgVisible ? 'active' : ''}`}
-                  title={bgVisible ? 'Скрыть фон' : 'Показать фон'}
-                  onClick={() => { undoRedo.push(snapshot()); setBgVisible((v) => !v); setDirty(true); }}
-                >
-                  {bgVisible ? <Eye size={12} /> : <EyeOff size={12} />}
-                </button>
-                <input
-                  type="range"
-                  min={0.05} max={1} step={0.05}
-                  value={bgOpacity}
-                  onChange={(e) => { setBgOpacity(Number(e.target.value)); setDirty(true); }}
-                  title={`Прозрачность: ${Math.round(bgOpacity * 100)}%`}
-                  className="ce-bg-opacity-slider"
-                />
-                <span className="ce-bg-popover-readout">{Math.round(bgOpacity * 100)}%</span>
-              </div>
-
-              {/* Строка 2: перемещение + масштаб + поворот */}
-              <div className="ce-bg-popover-row">
-                <button
-                  className={`ce-tool-btn mini ${tool === 'bg_edit' ? 'active' : ''}`}
-                  title={bgLocked ? 'Фон зафиксирован' : 'Двигать / масштабировать / вращать'}
-                  disabled={bgLocked}
-                  onClick={() => { cancelDraw(); setTool(tool === 'bg_edit' ? 'select' : 'bg_edit'); }}
-                >
-                  <Move size={12} />
-                </button>
-                <button className="ce-tool-btn mini" title="Уменьшить на 10%" disabled={bgLocked} onClick={() => zoomBackgroundBy(0.9)}>
-                  <ZoomOut size={12} />
-                </button>
-                <span className="ce-bg-popover-readout" title="Масштаб">{bgScalePercent === null ? '—' : `${bgScalePercent}%`}</span>
-                <button className="ce-tool-btn mini" title="Увеличить на 10%" disabled={bgLocked} onClick={() => zoomBackgroundBy(1.1)}>
-                  <ZoomIn size={12} />
-                </button>
-                <button className="ce-tool-btn mini" title="Повернуть −15°" disabled={bgLocked} onClick={() => rotateBackgroundBy(-15)}>
-                  <RotateCcw size={12} />
-                </button>
-                <span className="ce-bg-popover-readout" title="Поворот">{bgRotationDegrees}°</span>
-                <button className="ce-tool-btn mini" title="Повернуть +15°" disabled={bgLocked} onClick={() => rotateBackgroundBy(15)}>
-                  <RotateCw size={12} />
-                </button>
-              </div>
-
-              {/* Строка 3: вписать / калибровать / зафиксировать */}
-              <div className="ce-bg-popover-row">
-                <button className="ce-tool-btn mini" title="Вписать в холст" onClick={fitBackgroundToCanvas}>
-                  <Maximize2 size={12} />
-                </button>
-                <button
-                  className={`ce-tool-btn mini ${tool === 'bg_calibrate' ? 'active' : ''}`}
-                  title="Калибровать масштаб по двум точкам"
-                  onClick={startBackgroundCalibration}
-                >
-                  <Target size={12} />
-                </button>
-                <button
-                  className={`ce-tool-btn mini ${bgLocked ? 'active' : ''}`}
-                  title={bgLocked ? 'Разблокировать фон' : 'Зафиксировать фон'}
-                  onClick={toggleBackgroundLock}
-                >
-                  {bgLocked ? <Lock size={12} /> : <Unlock size={12} />}
-                </button>
-              </div>
-
-              {/* PDF-навигация (при наличии) */}
-              {bgPdfPages > 1 && (
-                <div className="ce-bg-popover-row">
-                  <button
-                    className="ce-tool-btn mini"
-                    title="Предыдущая страница"
-                    disabled={bgPdfPage <= 1 || bgPdfLoading}
-                    onClick={() => navigatePdfPage(-1)}
-                  >‹</button>
-                  <span className="ce-bg-popover-readout">
-                    {bgPdfLoading ? '…' : `${bgPdfPage} / ${bgPdfPages}`}
-                  </span>
-                  <button
-                    className="ce-tool-btn mini"
-                    title="Следующая страница"
-                    disabled={bgPdfPage >= bgPdfPages || bgPdfLoading}
-                    onClick={() => navigatePdfPage(1)}
-                  >›</button>
-                </div>
-              )}
-              {bgPdfLoading && bgPdfPages === 0 && (
-                <div className="ce-bg-popover-row"><span className="ce-bg-popover-readout">PDF…</span></div>
-              )}
-
-              {/* Удалить */}
-              <div className="ce-bg-popover-row ce-bg-popover-row--danger">
-                <button
-                  className="ce-tool-btn mini danger"
-                  title="Удалить фоновое изображение"
-                  onClick={() => {
-                    undoRedo.push(snapshot());
-                    setBgImage(null);
-                    setBgLocked(false);
-                    setBgTransform(defaultBackgroundTransform(canvasW, canvasH));
-                    setBgCalibration(null);
-                    setBgCalibrationPoints([]);
-                    setBgCalibrationInput('');
-                    setBgNaturalSize(null);
-                    setBgPdfData(null);
-                    setBgPdfPages(0);
-                    setBgPdfPage(1);
-                    setBgPopoverOpen(false);
-                    setDirty(true);
-                  }}
-                >
-                  <Trash2 size={12} />
-                </button>
-                <span className="ce-bg-popover-readout">Удалить фон</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="ce-toolbar-spacer" />
-
-        {/* ── Действия ── */}
-        <div className="ce-toolbar-group">
-        <button
-          className="ce-tool-btn"
-          title="Отменить (Ctrl+Z)"
-          disabled={!undoRedo.canUndo}
-          onClick={() => undoRedo.undo(snapshot())}
-        >
-          <Undo2 size={14} />
-        </button>
-        <button
-          className="ce-tool-btn"
-          title="Повторить (Ctrl+Shift+Z)"
-          disabled={!undoRedo.canRedo}
-          onClick={() => undoRedo.redo(snapshot())}
-        >
-          <Redo2 size={14} />
-        </button>
-
-        {dirty && (
-          <>
-            <button className="ce-tool-btn" title="Сбросить изменения" onClick={resetChanges}>
-              <RotateCcw size={14} />
-            </button>
-            <button
-              className="ce-tool-btn save-btn"
-              title="Сохранить черновик"
-              onClick={() => saveDraft()}
-              disabled={saving}
-            >
-              <Save size={14} />
-              <span>{saving ? '…' : 'Сохранить'}</span>
-            </button>
-          </>
-        )}
-        </div>
       </div>
 
       {toolbarTip && (
@@ -4501,6 +4309,178 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           boundaries={visibleBoundaries}
           onPanTo={viewport.panTo}
         />
+
+        {/* ── Canvas HUD ── */}
+        <div className="ce-hud">
+          {/* Top-right: background image button + popover */}
+          <div className="ce-hud-tr" ref={bgPopoverRef}>
+            <div className="ce-hud-group">
+              <button
+                className={`ce-hud-btn icon-text${bgImage ? ' ce-hud-btn--active' : ''}`}
+                title={bgImage ? 'Настройки фона' : 'Загрузить фоновое изображение (PNG, JPEG, PDF)'}
+                onClick={() => (bgImage ? setBgPopoverOpen((v) => !v) : bgFileRef.current?.click())}
+              >
+                <ImageIcon size={14} />
+                <span>Фон</span>
+                {bgImage && <span className="ce-bg-indicator" />}
+              </button>
+            </div>
+            {bgPopoverOpen && bgImage && (
+              <div className="ce-bg-popover">
+                {/* Строка 1: загрузить новый / видимость / прозрачность */}
+                <div className="ce-bg-popover-row">
+                  <button className="ce-tool-btn mini" title="Заменить изображение" onClick={() => bgFileRef.current?.click()}>
+                    <ImageIcon size={12} />
+                  </button>
+                  <button
+                    className={`ce-tool-btn mini ${bgVisible ? 'active' : ''}`}
+                    title={bgVisible ? 'Скрыть фон' : 'Показать фон'}
+                    onClick={() => { undoRedo.push(snapshot()); setBgVisible((v) => !v); setDirty(true); }}
+                  >
+                    {bgVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+                  </button>
+                  <input
+                    type="range" min={0.05} max={1} step={0.05}
+                    value={bgOpacity}
+                    onChange={(e) => { setBgOpacity(Number(e.target.value)); setDirty(true); }}
+                    title={`Прозрачность: ${Math.round(bgOpacity * 100)}%`}
+                    className="ce-bg-opacity-slider"
+                  />
+                  <span className="ce-bg-popover-readout">{Math.round(bgOpacity * 100)}%</span>
+                </div>
+                {/* Строка 2: перемещение + масштаб + поворот */}
+                <div className="ce-bg-popover-row">
+                  <button
+                    className={`ce-tool-btn mini ${tool === 'bg_edit' ? 'active' : ''}`}
+                    title={bgLocked ? 'Фон зафиксирован' : 'Двигать / масштабировать / вращать'}
+                    disabled={bgLocked}
+                    onClick={() => { cancelDraw(); setTool(tool === 'bg_edit' ? 'select' : 'bg_edit'); }}
+                  >
+                    <Move size={12} />
+                  </button>
+                  <button className="ce-tool-btn mini" title="Уменьшить на 10%" disabled={bgLocked} onClick={() => zoomBackgroundBy(0.9)}>
+                    <ZoomOut size={12} />
+                  </button>
+                  <span className="ce-bg-popover-readout" title="Масштаб">{bgScalePercent === null ? '—' : `${bgScalePercent}%`}</span>
+                  <button className="ce-tool-btn mini" title="Увеличить на 10%" disabled={bgLocked} onClick={() => zoomBackgroundBy(1.1)}>
+                    <ZoomIn size={12} />
+                  </button>
+                  <button className="ce-tool-btn mini" title="Повернуть −15°" disabled={bgLocked} onClick={() => rotateBackgroundBy(-15)}>
+                    <RotateCcw size={12} />
+                  </button>
+                  <span className="ce-bg-popover-readout" title="Поворот">{bgRotationDegrees}°</span>
+                  <button className="ce-tool-btn mini" title="Повернуть +15°" disabled={bgLocked} onClick={() => rotateBackgroundBy(15)}>
+                    <RotateCw size={12} />
+                  </button>
+                </div>
+                {/* Строка 3: вписать / калибровать / зафиксировать */}
+                <div className="ce-bg-popover-row">
+                  <button className="ce-tool-btn mini" title="Вписать в холст" onClick={fitBackgroundToCanvas}>
+                    <Maximize2 size={12} />
+                  </button>
+                  <button
+                    className={`ce-tool-btn mini ${tool === 'bg_calibrate' ? 'active' : ''}`}
+                    title="Калибровать масштаб по двум точкам"
+                    onClick={startBackgroundCalibration}
+                  >
+                    <Target size={12} />
+                  </button>
+                  <button
+                    className={`ce-tool-btn mini ${bgLocked ? 'active' : ''}`}
+                    title={bgLocked ? 'Разблокировать фон' : 'Зафиксировать фон'}
+                    onClick={toggleBackgroundLock}
+                  >
+                    {bgLocked ? <Lock size={12} /> : <Unlock size={12} />}
+                  </button>
+                </div>
+                {/* PDF-навигация */}
+                {bgPdfPages > 1 && (
+                  <div className="ce-bg-popover-row">
+                    <button className="ce-tool-btn mini" title="Предыдущая страница" disabled={bgPdfPage <= 1 || bgPdfLoading} onClick={() => navigatePdfPage(-1)}>‹</button>
+                    <span className="ce-bg-popover-readout">{bgPdfLoading ? '…' : `${bgPdfPage} / ${bgPdfPages}`}</span>
+                    <button className="ce-tool-btn mini" title="Следующая страница" disabled={bgPdfPage >= bgPdfPages || bgPdfLoading} onClick={() => navigatePdfPage(1)}>›</button>
+                  </div>
+                )}
+                {bgPdfLoading && bgPdfPages === 0 && (
+                  <div className="ce-bg-popover-row"><span className="ce-bg-popover-readout">PDF…</span></div>
+                )}
+                {/* Удалить */}
+                <div className="ce-bg-popover-row ce-bg-popover-row--danger">
+                  <button
+                    className="ce-tool-btn mini danger"
+                    title="Удалить фоновое изображение"
+                    onClick={() => {
+                      undoRedo.push(snapshot());
+                      setBgImage(null); setBgLocked(false);
+                      setBgTransform(defaultBackgroundTransform(canvasW, canvasH));
+                      setBgCalibration(null); setBgCalibrationPoints([]); setBgCalibrationInput('');
+                      setBgNaturalSize(null); setBgPdfData(null); setBgPdfPages(0); setBgPdfPage(1);
+                      setBgPopoverOpen(false); setDirty(true);
+                    }}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                  <span className="ce-bg-popover-readout">Удалить фон</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Bottom-left: Undo / Redo / Reset / Save */}
+          <div className="ce-hud-bl">
+            <div className="ce-hud-group">
+              <button
+                className="ce-hud-btn"
+                title="Отменить (Ctrl+Z)"
+                disabled={!undoRedo.canUndo}
+                onClick={() => undoRedo.undo(snapshot())}
+              >
+                <Undo2 size={14} />
+              </button>
+              <button
+                className="ce-hud-btn"
+                title="Повторить (Ctrl+Shift+Z)"
+                disabled={!undoRedo.canRedo}
+                onClick={() => undoRedo.redo(snapshot())}
+              >
+                <Redo2 size={14} />
+              </button>
+              {dirty && (
+                <>
+                  <span className="ce-hud-sep" />
+                  <button className="ce-hud-btn" title="Сбросить изменения" onClick={resetChanges}>
+                    <RotateCcw size={14} />
+                  </button>
+                  <button
+                    className="ce-hud-btn ce-hud-btn--save"
+                    title="Сохранить черновик"
+                    onClick={() => saveDraft()}
+                    disabled={saving}
+                  >
+                    <Save size={14} />
+                    <span>{saving ? '…' : 'Сохр.'}</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Bottom-right: Zoom controls */}
+          <div className="ce-hud-br">
+            <div className="ce-hud-group">
+              <button className="ce-hud-btn" title="Отдалить (−)" onClick={() => viewport.zoomBy(1.25)}>
+                <ZoomOut size={14} />
+              </button>
+              <span className="ce-hud-zoom-label">{Math.round(viewport.zoom * 100)}%</span>
+              <button className="ce-hud-btn" title="Приблизить (+)" onClick={() => viewport.zoomBy(1 / 1.25)}>
+                <ZoomIn size={14} />
+              </button>
+              <button className="ce-hud-btn" title="Показать всё (F)" onClick={handleZoomToFit}>
+                <Maximize size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* ── Background properties panel ── */}

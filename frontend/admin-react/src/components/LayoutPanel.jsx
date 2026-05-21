@@ -6,7 +6,6 @@ import {
   CircleAlert,
   CircleCheck,
   Clock,
-  Database,
   Download,
   Eye,
   FileDown,
@@ -690,16 +689,6 @@ ${svgPreview}
                 <span>Сохранить</span>
               </button>
             )}
-
-            {/* ── Применить к базе ── */}
-            <button
-              className="icon-button"
-              onClick={onSync}
-              disabled={busy || !layout}
-              title="Записать рабочие места из опубликованного плана в базу данных"
-            >
-              <Database size={18} />
-            </button>
 
             {/* ── Опубликовать ── */}
             <button
