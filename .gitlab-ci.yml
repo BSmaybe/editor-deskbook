@@ -12,6 +12,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 stages:
+  - test
   - build
   - deploy
 
@@ -19,6 +20,34 @@ variables:
   IMAGE_API:     "$CI_REGISTRY_IMAGE/api"
   IMAGE_ADMIN:   "$CI_REGISTRY_IMAGE/admin"
   DOCKER_TLS_CERTDIR: "/certs"
+
+# ── Test ──────────────────────────────────────────────────────────────────────
+
+test:api:
+  stage: test
+  image: golang:1.23-alpine
+  script:
+    - cd backend-go && go test -v -race -count=1 ./...
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_MERGE_REQUEST_IID
+
+test:admin:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd frontend/admin-react && npm ci
+    - npm run lint
+    - npm run format:check
+    - npm run test
+    - npm run build
+  cache:
+    key: npm-${CI_COMMIT_REF_SLUG}
+    paths:
+      - frontend/admin-react/node_modules/
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_MERGE_REQUEST_IID
 
 # ── Общий шаблон для build-джобов ─────────────────────────────────────────────
 
@@ -36,6 +65,7 @@ variables:
 
 build:api:
   extends: .build
+  needs: [test:api]
   script:
     - docker build
         --cache-from "$IMAGE_API:latest"
@@ -47,6 +77,7 @@ build:api:
 
 build:admin:
   extends: .build
+  needs: [test:admin]
   script:
     - docker build
         --cache-from "$IMAGE_ADMIN:latest"
