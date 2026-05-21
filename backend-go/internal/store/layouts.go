@@ -15,7 +15,9 @@ import (
 	"unicode"
 
 	"deskbook/backend-go/internal/exporter"
+	"deskbook/backend-go/internal/store/db"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -76,15 +78,15 @@ type LayoutDraftPayload struct {
 }
 
 type LayoutDeskSyncResult struct {
-	FloorID           int `json:"floor_id"`
-	RevisionID        int `json:"revision_id"`
+	FloorID           int    `json:"floor_id"`
+	RevisionID        int    `json:"revision_id"`
 	SourceStatus      string `json:"source_status"`
-	Created           int `json:"created"`
-	Updated           int `json:"updated"`
-	Renamed           int `json:"renamed"`
-	TotalLayoutDesks  int `json:"total_layout_desks"`
-	UnmatchedExisting int `json:"unmatched_existing"`
-	Deleted           int `json:"deleted"`
+	Created           int    `json:"created"`
+	Updated           int    `json:"updated"`
+	Renamed           int    `json:"renamed"`
+	TotalLayoutDesks  int    `json:"total_layout_desks"`
+	UnmatchedExisting int    `json:"unmatched_existing"`
+	Deleted           int    `json:"deleted"`
 }
 
 type LayoutRevisionSummary struct {
@@ -134,16 +136,187 @@ type existingDesk struct {
 	QRToken sql.NullString
 }
 
-type rowQuerier interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
 type LayoutStore struct {
 	pool *pgxpool.Pool
+	q    *db.Queries
 }
 
 func NewLayoutStore(pool *pgxpool.Pool) *LayoutStore {
-	return &LayoutStore{pool: pool}
+	return &LayoutStore{
+		pool: pool,
+		q:    db.New(pool),
+	}
+}
+
+func mapFloorRefs(row db.GetFloorRefsRow) FloorRefs {
+	return FloorRefs{
+		ID:          int(row.ID),
+		PublishedID: int4ToNullInt64(row.PublishedMapRevisionID),
+		DraftID:     int4ToNullInt64(row.DraftMapRevisionID),
+	}
+}
+
+func mapFloorRefsForUpdate(row db.GetFloorRefsForUpdateRow) FloorRefs {
+	return FloorRefs{
+		ID:          int(row.ID),
+		PublishedID: int4ToNullInt64(row.PublishedMapRevisionID),
+		DraftID:     int4ToNullInt64(row.DraftMapRevisionID),
+	}
+}
+
+func mapGetLayoutRevisionRow(r db.GetLayoutRevisionRow) LayoutRevision {
+	return LayoutRevision{
+		ID:          int(r.ID),
+		FloorID:     int(r.FloorID),
+		Status:      r.Status,
+		Version:     int(r.Version),
+		CreatedAt:   sql.NullTime{Time: r.CreatedAt.Time, Valid: r.CreatedAt.Valid},
+		UpdatedAt:   sql.NullTime{Time: r.UpdatedAt.Time, Valid: r.UpdatedAt.Valid},
+		PublishedAt: sql.NullTime{Time: r.PublishedAt.Time, Valid: r.PublishedAt.Valid},
+		CreatedBy:   int4ToNullInt64(r.CreatedBy),
+		LayoutJSON:  sql.NullString{String: r.LayoutJson.String, Valid: r.LayoutJson.Valid},
+		SemanticSVG: sql.NullString{String: r.SemanticSvg.String, Valid: r.SemanticSvg.Valid},
+	}
+}
+
+func mapGetLayoutRevisionForUpdateRow(r db.GetLayoutRevisionForUpdateRow) LayoutRevision {
+	return LayoutRevision{
+		ID:          int(r.ID),
+		FloorID:     int(r.FloorID),
+		Status:      r.Status,
+		Version:     int(r.Version),
+		CreatedAt:   sql.NullTime{Time: r.CreatedAt.Time, Valid: r.CreatedAt.Valid},
+		UpdatedAt:   sql.NullTime{Time: r.UpdatedAt.Time, Valid: r.UpdatedAt.Valid},
+		PublishedAt: sql.NullTime{Time: r.PublishedAt.Time, Valid: r.PublishedAt.Valid},
+		CreatedBy:   int4ToNullInt64(r.CreatedBy),
+		LayoutJSON:  sql.NullString{String: r.LayoutJson.String, Valid: r.LayoutJson.Valid},
+		SemanticSVG: sql.NullString{String: r.SemanticSvg.String, Valid: r.SemanticSvg.Valid},
+	}
+}
+
+func mapInsertDraftLayoutRow(r db.InsertDraftLayoutRow) LayoutRevision {
+	return LayoutRevision{
+		ID:          int(r.ID),
+		FloorID:     int(r.FloorID),
+		Status:      r.Status,
+		Version:     int(r.Version),
+		CreatedAt:   sql.NullTime{Time: r.CreatedAt.Time, Valid: r.CreatedAt.Valid},
+		UpdatedAt:   sql.NullTime{Time: r.UpdatedAt.Time, Valid: r.UpdatedAt.Valid},
+		PublishedAt: sql.NullTime{Time: r.PublishedAt.Time, Valid: r.PublishedAt.Valid},
+		CreatedBy:   int4ToNullInt64(r.CreatedBy),
+		LayoutJSON:  sql.NullString{String: r.LayoutJson.String, Valid: r.LayoutJson.Valid},
+		SemanticSVG: sql.NullString{String: r.SemanticSvg.String, Valid: r.SemanticSvg.Valid},
+	}
+}
+
+func mapUpdateDraftLayoutRow(r db.UpdateDraftLayoutRow) LayoutRevision {
+	return LayoutRevision{
+		ID:          int(r.ID),
+		FloorID:     int(r.FloorID),
+		Status:      r.Status,
+		Version:     int(r.Version),
+		CreatedAt:   sql.NullTime{Time: r.CreatedAt.Time, Valid: r.CreatedAt.Valid},
+		UpdatedAt:   sql.NullTime{Time: r.UpdatedAt.Time, Valid: r.UpdatedAt.Valid},
+		PublishedAt: sql.NullTime{Time: r.PublishedAt.Time, Valid: r.PublishedAt.Valid},
+		CreatedBy:   int4ToNullInt64(r.CreatedBy),
+		LayoutJSON:  sql.NullString{String: r.LayoutJson.String, Valid: r.LayoutJson.Valid},
+		SemanticSVG: sql.NullString{String: r.SemanticSvg.String, Valid: r.SemanticSvg.Valid},
+	}
+}
+
+func mapPublishRevisionRow(r db.PublishRevisionRow) LayoutRevision {
+	return LayoutRevision{
+		ID:          int(r.ID),
+		FloorID:     int(r.FloorID),
+		Status:      r.Status,
+		Version:     int(r.Version),
+		CreatedAt:   sql.NullTime{Time: r.CreatedAt.Time, Valid: r.CreatedAt.Valid},
+		UpdatedAt:   sql.NullTime{Time: r.UpdatedAt.Time, Valid: r.UpdatedAt.Valid},
+		PublishedAt: sql.NullTime{Time: r.PublishedAt.Time, Valid: r.PublishedAt.Valid},
+		CreatedBy:   int4ToNullInt64(r.CreatedBy),
+		LayoutJSON:  sql.NullString{String: r.LayoutJson.String, Valid: r.LayoutJson.Valid},
+		SemanticSVG: sql.NullString{String: r.SemanticSvg.String, Valid: r.SemanticSvg.Valid},
+	}
+}
+
+func mapInsertDraftForRestoreRow(r db.InsertDraftForRestoreRow) LayoutRevision {
+	return LayoutRevision{
+		ID:          int(r.ID),
+		FloorID:     int(r.FloorID),
+		Status:      r.Status,
+		Version:     int(r.Version),
+		CreatedAt:   sql.NullTime{Time: r.CreatedAt.Time, Valid: r.CreatedAt.Valid},
+		UpdatedAt:   sql.NullTime{Time: r.UpdatedAt.Time, Valid: r.UpdatedAt.Valid},
+		PublishedAt: sql.NullTime{Time: r.PublishedAt.Time, Valid: r.PublishedAt.Valid},
+		CreatedBy:   int4ToNullInt64(r.CreatedBy),
+		LayoutJSON:  sql.NullString{String: r.LayoutJson.String, Valid: r.LayoutJson.Valid},
+		SemanticSVG: sql.NullString{String: r.SemanticSvg.String, Valid: r.SemanticSvg.Valid},
+	}
+}
+
+func mapUpdateDraftForRestoreRow(r db.UpdateDraftForRestoreRow) LayoutRevision {
+	return LayoutRevision{
+		ID:          int(r.ID),
+		FloorID:     int(r.FloorID),
+		Status:      r.Status,
+		Version:     int(r.Version),
+		CreatedAt:   sql.NullTime{Time: r.CreatedAt.Time, Valid: r.CreatedAt.Valid},
+		UpdatedAt:   sql.NullTime{Time: r.UpdatedAt.Time, Valid: r.UpdatedAt.Valid},
+		PublishedAt: sql.NullTime{Time: r.PublishedAt.Time, Valid: r.PublishedAt.Valid},
+		CreatedBy:   int4ToNullInt64(r.CreatedBy),
+		LayoutJSON:  sql.NullString{String: r.LayoutJson.String, Valid: r.LayoutJson.Valid},
+		SemanticSVG: sql.NullString{String: r.SemanticSvg.String, Valid: r.SemanticSvg.Valid},
+	}
+}
+
+func mapGetLockForUpdateRow(l db.GetLockForUpdateRow) FloorLockOut {
+	return FloorLockOut{
+		FloorID:          int(l.FloorID),
+		LockedByID:       int(l.LockedBy),
+		LockedByUsername: l.Username,
+		LockedAt:         l.LockedAt.Time,
+		ExpiresAt:        l.ExpiresAt.Time,
+	}
+}
+
+func mapGetLockRow(l db.GetLockRow) FloorLockOut {
+	return FloorLockOut{
+		FloorID:          int(l.FloorID),
+		LockedByID:       int(l.LockedBy),
+		LockedByUsername: l.Username,
+		LockedAt:         l.LockedAt.Time,
+		ExpiresAt:        l.ExpiresAt.Time,
+	}
+}
+
+func mapInsertLockRow(l db.InsertLockRow) FloorLockOut {
+	return FloorLockOut{
+		FloorID:    int(l.FloorID),
+		LockedByID: int(l.LockedBy),
+		LockedAt:   l.LockedAt.Time,
+		ExpiresAt:  l.ExpiresAt.Time,
+	}
+}
+
+func mapUpdateLockRow(l db.UpdateLockRow) FloorLockOut {
+	return FloorLockOut{
+		FloorID:    int(l.FloorID),
+		LockedByID: int(l.LockedBy),
+		LockedAt:   l.LockedAt.Time,
+		ExpiresAt:  l.ExpiresAt.Time,
+	}
+}
+
+func mapListExistingDesksForSync(rows []db.ListExistingDesksForSyncRow) []existingDesk {
+	out := make([]existingDesk, len(rows))
+	for i, r := range rows {
+		out[i] = existingDesk{
+			ID:      int(r.ID),
+			Label:   r.Label,
+			QRToken: sql.NullString{String: r.QrToken, Valid: r.QrToken != ""},
+		}
+	}
+	return out
 }
 
 func (s *LayoutStore) EnsureSchema(ctx context.Context) error {
@@ -199,17 +372,17 @@ func (s *LayoutStore) EnsureSchema(ctx context.Context) error {
 }
 
 func (s *LayoutStore) GetDraftOrPublished(ctx context.Context, floorID int) (LayoutDocumentResponse, error) {
-	floor, err := getFloorRefs(ctx, s.pool, floorID, false)
+	floor, err := getFloorRefs(ctx, s.q, floorID, false)
 	if err != nil {
 		return LayoutDocumentResponse{}, err
 	}
 	if floor.DraftID.Valid {
-		if rev, err := getLayoutRevision(ctx, s.pool, int(floor.DraftID.Int64), false); err == nil {
+		if rev, err := getLayoutRevision(ctx, s.q, int(floor.DraftID.Int64), false); err == nil {
 			return responseFromRevision(rev), nil
 		}
 	}
 	if floor.PublishedID.Valid {
-		if rev, err := getLayoutRevision(ctx, s.pool, int(floor.PublishedID.Int64), false); err == nil {
+		if rev, err := getLayoutRevision(ctx, s.q, int(floor.PublishedID.Int64), false); err == nil {
 			return responseFromRevision(rev), nil
 		}
 	}
@@ -217,14 +390,14 @@ func (s *LayoutStore) GetDraftOrPublished(ctx context.Context, floorID int) (Lay
 }
 
 func (s *LayoutStore) GetPublished(ctx context.Context, floorID int) (LayoutDocumentResponse, error) {
-	floor, err := getFloorRefs(ctx, s.pool, floorID, false)
+	floor, err := getFloorRefs(ctx, s.q, floorID, false)
 	if err != nil {
 		return LayoutDocumentResponse{}, err
 	}
 	if !floor.PublishedID.Valid {
 		return LayoutDocumentResponse{}, ErrNoPublished
 	}
-	rev, err := getLayoutRevision(ctx, s.pool, int(floor.PublishedID.Int64), false)
+	rev, err := getLayoutRevision(ctx, s.q, int(floor.PublishedID.Int64), false)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LayoutDocumentResponse{}, ErrNoPublished
 	}
@@ -235,14 +408,14 @@ func (s *LayoutStore) GetPublished(ctx context.Context, floorID int) (LayoutDocu
 }
 
 func (s *LayoutStore) GetPublishedSemanticSVG(ctx context.Context, floorID int) (string, error) {
-	floor, err := getFloorRefs(ctx, s.pool, floorID, false)
+	floor, err := getFloorRefs(ctx, s.q, floorID, false)
 	if err != nil {
 		return "", err
 	}
 	if !floor.PublishedID.Valid {
 		return "", ErrNoPublished
 	}
-	rev, err := getLayoutRevision(ctx, s.pool, int(floor.PublishedID.Int64), false)
+	rev, err := getLayoutRevision(ctx, s.q, int(floor.PublishedID.Int64), false)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNoPublished
 	}
@@ -257,11 +430,13 @@ func (s *LayoutStore) GetPublishedSemanticSVG(ctx context.Context, floorID int) 
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalidLayout, err)
 	}
-	_, _ = s.pool.Exec(ctx, `
-		UPDATE floor_map_revisions
-		SET semantic_svg=$2, updated_at=now()
-		WHERE id=$1
-	`, rev.ID, svg)
+	err = s.q.UpdateSemanticSVG(ctx, db.UpdateSemanticSVGParams{
+		ID:          int32(rev.ID),
+		SemanticSvg: stringToText(svg),
+	})
+	if err != nil {
+		return "", err
+	}
 	return svg, nil
 }
 
@@ -272,14 +447,16 @@ func (s *LayoutStore) SaveDraft(ctx context.Context, floorID int, version int, l
 	}
 	defer rollbackQuietly(ctx, tx)
 
-	floor, err := getFloorRefs(ctx, tx, floorID, true)
+	txq := s.q.WithTx(tx)
+
+	floor, err := getFloorRefs(ctx, txq, floorID, true)
 	if err != nil {
 		return LayoutDocumentResponse{}, err
 	}
 
 	var rev LayoutRevision
 	if floor.DraftID.Valid {
-		rev, err = getLayoutRevision(ctx, tx, int(floor.DraftID.Int64), true)
+		rev, err = getLayoutRevision(ctx, txq, int(floor.DraftID.Int64), true)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return LayoutDocumentResponse{}, err
 		}
@@ -287,17 +464,15 @@ func (s *LayoutStore) SaveDraft(ctx context.Context, floorID int, version int, l
 			if rev.Version != version {
 				return LayoutDocumentResponse{}, fmt.Errorf("%w: expected %d, got %d", ErrConflict, rev.Version, version)
 			}
-			row := tx.QueryRow(ctx, `
-				UPDATE floor_map_revisions
-				SET layout_json=$2, semantic_svg=NULL, status='draft', updated_at=now()
-				WHERE id=$1
-				RETURNING id, floor_id, status, version, created_at, updated_at, published_at, created_by, layout_json, semantic_svg
-			`, rev.ID, layoutJSON)
-			rev, err = scanLayoutRevision(row)
+			row, err := txq.UpdateDraftLayout(ctx, db.UpdateDraftLayoutParams{
+				ID:         int32(rev.ID),
+				LayoutJson: stringToText(layoutJSON),
+			})
 			if err != nil {
 				return LayoutDocumentResponse{}, err
 			}
-			_ = logAuditTx(ctx, tx, floorID, userID, "saved", sql.NullInt64{Int64: int64(rev.ID), Valid: true}, "")
+			rev = mapUpdateDraftLayoutRow(row)
+			_ = logAuditTx(ctx, txq, floorID, userID, "saved", sql.NullInt64{Int64: int64(rev.ID), Valid: true}, "")
 			if err := tx.Commit(ctx); err != nil {
 				return LayoutDocumentResponse{}, err
 			}
@@ -307,7 +482,7 @@ func (s *LayoutStore) SaveDraft(ctx context.Context, floorID int, version int, l
 
 	draftVersion := 1
 	if floor.PublishedID.Valid {
-		published, err := getLayoutRevision(ctx, tx, int(floor.PublishedID.Int64), true)
+		published, err := getLayoutRevision(ctx, txq, int(floor.PublishedID.Int64), true)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return LayoutDocumentResponse{}, err
 		}
@@ -319,19 +494,25 @@ func (s *LayoutStore) SaveDraft(ctx context.Context, floorID int, version int, l
 		return LayoutDocumentResponse{}, fmt.Errorf("%w: expected %d (or %d), got %d", ErrConflict, draftVersion, maxInt(0, draftVersion-1), version)
 	}
 
-	row := tx.QueryRow(ctx, `
-		INSERT INTO floor_map_revisions (floor_id, status, desks_json, zones_json, layout_json, semantic_svg, version, created_by)
-		VALUES ($1, 'draft', '[]', '[]', $2, NULL, $3, $4)
-		RETURNING id, floor_id, status, version, created_at, updated_at, published_at, created_by, layout_json, semantic_svg
-	`, floorID, layoutJSON, draftVersion, nullableIntArg(userID))
-	rev, err = scanLayoutRevision(row)
+	row, err := txq.InsertDraftLayout(ctx, db.InsertDraftLayoutParams{
+		FloorID:    int32(floorID),
+		LayoutJson: stringToText(layoutJSON),
+		Version:    int32(draftVersion),
+		CreatedBy:  nullInt64ToInt4(userID),
+	})
 	if err != nil {
 		return LayoutDocumentResponse{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE floors SET draft_map_revision_id=$2 WHERE id=$1`, floorID, rev.ID); err != nil {
+	rev = mapInsertDraftLayoutRow(row)
+
+	if err := txq.SetFloorDraftRevision(ctx, db.SetFloorDraftRevisionParams{
+		ID:                 int32(floorID),
+		DraftMapRevisionID: pgtype.Int4{Int32: int32(rev.ID), Valid: true},
+	}); err != nil {
 		return LayoutDocumentResponse{}, err
 	}
-	_ = logAuditTx(ctx, tx, floorID, userID, "saved", sql.NullInt64{Int64: int64(rev.ID), Valid: true}, "")
+
+	_ = logAuditTx(ctx, txq, floorID, userID, "saved", sql.NullInt64{Int64: int64(rev.ID), Valid: true}, "")
 	if err := tx.Commit(ctx); err != nil {
 		return LayoutDocumentResponse{}, err
 	}
@@ -345,14 +526,16 @@ func (s *LayoutStore) Publish(ctx context.Context, floorID int, userID sql.NullI
 	}
 	defer rollbackQuietly(ctx, tx)
 
-	floor, err := getFloorRefs(ctx, tx, floorID, true)
+	txq := s.q.WithTx(tx)
+
+	floor, err := getFloorRefs(ctx, txq, floorID, true)
 	if err != nil {
 		return LayoutDocumentResponse{}, err
 	}
 	if !floor.DraftID.Valid {
 		return LayoutDocumentResponse{}, ErrNoDraft
 	}
-	draft, err := getLayoutRevision(ctx, tx, int(floor.DraftID.Int64), true)
+	draft, err := getLayoutRevision(ctx, txq, int(floor.DraftID.Int64), true)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LayoutDocumentResponse{}, errors.New("draft revision missing")
 	}
@@ -360,35 +543,35 @@ func (s *LayoutStore) Publish(ctx context.Context, floorID int, userID sql.NullI
 		return LayoutDocumentResponse{}, err
 	}
 	if floor.PublishedID.Valid {
-		if _, err := tx.Exec(ctx, `UPDATE floor_map_revisions SET status='archived', updated_at=now() WHERE id=$1`, int(floor.PublishedID.Int64)); err != nil {
+		if err := txq.ArchiveRevision(ctx, int32(floor.PublishedID.Int64)); err != nil {
 			return LayoutDocumentResponse{}, err
 		}
 	}
 
 	layout := layoutFromRevision(draft)
-	layout = injectFreshComponentsFromPool(ctx, s.pool, layout)
+	layout = injectFreshComponentsFromPool(ctx, s.q, layout)
 	svg, err := exporter.RenderSVG(layout)
 	if err != nil {
 		return LayoutDocumentResponse{}, fmt.Errorf("%w: %v", ErrInvalidLayout, err)
 	}
-	row := tx.QueryRow(ctx, `
-		UPDATE floor_map_revisions
-		SET semantic_svg=$2, status='published', published_at=now(), updated_at=now()
-		WHERE id=$1
-		RETURNING id, floor_id, status, version, created_at, updated_at, published_at, created_by, layout_json, semantic_svg
-	`, draft.ID, svg)
-	published, err := scanLayoutRevision(row)
+
+	row, err := txq.PublishRevision(ctx, db.PublishRevisionParams{
+		ID:          int32(draft.ID),
+		SemanticSvg: stringToText(svg),
+	})
 	if err != nil {
 		return LayoutDocumentResponse{}, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE floors
-		SET published_map_revision_id=$2, draft_map_revision_id=NULL
-		WHERE id=$1
-	`, floorID, published.ID); err != nil {
+	published := mapPublishRevisionRow(row)
+
+	if err := txq.SetFloorPublishedRevision(ctx, db.SetFloorPublishedRevisionParams{
+		ID:                     int32(floorID),
+		PublishedMapRevisionID: pgtype.Int4{Int32: int32(published.ID), Valid: true},
+	}); err != nil {
 		return LayoutDocumentResponse{}, err
 	}
-	_ = logAuditTx(ctx, tx, floorID, userID, "published", sql.NullInt64{Int64: int64(published.ID), Valid: true}, "")
+
+	_ = logAuditTx(ctx, txq, floorID, userID, "published", sql.NullInt64{Int64: int64(published.ID), Valid: true}, "")
 	if _, err := syncDesksTx(ctx, tx, floorID, published); err != nil {
 		return LayoutDocumentResponse{}, err
 	}
@@ -405,7 +588,9 @@ func (s *LayoutStore) SyncDesksForFloor(ctx context.Context, floorID int, source
 	}
 	defer rollbackQuietly(ctx, tx)
 
-	floor, err := getFloorRefs(ctx, tx, floorID, true)
+	txq := s.q.WithTx(tx)
+
+	floor, err := getFloorRefs(ctx, txq, floorID, true)
 	if err != nil {
 		return LayoutDeskSyncResult{}, err
 	}
@@ -421,7 +606,7 @@ func (s *LayoutStore) SyncDesksForFloor(ctx context.Context, floorID int, source
 	if !revisionID.Valid {
 		return LayoutDeskSyncResult{}, ErrNoRevision
 	}
-	rev, err := getLayoutRevision(ctx, tx, int(revisionID.Int64), true)
+	rev, err := getLayoutRevision(ctx, txq, int(revisionID.Int64), true)
 	if err != nil {
 		return LayoutDeskSyncResult{}, err
 	}
@@ -433,16 +618,16 @@ func (s *LayoutStore) SyncDesksForFloor(ctx context.Context, floorID int, source
 	deleted := 0
 	if cleanup {
 		for _, deskID := range stats.UnmatchedIDs {
-			tag, err := tx.Exec(ctx, `DELETE FROM desks WHERE id=$1`, deskID)
+			rowsAffected, err := txq.DeleteDesk(ctx, int32(deskID))
 			if err != nil {
 				return LayoutDeskSyncResult{}, err
 			}
-			deleted += int(tag.RowsAffected())
+			deleted += int(rowsAffected)
 		}
 	}
 
 	note := fmt.Sprintf("source:%s;cleanup:%d;deleted:%d", sourceStatus, boolInt(cleanup), deleted)
-	_ = logAuditTx(ctx, tx, floorID, userID, "desks_synced", sql.NullInt64{Int64: int64(rev.ID), Valid: true}, note)
+	_ = logAuditTx(ctx, txq, floorID, userID, "desks_synced", sql.NullInt64{Int64: int64(rev.ID), Valid: true}, note)
 	if err := tx.Commit(ctx); err != nil {
 		return LayoutDeskSyncResult{}, err
 	}
@@ -466,112 +651,86 @@ func (s *LayoutStore) DiscardDraft(ctx context.Context, floorID int, userID sql.
 	}
 	defer rollbackQuietly(ctx, tx)
 
-	floor, err := getFloorRefs(ctx, tx, floorID, true)
+	txq := s.q.WithTx(tx)
+
+	floor, err := getFloorRefs(ctx, txq, floorID, true)
 	if err != nil {
 		return err
 	}
 	if floor.DraftID.Valid {
-		if _, err := tx.Exec(ctx, `UPDATE floors SET draft_map_revision_id=NULL WHERE id=$1`, floorID); err != nil {
+		if err := txq.ClearFloorDraftRevision(ctx, int32(floorID)); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM floor_map_revisions WHERE id=$1`, int(floor.DraftID.Int64)); err != nil {
+		if err := txq.DeleteRevision(ctx, int32(floor.DraftID.Int64)); err != nil {
 			return err
 		}
 	}
-	_ = logAuditTx(ctx, tx, floorID, userID, "discarded", sql.NullInt64{}, "")
+	_ = logAuditTx(ctx, txq, floorID, userID, "discarded", sql.NullInt64{}, "")
 	return tx.Commit(ctx)
 }
 
 func (s *LayoutStore) GetHistory(ctx context.Context, floorID int, limit int) ([]AuditLogEntry, error) {
-	if _, err := getFloorRefs(ctx, s.pool, floorID, false); err != nil {
+	if _, err := getFloorRefs(ctx, s.q, floorID, false); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, floor_id, user_id, action, revision_id, created_at, note
-		FROM map_audit_log
-		WHERE floor_id=$1
-		ORDER BY id DESC
-		LIMIT $2
-	`, floorID, limit)
+	rows, err := s.q.GetAuditHistory(ctx, db.GetAuditHistoryParams{
+		FloorID: int32(floorID),
+		Limit:   int32(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	entries := []AuditLogEntry{}
-	for rows.Next() {
-		var entry AuditLogEntry
-		var userID sql.NullInt64
-		var revisionID sql.NullInt64
-		var createdAt sql.NullTime
-		var note sql.NullString
-		if err := rows.Scan(&entry.ID, &entry.FloorID, &userID, &entry.Action, &revisionID, &createdAt, &note); err != nil {
-			return nil, err
+	entries := make([]AuditLogEntry, len(rows))
+	for i, r := range rows {
+		entries[i] = AuditLogEntry{
+			ID:         int(r.ID),
+			FloorID:    int(r.FloorID),
+			UserID:     int4ToPtr(r.UserID),
+			Action:     r.Action,
+			RevisionID: int4ToPtr(r.RevisionID),
+			CreatedAt:  timestamptzToPtr(r.CreatedAt),
+			Note:       textToPtr(r.Note),
 		}
-		entry.UserID = nullIntPtr(userID)
-		entry.RevisionID = nullIntPtr(revisionID)
-		entry.CreatedAt = nullTimePtr(createdAt)
-		entry.Note = nullStringPtr(note)
-		entries = append(entries, entry)
 	}
-	return entries, rows.Err()
+	return entries, nil
 }
 
 func (s *LayoutStore) ListRevisions(ctx context.Context, floorID int, limit int) ([]LayoutRevisionSummary, error) {
-	floor, err := getFloorRefs(ctx, s.pool, floorID, false)
+	floor, err := getFloorRefs(ctx, s.q, floorID, false)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT r.id, r.floor_id, r.status, r.version, r.created_at, r.updated_at, r.published_at,
-		       r.created_by, u.username
-		FROM floor_map_revisions r
-		LEFT JOIN users u ON u.id = r.created_by
-		WHERE r.floor_id=$1
-		ORDER BY r.id DESC
-		LIMIT $2
-	`, floorID, limit)
+	rows, err := s.q.ListRevisions(ctx, db.ListRevisionsParams{
+		FloorID: int32(floorID),
+		Limit:   int32(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	revisions := []LayoutRevisionSummary{}
-	for rows.Next() {
-		var item LayoutRevisionSummary
-		var createdAt, updatedAt, publishedAt sql.NullTime
-		var createdBy sql.NullInt64
-		var createdByUsername sql.NullString
-		if err := rows.Scan(
-			&item.RevisionID,
-			&item.FloorID,
-			&item.Status,
-			&item.Version,
-			&createdAt,
-			&updatedAt,
-			&publishedAt,
-			&createdBy,
-			&createdByUsername,
-		); err != nil {
-			return nil, err
+	revisions := make([]LayoutRevisionSummary, len(rows))
+	for i, r := range rows {
+		revisions[i] = LayoutRevisionSummary{
+			RevisionID:         int(r.ID),
+			FloorID:            int(r.FloorID),
+			Status:             r.Status,
+			Version:            int(r.Version),
+			CreatedAt:          timestamptzToPtr(r.CreatedAt),
+			UpdatedAt:          timestamptzToPtr(r.UpdatedAt),
+			PublishedAt:        timestamptzToPtr(r.PublishedAt),
+			CreatedByID:        int4ToPtr(r.CreatedBy),
+			CreatedByUsername:  textToPtr(r.Username),
+			IsCurrentPublished: floor.PublishedID.Valid && int(floor.PublishedID.Int64) == int(r.ID),
+			IsCurrentDraft:     floor.DraftID.Valid && int(floor.DraftID.Int64) == int(r.ID),
 		}
-		item.CreatedAt = nullTimePtr(createdAt)
-		item.UpdatedAt = nullTimePtr(updatedAt)
-		item.PublishedAt = nullTimePtr(publishedAt)
-		item.CreatedByID = nullIntPtr(createdBy)
-		item.CreatedByUsername = nullStringPtr(createdByUsername)
-		item.IsCurrentPublished = floor.PublishedID.Valid && int(floor.PublishedID.Int64) == item.RevisionID
-		item.IsCurrentDraft = floor.DraftID.Valid && int(floor.DraftID.Int64) == item.RevisionID
-		revisions = append(revisions, item)
 	}
-	return revisions, rows.Err()
+	return revisions, nil
 }
 
 func (s *LayoutStore) GetRevision(ctx context.Context, floorID int, revisionID int) (LayoutDocumentResponse, error) {
-	if _, err := getFloorRefs(ctx, s.pool, floorID, false); err != nil {
+	if _, err := getFloorRefs(ctx, s.q, floorID, false); err != nil {
 		return LayoutDocumentResponse{}, err
 	}
-	rev, err := getLayoutRevision(ctx, s.pool, revisionID, false)
+	rev, err := getLayoutRevision(ctx, s.q, revisionID, false)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && rev.FloorID != floorID) {
 		return LayoutDocumentResponse{}, fmt.Errorf("revision %d not found for floor %d", revisionID, floorID)
 	}
@@ -588,23 +747,15 @@ func (s *LayoutStore) RestoreRevisionToDraft(ctx context.Context, floorID int, r
 	}
 	defer rollbackQuietly(ctx, tx)
 
-	floor, err := getFloorRefs(ctx, tx, floorID, true)
+	txq := s.q.WithTx(tx)
+
+	floor, err := getFloorRefs(ctx, txq, floorID, true)
 	if err != nil {
 		return LayoutDocumentResponse{}, err
 	}
 
-	var sourceFloorID int
-	var planSVG sql.NullString
-	var desksJSON sql.NullString
-	var zonesJSON sql.NullString
-	var layoutJSON sql.NullString
-	err = tx.QueryRow(ctx, `
-		SELECT floor_id, plan_svg, desks_json, zones_json, layout_json
-		FROM floor_map_revisions
-		WHERE id=$1
-		FOR UPDATE
-	`, revisionID).Scan(&sourceFloorID, &planSVG, &desksJSON, &zonesJSON, &layoutJSON)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && sourceFloorID != floorID) {
+	sourceData, err := txq.GetRevisionDataForRestore(ctx, int32(revisionID))
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && int(sourceData.FloorID) != floorID) {
 		return LayoutDocumentResponse{}, fmt.Errorf("revision %d not found for floor %d", revisionID, floorID)
 	}
 	if err != nil {
@@ -617,46 +768,48 @@ func (s *LayoutStore) RestoreRevisionToDraft(ctx context.Context, floorID int, r
 	} else {
 		draftVersion := 1
 		if floor.PublishedID.Valid {
-			if published, err := getLayoutRevision(ctx, tx, int(floor.PublishedID.Int64), true); err == nil {
+			if published, err := getLayoutRevision(ctx, txq, int(floor.PublishedID.Int64), true); err == nil {
 				draftVersion = published.Version + 1
 			} else if !errors.Is(err, pgx.ErrNoRows) {
 				return LayoutDocumentResponse{}, err
 			}
 		}
-		row := tx.QueryRow(ctx, `
-			INSERT INTO floor_map_revisions (floor_id, status, plan_svg, desks_json, zones_json, layout_json, semantic_svg, version, created_by)
-			VALUES ($1, 'draft', $2, COALESCE($3, '[]'), COALESCE($4, '[]'), $5, NULL, $6, $7)
-			RETURNING id, floor_id, status, version, created_at, updated_at, published_at, created_by, layout_json, semantic_svg
-		`, floorID, nullableStringArg(planSVG), nullableStringArg(desksJSON), nullableStringArg(zonesJSON), nullableStringArg(layoutJSON), draftVersion, nullableIntArg(userID))
-		draft, err := scanLayoutRevision(row)
+		row, err := txq.InsertDraftForRestore(ctx, db.InsertDraftForRestoreParams{
+			FloorID:    int32(floorID),
+			PlanSvg:    sourceData.PlanSvg,
+			Column3:    sourceData.DesksJson,
+			Column4:    sourceData.ZonesJson,
+			LayoutJson: sourceData.LayoutJson,
+			Version:    int32(draftVersion),
+			CreatedBy:  nullInt64ToInt4(userID),
+		})
 		if err != nil {
 			return LayoutDocumentResponse{}, err
 		}
-		draftID = draft.ID
-		if _, err := tx.Exec(ctx, `UPDATE floors SET draft_map_revision_id=$2 WHERE id=$1`, floorID, draftID); err != nil {
+		draftID = int(row.ID)
+		if err := txq.SetFloorDraftRevision(ctx, db.SetFloorDraftRevisionParams{
+			ID:                 int32(floorID),
+			DraftMapRevisionID: pgtype.Int4{Int32: int32(draftID), Valid: true},
+		}); err != nil {
 			return LayoutDocumentResponse{}, err
 		}
 	}
 
-	row := tx.QueryRow(ctx, `
-		UPDATE floor_map_revisions
-		SET status='draft',
-		    plan_svg=$2,
-		    desks_json=COALESCE($3, '[]'),
-		    zones_json=COALESCE($4, '[]'),
-		    layout_json=$5,
-		    semantic_svg=NULL,
-		    updated_at=now()
-		WHERE id=$1
-		RETURNING id, floor_id, status, version, created_at, updated_at, published_at, created_by, layout_json, semantic_svg
-	`, draftID, nullableStringArg(planSVG), nullableStringArg(desksJSON), nullableStringArg(zonesJSON), nullableStringArg(layoutJSON))
-	draft, err := scanLayoutRevision(row)
+	row, err := txq.UpdateDraftForRestore(ctx, db.UpdateDraftForRestoreParams{
+		ID:         int32(draftID),
+		PlanSvg:    sourceData.PlanSvg,
+		DesksJson:  sourceData.DesksJson,
+		ZonesJson:  sourceData.ZonesJson,
+		LayoutJson: sourceData.LayoutJson,
+	})
 	if err != nil {
 		return LayoutDocumentResponse{}, err
 	}
+	draft := mapUpdateDraftForRestoreRow(row)
+
 	_ = logAuditTx(
 		ctx,
-		tx,
+		txq,
 		floorID,
 		userID,
 		"rolled_back",
@@ -674,11 +827,11 @@ func (s *LayoutStore) UserIDForUsername(ctx context.Context, username string) sq
 	if username == "" {
 		return sql.NullInt64{}
 	}
-	var id int64
-	if err := s.pool.QueryRow(ctx, `SELECT id FROM users WHERE username=$1`, username).Scan(&id); err != nil {
+	u, err := s.q.GetUserByUsername(ctx, username)
+	if err != nil {
 		return sql.NullInt64{}
 	}
-	return sql.NullInt64{Int64: id, Valid: true}
+	return sql.NullInt64{Int64: int64(u.ID), Valid: true}
 }
 
 func (s *LayoutStore) RequireUserID(ctx context.Context, username string) (int, error) {
@@ -686,14 +839,14 @@ func (s *LayoutStore) RequireUserID(ctx context.Context, username string) (int, 
 	if username == "" {
 		return 0, ErrUserNotFound
 	}
-	var id int
-	if err := s.pool.QueryRow(ctx, `SELECT id FROM users WHERE username=$1`, username).Scan(&id); err != nil {
+	u, err := s.q.GetUserByUsername(ctx, username)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, ErrUserNotFound
 		}
 		return 0, err
 	}
-	return id, nil
+	return int(u.ID), nil
 }
 
 func (s *LayoutStore) AcquireLock(ctx context.Context, floorID int, userID int) (FloorLockOut, error) {
@@ -703,62 +856,51 @@ func (s *LayoutStore) AcquireLock(ctx context.Context, floorID int, userID int) 
 	}
 	defer rollbackQuietly(ctx, tx)
 
-	if _, err := getFloorRefs(ctx, tx, floorID, true); err != nil {
+	txq := s.q.WithTx(tx)
+
+	if _, err := getFloorRefs(ctx, txq, floorID, true); err != nil {
 		return FloorLockOut{}, err
 	}
 
 	now := time.Now().UTC()
 	expiresAt := now.Add(FloorLockTTL)
 	var existing FloorLockOut
-	err = tx.QueryRow(ctx, `
-		SELECT l.floor_id, l.locked_by, COALESCE(u.username, ''), l.locked_at, l.expires_at
-		FROM floor_locks l
-		LEFT JOIN users u ON u.id = l.locked_by
-		WHERE l.floor_id=$1
-		FOR UPDATE OF l
-	`, floorID).Scan(
-		&existing.FloorID,
-		&existing.LockedByID,
-		&existing.LockedByUsername,
-		&existing.LockedAt,
-		&existing.ExpiresAt,
-	)
+	row, err := txq.GetLockForUpdate(ctx, int32(floorID))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return FloorLockOut{}, err
 	}
-	if err == nil && existing.LockedByID != userID && existing.ExpiresAt.After(now) {
-		return FloorLockOut{}, LockHeldError{Username: lockUsername(existing.LockedByUsername, existing.LockedByID)}
+	if err == nil {
+		existing = mapGetLockForUpdateRow(row)
+		if existing.LockedByID != userID && existing.ExpiresAt.After(now) {
+			return FloorLockOut{}, LockHeldError{Username: lockUsername(existing.LockedByUsername, existing.LockedByID)}
+		}
 	}
 
 	var lock FloorLockOut
 	if errors.Is(err, pgx.ErrNoRows) {
-		err = tx.QueryRow(ctx, `
-			INSERT INTO floor_locks (floor_id, locked_by, locked_at, expires_at)
-			VALUES ($1, $2, $3, $4)
-			RETURNING floor_id, locked_by, locked_at, expires_at
-		`, floorID, userID, now, expiresAt).Scan(
-			&lock.FloorID,
-			&lock.LockedByID,
-			&lock.LockedAt,
-			&lock.ExpiresAt,
-		)
+		res, err := txq.InsertLock(ctx, db.InsertLockParams{
+			FloorID:   int32(floorID),
+			LockedBy:  int32(userID),
+			LockedAt:  timeToTimestamptz(now),
+			ExpiresAt: timeToTimestamptz(expiresAt),
+		})
+		if err != nil {
+			return FloorLockOut{}, err
+		}
+		lock = mapInsertLockRow(res)
 	} else {
-		err = tx.QueryRow(ctx, `
-			UPDATE floor_locks
-			SET locked_by=$2, locked_at=$3, expires_at=$4
-			WHERE floor_id=$1
-			RETURNING floor_id, locked_by, locked_at, expires_at
-		`, floorID, userID, now, expiresAt).Scan(
-			&lock.FloorID,
-			&lock.LockedByID,
-			&lock.LockedAt,
-			&lock.ExpiresAt,
-		)
+		res, err := txq.UpdateLock(ctx, db.UpdateLockParams{
+			FloorID:   int32(floorID),
+			LockedBy:  int32(userID),
+			LockedAt:  timeToTimestamptz(now),
+			ExpiresAt: timeToTimestamptz(expiresAt),
+		})
+		if err != nil {
+			return FloorLockOut{}, err
+		}
+		lock = mapUpdateLockRow(res)
 	}
-	if err != nil {
-		return FloorLockOut{}, err
-	}
-	lock.LockedByUsername = lockUsername(usernameForUserID(ctx, tx, userID), userID)
+	lock.LockedByUsername = lockUsername(usernameForUserID(ctx, txq, userID), userID)
 	if err := tx.Commit(ctx); err != nil {
 		return FloorLockOut{}, err
 	}
@@ -766,36 +908,27 @@ func (s *LayoutStore) AcquireLock(ctx context.Context, floorID int, userID int) 
 }
 
 func (s *LayoutStore) ReleaseLock(ctx context.Context, floorID int, userID int) error {
-	_, err := s.pool.Exec(ctx, `
-		DELETE FROM floor_locks
-		WHERE floor_id=$1 AND locked_by=$2
-	`, floorID, userID)
-	return err
+	return s.q.ReleaseLock(ctx, db.ReleaseLockParams{
+		FloorID:  int32(floorID),
+		LockedBy: int32(userID),
+	})
 }
 
 func (s *LayoutStore) GetLock(ctx context.Context, floorID int) (FloorLockOut, bool, error) {
-	var lock FloorLockOut
-	err := s.pool.QueryRow(ctx, `
-		SELECT l.floor_id, l.locked_by, COALESCE(u.username, ''), l.locked_at, l.expires_at
-		FROM floor_locks l
-		LEFT JOIN users u ON u.id = l.locked_by
-		WHERE l.floor_id=$1
-	`, floorID).Scan(
-		&lock.FloorID,
-		&lock.LockedByID,
-		&lock.LockedByUsername,
-		&lock.LockedAt,
-		&lock.ExpiresAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return FloorLockOut{}, false, nil
-	}
+	l, err := s.q.GetLock(ctx, int32(floorID))
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return FloorLockOut{}, false, nil
+		}
 		return FloorLockOut{}, false, err
 	}
+	lock := mapGetLockRow(l)
 	now := time.Now().UTC()
 	if !lock.ExpiresAt.After(now) {
-		if _, err := s.pool.Exec(ctx, `DELETE FROM floor_locks WHERE floor_id=$1 AND expires_at <= $2`, floorID, now); err != nil {
+		if err := s.q.DeleteExpiredLockForFloor(ctx, db.DeleteExpiredLockForFloorParams{
+			FloorID:   int32(floorID),
+			ExpiresAt: timeToTimestamptz(now),
+		}); err != nil {
 			return FloorLockOut{}, false, err
 		}
 		return FloorLockOut{}, false, nil
@@ -806,26 +939,19 @@ func (s *LayoutStore) GetLock(ctx context.Context, floorID int) (FloorLockOut, b
 
 func (s *LayoutStore) CleanupArchivedRevisions(ctx context.Context, olderThanDays int) (int, error) {
 	cutoff := time.Now().AddDate(0, 0, -olderThanDays)
-	tag, err := s.pool.Exec(ctx,
-		`DELETE FROM floor_map_revisions
-		 WHERE status = 'archived' AND updated_at < $1
-		 AND id NOT IN (
-		   SELECT COALESCE(published_map_revision_id, 0) FROM floors
-		   UNION
-		   SELECT COALESCE(draft_map_revision_id, 0) FROM floors
-		 )`, cutoff)
+	rowsAffected, err := s.q.CleanupArchivedRevisions(ctx, timeToTimestamptz(cutoff))
 	if err != nil {
 		return 0, err
 	}
-	return int(tag.RowsAffected()), nil
+	return int(rowsAffected), nil
 }
 
-func usernameForUserID(ctx context.Context, q rowQuerier, userID int) string {
-	var username string
-	if err := q.QueryRow(ctx, `SELECT username FROM users WHERE id=$1`, userID).Scan(&username); err != nil {
+func usernameForUserID(ctx context.Context, q db.Querier, userID int) string {
+	u, err := q.GetUserByID(ctx, int32(userID))
+	if err != nil {
 		return ""
 	}
-	return username
+	return u.Username
 }
 
 func lockUsername(username string, userID int) string {
@@ -835,48 +961,40 @@ func lockUsername(username string, userID int) string {
 	return strconv.Itoa(userID)
 }
 
-func getFloorRefs(ctx context.Context, q rowQuerier, floorID int, lock bool) (FloorRefs, error) {
-	stmt := `SELECT id, published_map_revision_id, draft_map_revision_id FROM floors WHERE id=$1`
+func getFloorRefs(ctx context.Context, q db.Querier, floorID int, lock bool) (FloorRefs, error) {
 	if lock {
-		stmt += ` FOR UPDATE`
+		row, err := q.GetFloorRefsForUpdate(ctx, int32(floorID))
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return FloorRefs{}, ErrFloorNotFound
+			}
+			return FloorRefs{}, err
+		}
+		return mapFloorRefsForUpdate(row), nil
 	}
-	var floor FloorRefs
-	if err := q.QueryRow(ctx, stmt, floorID).Scan(&floor.ID, &floor.PublishedID, &floor.DraftID); err != nil {
+	row, err := q.GetFloorRefs(ctx, int32(floorID))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return FloorRefs{}, ErrFloorNotFound
 		}
 		return FloorRefs{}, err
 	}
-	return floor, nil
+	return mapFloorRefs(row), nil
 }
 
-func getLayoutRevision(ctx context.Context, q rowQuerier, revisionID int, lock bool) (LayoutRevision, error) {
-	stmt := `
-		SELECT id, floor_id, status, version, created_at, updated_at, published_at, created_by, layout_json, semantic_svg
-		FROM floor_map_revisions
-		WHERE id=$1
-	`
+func getLayoutRevision(ctx context.Context, q db.Querier, revisionID int, lock bool) (LayoutRevision, error) {
 	if lock {
-		stmt += ` FOR UPDATE`
+		row, err := q.GetLayoutRevisionForUpdate(ctx, int32(revisionID))
+		if err != nil {
+			return LayoutRevision{}, err
+		}
+		return mapGetLayoutRevisionForUpdateRow(row), nil
 	}
-	return scanLayoutRevision(q.QueryRow(ctx, stmt, revisionID))
-}
-
-func scanLayoutRevision(row pgx.Row) (LayoutRevision, error) {
-	var rev LayoutRevision
-	err := row.Scan(
-		&rev.ID,
-		&rev.FloorID,
-		&rev.Status,
-		&rev.Version,
-		&rev.CreatedAt,
-		&rev.UpdatedAt,
-		&rev.PublishedAt,
-		&rev.CreatedBy,
-		&rev.LayoutJSON,
-		&rev.SemanticSVG,
-	)
-	return rev, err
+	row, err := q.GetLayoutRevision(ctx, int32(revisionID))
+	if err != nil {
+		return LayoutRevision{}, err
+	}
+	return mapGetLayoutRevisionRow(row), nil
 }
 
 func responseFromRevision(rev LayoutRevision) LayoutDocumentResponse {
@@ -903,40 +1021,31 @@ func layoutFromRevision(rev LayoutRevision) exporter.LayoutDocument {
 	return doc
 }
 
-func injectFreshComponentsFromPool(ctx context.Context, pool *pgxpool.Pool, layout exporter.LayoutDocument) exporter.LayoutDocument {
-	rows, err := pool.Query(ctx, `SELECT id, label, asset_type, view_box, default_w, default_h, svg_markup FROM global_components`)
+func injectFreshComponentsFromPool(ctx context.Context, q db.Querier, layout exporter.LayoutDocument) exporter.LayoutDocument {
+	comps, err := q.ListComponents(ctx)
 	if err != nil {
 		return layout
 	}
-	defer rows.Close()
 	fresh := map[string]exporter.LayoutComponent{}
-	for rows.Next() {
-		var (
-			id, label, assetType, svgMarkup string
-			viewBoxStr                        string
-			defaultW, defaultH                float64
-		)
-		if err := rows.Scan(&id, &label, &assetType, &viewBoxStr, &defaultW, &defaultH, &svgMarkup); err != nil {
-			continue
-		}
+	for _, c := range comps {
 		var vb []float64
-		parts := strings.Fields(viewBoxStr)
+		parts := strings.Fields(c.ViewBox)
 		for _, p := range parts {
 			if v, err := strconv.ParseFloat(p, 64); err == nil {
 				vb = append(vb, v)
 			}
 		}
 		if len(vb) < 4 {
-			vb = []float64{0, 0, defaultW, defaultH}
+			vb = []float64{0, 0, c.DefaultW, c.DefaultH}
 		}
-		fresh[id] = exporter.LayoutComponent{
-			ID:        id,
-			Label:     label,
-			AssetType: assetType,
+		fresh[c.ID] = exporter.LayoutComponent{
+			ID:        c.ID,
+			Label:     c.Label,
+			AssetType: c.AssetType,
 			ViewBox:   vb,
-			DefaultW:  defaultW,
-			DefaultH:  defaultH,
-			SVGMarkup: svgMarkup,
+			DefaultW:  c.DefaultW,
+			DefaultH:  c.DefaultH,
+			SVGMarkup: c.SvgMarkup,
 		}
 	}
 	if len(fresh) == 0 {
@@ -964,8 +1073,6 @@ func injectFreshComponentsFromPool(ctx context.Context, pool *pgxpool.Pool, layo
 	layout.Components = merged
 	return layout
 }
-
-
 
 func normalizeLayoutDocument(doc *exporter.LayoutDocument) {
 	if doc.Version == 0 {
@@ -1004,12 +1111,14 @@ func defaultLayoutDocument() exporter.LayoutDocument {
 }
 
 func syncDesksTx(ctx context.Context, tx pgx.Tx, floorID int, rev LayoutRevision) (deskSyncStats, error) {
+	txq := db.New(tx)
 	layout := layoutFromRevision(rev)
 	vbx, vby, vbw, vbh := effectiveLayoutViewBox(layout)
-	existing, err := listExistingDesks(ctx, tx, floorID)
+	existingRows, err := txq.ListExistingDesksForSync(ctx, int32(floorID))
 	if err != nil {
 		return deskSyncStats{}, err
 	}
+	existing := mapListExistingDesksForSync(existingRows)
 
 	byExact := map[string][]*existingDesk{}
 	byNorm := map[string][]*existingDesk{}
@@ -1062,14 +1171,26 @@ func syncDesksTx(ctx context.Context, tx pgx.Tx, floorID int, rev LayoutRevision
 		positionY := clamp((layoutDesk.Y-vby)/vbh, 0, 1)
 		width := clamp(layoutDesk.W/vbw, 0.01, 1)
 		height := clamp(layoutDesk.H/vbh, 0.01, 1)
-		assignedTo := nullableString(strings.TrimSpace(layoutDesk.AssignedTo))
 		qrToken := uuidV4()
 
+		assignedToText := pgtype.Text{}
+		if val := strings.TrimSpace(layoutDesk.AssignedTo); val != "" {
+			assignedToText = pgtype.Text{String: val, Valid: true}
+		}
+
 		if desk == nil {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO desks (floor_id, label, type, space_type, assigned_to, position_x, position_y, w, h, qr_token)
-				VALUES ($1, $2, $3, 'desk', $4, $5, $6, $7, $8, $9)
-			`, floorID, label, deskType, assignedTo, positionX, positionY, width, height, qrToken); err != nil {
+			err = txq.InsertDeskForSync(ctx, db.InsertDeskForSyncParams{
+				FloorID:    int32(floorID),
+				Label:      label,
+				Type:       deskType,
+				AssignedTo: assignedToText,
+				PositionX:  pgtype.Float8{Float64: positionX, Valid: true},
+				PositionY:  pgtype.Float8{Float64: positionY, Valid: true},
+				W:          width,
+				H:          height,
+				QrToken:    qrToken,
+			})
+			if err != nil {
 				return stats, err
 			}
 			stats.Created++
@@ -1081,19 +1202,18 @@ func syncDesksTx(ctx context.Context, tx pgx.Tx, floorID int, rev LayoutRevision
 		if strings.TrimSpace(desk.Label) != label {
 			stats.Renamed++
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE desks
-			SET label=$2,
-				type=$3,
-				space_type='desk',
-				assigned_to=$4,
-				position_x=$5,
-				position_y=$6,
-				w=$7,
-				h=$8,
-				qr_token=COALESCE(NULLIF(qr_token, ''), $9)
-			WHERE id=$1
-		`, desk.ID, label, deskType, assignedTo, positionX, positionY, width, height, qrToken); err != nil {
+		err = txq.UpdateDeskForSync(ctx, db.UpdateDeskForSyncParams{
+			ID:         int32(desk.ID),
+			Label:      label,
+			Type:       deskType,
+			AssignedTo: assignedToText,
+			PositionX:  pgtype.Float8{Float64: positionX, Valid: true},
+			PositionY:  pgtype.Float8{Float64: positionY, Valid: true},
+			W:          width,
+			H:          height,
+			QrToken:    qrToken,
+		})
+		if err != nil {
 			return stats, err
 		}
 	}
@@ -1105,24 +1225,6 @@ func syncDesksTx(ctx context.Context, tx pgx.Tx, floorID int, rev LayoutRevision
 	}
 	stats.UnmatchedExisting = len(stats.UnmatchedIDs)
 	return stats, nil
-}
-
-func listExistingDesks(ctx context.Context, tx pgx.Tx, floorID int) ([]existingDesk, error) {
-	rows, err := tx.Query(ctx, `SELECT id, label, qr_token FROM desks WHERE floor_id=$1`, floorID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := []existingDesk{}
-	for rows.Next() {
-		var desk existingDesk
-		if err := rows.Scan(&desk.ID, &desk.Label, &desk.QRToken); err != nil {
-			return nil, err
-		}
-		out = append(out, desk)
-	}
-	return out, rows.Err()
 }
 
 func effectiveLayoutViewBox(layout exporter.LayoutDocument) (float64, float64, float64, float64) {
@@ -1157,12 +1259,14 @@ func effectiveLayoutViewBox(layout exporter.LayoutDocument) (float64, float64, f
 	return vx, vy, vw, vh
 }
 
-func logAuditTx(ctx context.Context, tx pgx.Tx, floorID int, userID sql.NullInt64, action string, revisionID sql.NullInt64, note string) error {
-	_, err := tx.Exec(ctx, `
-		INSERT INTO map_audit_log (floor_id, user_id, action, revision_id, note)
-		VALUES ($1, $2, $3, $4, $5)
-	`, floorID, nullableIntArg(userID), action, nullableIntArg(revisionID), nullableString(note))
-	return err
+func logAuditTx(ctx context.Context, q db.Querier, floorID int, userID sql.NullInt64, action string, revisionID sql.NullInt64, note string) error {
+	return q.LogAudit(ctx, db.LogAuditParams{
+		FloorID:    int32(floorID),
+		UserID:     nullInt64ToInt4(userID),
+		Action:     action,
+		RevisionID: nullInt64ToInt4(revisionID),
+		Note:       stringToText(note),
+	})
 }
 
 func rollbackQuietly(ctx context.Context, tx pgx.Tx) {
@@ -1196,20 +1300,6 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
-}
-
-func nullableStringArg(value sql.NullString) any {
-	if !value.Valid {
-		return nil
-	}
-	return value.String
-}
-
-func nullableIntArg(value sql.NullInt64) any {
-	if !value.Valid {
-		return nil
-	}
-	return value.Int64
 }
 
 func normalizedLabel(value string) string {
@@ -1260,25 +1350,20 @@ func boolInt(value bool) int {
 
 func (s *LayoutStore) GetAndCleanupExpiredLocks(ctx context.Context) ([]int, error) {
 	now := time.Now().UTC()
-	rows, err := s.pool.Query(ctx, `SELECT floor_id FROM floor_locks WHERE expires_at <= $1`, now)
+	expired, err := s.q.GetExpiredLocks(ctx, timeToTimestamptz(now))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var floorIDs []int
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		floorIDs = append(floorIDs, id)
-	}
-	if len(floorIDs) > 0 {
-		_, err = s.pool.Exec(ctx, `DELETE FROM floor_locks WHERE expires_at <= $1`, now)
+	if len(expired) > 0 {
+		err = s.q.DeleteExpiredLocks(ctx, timeToTimestamptz(now))
 		if err != nil {
 			return nil, err
+		}
+		floorIDs = make([]int, len(expired))
+		for i, id := range expired {
+			floorIDs[i] = int(id)
 		}
 	}
 	return floorIDs, nil
 }
-

@@ -5,15 +5,21 @@ import (
 	"fmt"
 	"time"
 
+	"deskbook/backend-go/internal/store/db"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type TemplateStore struct {
 	pool *pgxpool.Pool
+	q    *db.Queries
 }
 
 func NewTemplateStore(pool *pgxpool.Pool) *TemplateStore {
-	return &TemplateStore{pool: pool}
+	return &TemplateStore{
+		pool: pool,
+		q:    db.New(pool),
+	}
 }
 
 type LayoutTemplate struct {
@@ -27,44 +33,49 @@ type LayoutTemplate struct {
 }
 
 func (s *TemplateStore) List(ctx context.Context) ([]LayoutTemplate, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, COALESCE(description,''), category, layout_json, created_at, updated_at
-		 FROM layout_templates ORDER BY updated_at DESC`)
+	rows, err := s.q.ListTemplates(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []LayoutTemplate
-	for rows.Next() {
-		var t LayoutTemplate
-		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.Category, &t.LayoutJSON, &t.CreatedAt, &t.UpdatedAt); err != nil {
-			return nil, err
+	out := make([]LayoutTemplate, len(rows))
+	for i, r := range rows {
+		out[i] = LayoutTemplate{
+			ID:          int(r.ID),
+			Name:        r.Name,
+			Description: r.Description,
+			Category:    r.Category,
+			LayoutJSON:  r.LayoutJson,
+			CreatedAt:   timestamptzToPtr(r.CreatedAt),
+			UpdatedAt:   timestamptzToPtr(r.UpdatedAt),
 		}
-		out = append(out, t)
-	}
-	if out == nil {
-		out = []LayoutTemplate{}
 	}
 	return out, nil
 }
 
 func (s *TemplateStore) Create(ctx context.Context, t LayoutTemplate) (LayoutTemplate, error) {
-	err := s.pool.QueryRow(ctx,
-		`INSERT INTO layout_templates (name, description, category, layout_json)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, created_at, updated_at`,
-		t.Name, t.Description, t.Category, t.LayoutJSON,
-	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
-	return t, err
+	r, err := s.q.CreateTemplate(ctx, db.CreateTemplateParams{
+		Name:        t.Name,
+		Description: pgtype.Text{String: t.Description, Valid: true},
+		Category:    t.Category,
+		LayoutJson:  t.LayoutJSON,
+	})
+	if err != nil {
+		return t, err
+	}
+	t.ID = int(r.ID)
+	t.CreatedAt = timestamptzToPtr(r.CreatedAt)
+	t.UpdatedAt = timestamptzToPtr(r.UpdatedAt)
+	return t, nil
 }
 
 func (s *TemplateStore) Delete(ctx context.Context, id int) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM layout_templates WHERE id=$1`, id)
+	rowsAffected, err := s.q.DeleteTemplate(ctx, int32(id))
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return fmt.Errorf("template not found")
 	}
 	return nil
 }
+

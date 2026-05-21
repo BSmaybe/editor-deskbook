@@ -2,18 +2,24 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"deskbook/backend-go/internal/store/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type FloorStore struct {
 	pool *pgxpool.Pool
+	q    *db.Queries
 }
 
 func NewFloorStore(pool *pgxpool.Pool) *FloorStore {
-	return &FloorStore{pool: pool}
+	return &FloorStore{
+		pool: pool,
+		q:    db.New(pool),
+	}
 }
 
 type FloorRow struct {
@@ -24,77 +30,104 @@ type FloorRow struct {
 }
 
 func (s *FloorStore) List(ctx context.Context, officeID *int) ([]FloorRow, error) {
-	var query string
-	var args []any
+	var floors []db.ListFloorsRow
+	var err error
 	if officeID != nil {
-		query = `SELECT id, office_id, name, plan_url FROM floors WHERE office_id = $1 ORDER BY id`
-		args = []any{*officeID}
+		var list []db.ListFloorsByOfficeRow
+		list, err = s.q.ListFloorsByOffice(ctx, int32(*officeID))
+		if err == nil {
+			floors = make([]db.ListFloorsRow, len(list))
+			for i, f := range list {
+				floors[i] = db.ListFloorsRow{
+					ID:       f.ID,
+					OfficeID: f.OfficeID,
+					Name:     f.Name,
+					PlanUrl:  f.PlanUrl,
+				}
+			}
+		}
 	} else {
-		query = `SELECT id, office_id, name, plan_url FROM floors ORDER BY id`
+		floors, err = s.q.ListFloors(ctx)
 	}
-	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var result []FloorRow
-	for rows.Next() {
-		var f FloorRow
-		if err := rows.Scan(&f.ID, &f.OfficeID, &f.Name, &f.PlanURL); err != nil {
-			return nil, err
+	result := make([]FloorRow, len(floors))
+	for i, f := range floors {
+		result[i] = FloorRow{
+			ID:       int(f.ID),
+			OfficeID: int(f.OfficeID),
+			Name:     f.Name,
+			PlanURL:  textToPtr(f.PlanUrl),
 		}
-		result = append(result, f)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *FloorStore) Create(ctx context.Context, officeID int, name string) (*FloorRow, error) {
-	var exists bool
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM offices WHERE id = $1)`, officeID).Scan(&exists)
+	exists, err := s.q.CheckOfficeExists(ctx, int32(officeID))
 	if err != nil {
 		return nil, err
 	}
 	if !exists {
 		return nil, fmt.Errorf("office not found")
 	}
-	row := s.pool.QueryRow(ctx,
-		`INSERT INTO floors (office_id, name) VALUES ($1, $2) RETURNING id, office_id, name, plan_url`,
-		officeID, name)
-	var f FloorRow
-	err = row.Scan(&f.ID, &f.OfficeID, &f.Name, &f.PlanURL)
-	return &f, err
+	f, err := s.q.CreateFloor(ctx, db.CreateFloorParams{
+		OfficeID: int32(officeID),
+		Name:     name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &FloorRow{
+		ID:       int(f.ID),
+		OfficeID: int(f.OfficeID),
+		Name:     f.Name,
+		PlanURL:  textToPtr(f.PlanUrl),
+	}, nil
 }
 
 func (s *FloorStore) Update(ctx context.Context, id int, name *string) (*FloorRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`UPDATE floors SET name = COALESCE($2, name) WHERE id = $1
-		 RETURNING id, office_id, name, plan_url`, id, name)
-	var f FloorRow
-	err := row.Scan(&f.ID, &f.OfficeID, &f.Name, &f.PlanURL)
-	if err == pgx.ErrNoRows {
-		return nil, ErrNotFound
+	f, err := s.q.UpdateFloor(ctx, db.UpdateFloorParams{
+		ID:   int32(id),
+		Name: ptrToText(name),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
 	}
-	return &f, err
+	return &FloorRow{
+		ID:       int(f.ID),
+		OfficeID: int(f.OfficeID),
+		Name:     f.Name,
+		PlanURL:  textToPtr(f.PlanUrl),
+	}, nil
 }
 
 func (s *FloorStore) SetPlanURL(ctx context.Context, id int, planURL string) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE floors SET plan_url = $2 WHERE id = $1`, id, planURL)
+	rowsAffected, err := s.q.SetFloorPlanURL(ctx, db.SetFloorPlanURLParams{
+		ID:      int32(id),
+		PlanUrl: stringToText(planURL),
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (s *FloorStore) Delete(ctx context.Context, id int) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM floors WHERE id = $1`, id)
+	rowsAffected, err := s.q.DeleteFloor(ctx, int32(id))
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
+

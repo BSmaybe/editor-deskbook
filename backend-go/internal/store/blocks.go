@@ -6,15 +6,21 @@ import (
 	"fmt"
 	"time"
 
+	"deskbook/backend-go/internal/store/db"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type BlockStore struct {
 	pool *pgxpool.Pool
+	q    *db.Queries
 }
 
 func NewBlockStore(pool *pgxpool.Pool) *BlockStore {
-	return &BlockStore{pool: pool}
+	return &BlockStore{
+		pool: pool,
+		q:    db.New(pool),
+	}
 }
 
 type LayoutBlock struct {
@@ -29,26 +35,22 @@ type LayoutBlock struct {
 }
 
 func (s *BlockStore) List(ctx context.Context) ([]LayoutBlock, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, category, COALESCE(description,''), objects_json, COALESCE(preview_svg,''), created_at, updated_at
-		 FROM layout_blocks ORDER BY updated_at DESC`)
+	rows, err := s.q.ListBlocks(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []LayoutBlock
-	for rows.Next() {
-		var b LayoutBlock
-		var objsStr, previewSVG string
-		if err := rows.Scan(&b.ID, &b.Name, &b.Category, &b.Description, &objsStr, &previewSVG, &b.CreatedAt, &b.UpdatedAt); err != nil {
-			return nil, err
+	out := make([]LayoutBlock, len(rows))
+	for i, r := range rows {
+		out[i] = LayoutBlock{
+			ID:          int(r.ID),
+			Name:        r.Name,
+			Category:    r.Category,
+			Description: r.Description,
+			Objects:     json.RawMessage(r.ObjectsJson),
+			PreviewSVG:  r.PreviewSvg,
+			CreatedAt:   timestamptzToPtr(r.CreatedAt),
+			UpdatedAt:   timestamptzToPtr(r.UpdatedAt),
 		}
-		b.Objects = json.RawMessage(objsStr)
-		b.PreviewSVG = previewSVG
-		out = append(out, b)
-	}
-	if out == nil {
-		out = []LayoutBlock{}
 	}
 	return out, nil
 }
@@ -58,22 +60,30 @@ func (s *BlockStore) Create(ctx context.Context, b LayoutBlock) (LayoutBlock, er
 	if err != nil {
 		return b, err
 	}
-	err = s.pool.QueryRow(ctx,
-		`INSERT INTO layout_blocks (name, category, description, objects_json, preview_svg)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, created_at, updated_at`,
-		b.Name, b.Category, b.Description, string(objsJSON), b.PreviewSVG,
-	).Scan(&b.ID, &b.CreatedAt, &b.UpdatedAt)
-	return b, err
+	r, err := s.q.CreateBlock(ctx, db.CreateBlockParams{
+		Name:        b.Name,
+		Category:    b.Category,
+		Description: pgtype.Text{String: b.Description, Valid: true},
+		ObjectsJson: string(objsJSON),
+		PreviewSvg:  pgtype.Text{String: b.PreviewSVG, Valid: true},
+	})
+	if err != nil {
+		return b, err
+	}
+	b.ID = int(r.ID)
+	b.CreatedAt = timestamptzToPtr(r.CreatedAt)
+	b.UpdatedAt = timestamptzToPtr(r.UpdatedAt)
+	return b, nil
 }
 
 func (s *BlockStore) Delete(ctx context.Context, id int) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM layout_blocks WHERE id=$1`, id)
+	rowsAffected, err := s.q.DeleteBlock(ctx, int32(id))
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return fmt.Errorf("block not found")
 	}
 	return nil
 }
+

@@ -7,12 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"deskbook/backend-go/internal/store/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type ComponentStore struct {
 	pool *pgxpool.Pool
+	q    *db.Queries
 }
 
 type ComponentOut struct {
@@ -28,7 +29,24 @@ type ComponentOut struct {
 }
 
 func NewComponentStore(pool *pgxpool.Pool) *ComponentStore {
-	return &ComponentStore{pool: pool}
+	return &ComponentStore{
+		pool: pool,
+		q:    db.New(pool),
+	}
+}
+
+func mapDBComponentToComponentOut(c db.GlobalComponent) ComponentOut {
+	return ComponentOut{
+		ID:        c.ID,
+		Label:     c.Label,
+		AssetType: c.AssetType,
+		ViewBox:   ParseViewBoxString(c.ViewBox),
+		DefaultW:  c.DefaultW,
+		DefaultH:  c.DefaultH,
+		SVGMarkup: c.SvgMarkup,
+		CreatedAt: c.CreatedAt.Time,
+		UpdatedAt: c.UpdatedAt.Time,
+	}
 }
 
 func (s *ComponentStore) EnsureSchema(ctx context.Context) error {
@@ -49,80 +67,63 @@ func (s *ComponentStore) EnsureSchema(ctx context.Context) error {
 }
 
 func (s *ComponentStore) List(ctx context.Context) ([]ComponentOut, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, label, asset_type, view_box, default_w, default_h, svg_markup, created_at, updated_at
-		FROM global_components
-		ORDER BY label
-	`)
+	comps, err := s.q.ListComponents(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var out []ComponentOut
-	for rows.Next() {
-		comp, err := s.scanComponent(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, comp)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	out := make([]ComponentOut, len(comps))
+	for i, c := range comps {
+		out[i] = mapDBComponentToComponentOut(c)
 	}
 	return out, nil
 }
 
 func (s *ComponentStore) Create(ctx context.Context, id, label, assetType string, viewBox []float64, defaultW, defaultH float64, svgMarkup string) (*ComponentOut, error) {
 	viewBoxStr := ViewBoxString(viewBox)
-	row := s.pool.QueryRow(ctx, `
-		INSERT INTO global_components (id, label, asset_type, view_box, default_w, default_h, svg_markup)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, label, asset_type, view_box, default_w, default_h, svg_markup, created_at, updated_at
-	`, id, label, assetType, viewBoxStr, defaultW, defaultH, svgMarkup)
-	comp, err := s.scanComponent(row)
+	c, err := s.q.CreateComponent(ctx, db.CreateComponentParams{
+		ID:        id,
+		Label:     label,
+		AssetType: assetType,
+		ViewBox:   viewBoxStr,
+		DefaultW:  defaultW,
+		DefaultH:  defaultH,
+		SvgMarkup: svgMarkup,
+	})
 	if err != nil {
 		return nil, err
 	}
+	comp := mapDBComponentToComponentOut(c)
 	return &comp, nil
 }
 
 func (s *ComponentStore) Update(ctx context.Context, id, label, assetType string, viewBox []float64, defaultW, defaultH float64, svgMarkup string) (*ComponentOut, error) {
 	viewBoxStr := ViewBoxString(viewBox)
-	row := s.pool.QueryRow(ctx, `
-		INSERT INTO global_components (id, label, asset_type, view_box, default_w, default_h, svg_markup)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (id) DO UPDATE
-		  SET label=$2, asset_type=$3, view_box=$4, default_w=$5, default_h=$6, svg_markup=$7, updated_at=now()
-		RETURNING id, label, asset_type, view_box, default_w, default_h, svg_markup, created_at, updated_at
-	`, id, label, assetType, viewBoxStr, defaultW, defaultH, svgMarkup)
-	comp, err := s.scanComponent(row)
+	c, err := s.q.UpsertComponent(ctx, db.UpsertComponentParams{
+		ID:        id,
+		Label:     label,
+		AssetType: assetType,
+		ViewBox:   viewBoxStr,
+		DefaultW:  defaultW,
+		DefaultH:  defaultH,
+		SvgMarkup: svgMarkup,
+	})
 	if err != nil {
 		return nil, err
 	}
+	comp := mapDBComponentToComponentOut(c)
 	return &comp, nil
 }
 
 func (s *ComponentStore) Delete(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM global_components WHERE id=$1`, id)
+	rowsAffected, err := s.q.DeleteComponent(ctx, id)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return errors.New("component not found")
 	}
 	return nil
-}
-
-func (s *ComponentStore) scanComponent(row pgx.Row) (ComponentOut, error) {
-	var out ComponentOut
-	var viewBox string
-	err := row.Scan(&out.ID, &out.Label, &out.AssetType, &viewBox, &out.DefaultW, &out.DefaultH, &out.SVGMarkup, &out.CreatedAt, &out.UpdatedAt)
-	if err != nil {
-		return out, err
-	}
-	out.ViewBox = ParseViewBoxString(viewBox)
-	return out, nil
 }
 
 func ParseViewBoxString(value string) []float64 {
@@ -150,3 +151,4 @@ func ViewBoxString(value []float64) string {
 	}
 	return strings.Join(parts, " ")
 }
+

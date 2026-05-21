@@ -2,17 +2,23 @@ package store
 
 import (
 	"context"
+	"errors"
 
+	"deskbook/backend-go/internal/store/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type OfficeStore struct {
 	pool *pgxpool.Pool
+	q    *db.Queries
 }
 
 func NewOfficeStore(pool *pgxpool.Pool) *OfficeStore {
-	return &OfficeStore{pool: pool}
+	return &OfficeStore{
+		pool: pool,
+		q:    db.New(pool),
+	}
 }
 
 type OfficeRow struct {
@@ -21,51 +27,62 @@ type OfficeRow struct {
 	Address *string `json:"address"`
 }
 
+func mapDBOfficeToOfficeRow(o db.Office) OfficeRow {
+	return OfficeRow{
+		ID:      int(o.ID),
+		Name:    o.Name,
+		Address: textToPtr(o.Address),
+	}
+}
+
 func (s *OfficeStore) List(ctx context.Context) ([]OfficeRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, name, address FROM offices ORDER BY id`)
+	offices, err := s.q.ListOffices(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var result []OfficeRow
-	for rows.Next() {
-		var o OfficeRow
-		if err := rows.Scan(&o.ID, &o.Name, &o.Address); err != nil {
-			return nil, err
-		}
-		result = append(result, o)
+	result := make([]OfficeRow, len(offices))
+	for i, o := range offices {
+		result[i] = mapDBOfficeToOfficeRow(o)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *OfficeStore) Create(ctx context.Context, name string, address *string) (*OfficeRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`INSERT INTO offices (name, address) VALUES ($1, $2) RETURNING id, name, address`,
-		name, address)
-	var o OfficeRow
-	err := row.Scan(&o.ID, &o.Name, &o.Address)
-	return &o, err
+	o, err := s.q.CreateOffice(ctx, db.CreateOfficeParams{
+		Name:    name,
+		Address: ptrToText(address),
+	})
+	if err != nil {
+		return nil, err
+	}
+	row := mapDBOfficeToOfficeRow(o)
+	return &row, nil
 }
 
 func (s *OfficeStore) Update(ctx context.Context, id int, name *string, address *string) (*OfficeRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`UPDATE offices SET name = COALESCE($2, name), address = COALESCE($3, address) WHERE id = $1
-		 RETURNING id, name, address`, id, name, address)
-	var o OfficeRow
-	err := row.Scan(&o.ID, &o.Name, &o.Address)
-	if err == pgx.ErrNoRows {
-		return nil, ErrNotFound
+	o, err := s.q.UpdateOffice(ctx, db.UpdateOfficeParams{
+		ID:      int32(id),
+		Name:    ptrToText(name),
+		Address: ptrToText(address),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
 	}
-	return &o, err
+	row := mapDBOfficeToOfficeRow(o)
+	return &row, nil
 }
 
 func (s *OfficeStore) Delete(ctx context.Context, id int) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM offices WHERE id = $1`, id)
+	rowsAffected, err := s.q.DeleteOffice(ctx, int32(id))
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
+

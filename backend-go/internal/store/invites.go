@@ -4,18 +4,25 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"time"
 
+	"deskbook/backend-go/internal/store/db"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type InviteStore struct {
 	pool *pgxpool.Pool
+	q    *db.Queries
 }
 
 func NewInviteStore(pool *pgxpool.Pool) *InviteStore {
-	return &InviteStore{pool: pool}
+	return &InviteStore{
+		pool: pool,
+		q:    db.New(pool),
+	}
 }
 
 type InviteRow struct {
@@ -37,68 +44,74 @@ func GenerateToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+func mapDBInviteToInviteRow(i db.Invite) InviteRow {
+	return InviteRow{
+		ID:        int(i.ID),
+		Token:     i.Token,
+		Email:     i.Email,
+		Role:      i.Role,
+		CreatedBy: int4ToPtr(i.CreatedBy),
+		CreatedAt: timestamptzToPtr(i.CreatedAt),
+		ExpiresAt: timestamptzToPtr(i.ExpiresAt),
+		UsedAt:    timestamptzToPtr(i.UsedAt),
+	}
+}
+
 func (s *InviteStore) Create(ctx context.Context, email, role string, createdBy int, expiresAt *time.Time) (*InviteRow, error) {
 	token, err := GenerateToken()
 	if err != nil {
 		return nil, err
 	}
-	row := s.pool.QueryRow(ctx,
-		`INSERT INTO invites (token, email, role, created_by, expires_at)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, token, email, role, created_by, created_at, expires_at, used_at`,
-		token, email, role, createdBy, expiresAt)
-	var inv InviteRow
-	err = row.Scan(&inv.ID, &inv.Token, &inv.Email, &inv.Role, &inv.CreatedBy,
-		&inv.CreatedAt, &inv.ExpiresAt, &inv.UsedAt)
-	return &inv, err
-}
-
-func (s *InviteStore) List(ctx context.Context) ([]InviteRow, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, token, email, role, created_by, created_at, expires_at, used_at
-		 FROM invites ORDER BY created_at DESC`)
+	dbInv, err := s.q.CreateInvite(ctx, db.CreateInviteParams{
+		Token:     token,
+		Email:     email,
+		Role:      role,
+		CreatedBy: pgtype.Int4{Int32: int32(createdBy), Valid: true},
+		ExpiresAt: ptrToTimestamptz(expiresAt),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var result []InviteRow
-	for rows.Next() {
-		var inv InviteRow
-		if err := rows.Scan(&inv.ID, &inv.Token, &inv.Email, &inv.Role, &inv.CreatedBy,
-			&inv.CreatedAt, &inv.ExpiresAt, &inv.UsedAt); err != nil {
-			return nil, err
-		}
-		result = append(result, inv)
+	row := mapDBInviteToInviteRow(dbInv)
+	return &row, nil
+}
+
+func (s *InviteStore) List(ctx context.Context) ([]InviteRow, error) {
+	dbInvs, err := s.q.ListInvites(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return result, rows.Err()
+	result := make([]InviteRow, len(dbInvs))
+	for i, inv := range dbInvs {
+		result[i] = mapDBInviteToInviteRow(inv)
+	}
+	return result, nil
 }
 
 func (s *InviteStore) GetByToken(ctx context.Context, token string) (*InviteRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT id, token, email, role, created_by, created_at, expires_at, used_at
-		 FROM invites WHERE token = $1`, token)
-	var inv InviteRow
-	err := row.Scan(&inv.ID, &inv.Token, &inv.Email, &inv.Role, &inv.CreatedBy,
-		&inv.CreatedAt, &inv.ExpiresAt, &inv.UsedAt)
-	if err == pgx.ErrNoRows {
-		return nil, nil
+	dbInv, err := s.q.GetInviteByToken(ctx, token)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return &inv, err
+	row := mapDBInviteToInviteRow(dbInv)
+	return &row, nil
 }
 
 func (s *InviteStore) MarkUsed(ctx context.Context, id int) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE invites SET used_at = NOW() WHERE id = $1`, id)
-	return err
+	return s.q.MarkInviteUsed(ctx, int32(id))
 }
 
 func (s *InviteStore) Delete(ctx context.Context, id int) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM invites WHERE id = $1`, id)
+	rowsAffected, err := s.q.DeleteInvite(ctx, int32(id))
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
+

@@ -2,18 +2,24 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"deskbook/backend-go/internal/store/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type UserStore struct {
 	pool *pgxpool.Pool
+	q    *db.Queries
 }
 
 func NewUserStore(pool *pgxpool.Pool) *UserStore {
-	return &UserStore{pool: pool}
+	return &UserStore{
+		pool: pool,
+		q:    db.New(pool),
+	}
 }
 
 type UserRow struct {
@@ -52,103 +58,108 @@ func (u *UserRow) ToPublic() UserPublic {
 	}
 }
 
-func (s *UserStore) GetByUsername(ctx context.Context, username string) (*UserRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT id, username, email, hashed_password, role, created_at,
-		        full_name, department, position, phone, user_status, is_active
-		 FROM users WHERE username = $1`, username)
-	var u UserRow
-	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.HashedPassword, &u.Role, &u.CreatedAt,
-		&u.FullName, &u.Department, &u.Position, &u.Phone, &u.UserStatus, &u.IsActive)
-	if err == pgx.ErrNoRows {
-		return nil, nil
+func mapDBUserToUserRow(u db.User) UserRow {
+	return UserRow{
+		ID:             int(u.ID),
+		Username:       u.Username,
+		Email:          u.Email,
+		HashedPassword: u.HashedPassword,
+		Role:           u.Role,
+		CreatedAt:      dateToPtr(u.CreatedAt),
+		FullName:       textToPtr(u.FullName),
+		Department:     textToPtr(u.Department),
+		Position:       textToPtr(u.Position),
+		Phone:          textToPtr(u.Phone),
+		UserStatus:     u.UserStatus,
+		IsActive:       u.IsActive,
 	}
-	return &u, err
+}
+
+func (s *UserStore) GetByUsername(ctx context.Context, username string) (*UserRow, error) {
+	u, err := s.q.GetUserByUsername(ctx, username)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	row := mapDBUserToUserRow(u)
+	return &row, nil
 }
 
 func (s *UserStore) GetByEmail(ctx context.Context, email string) (*UserRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT id FROM users WHERE email = $1`, email)
-	var id int
-	err := row.Scan(&id)
-	if err == pgx.ErrNoRows {
-		return nil, nil
-	}
+	id, err := s.q.GetUserEmailID(ctx, email)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	return &UserRow{ID: id}, nil
+	return &UserRow{ID: int(id)}, nil
 }
 
 func (s *UserStore) GetByID(ctx context.Context, id int) (*UserRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT id, username, email, hashed_password, role, created_at,
-		        full_name, department, position, phone, user_status, is_active
-		 FROM users WHERE id = $1`, id)
-	var u UserRow
-	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.HashedPassword, &u.Role, &u.CreatedAt,
-		&u.FullName, &u.Department, &u.Position, &u.Phone, &u.UserStatus, &u.IsActive)
-	if err == pgx.ErrNoRows {
-		return nil, nil
+	u, err := s.q.GetUserByID(ctx, int32(id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return &u, err
+	row := mapDBUserToUserRow(u)
+	return &row, nil
 }
 
 func (s *UserStore) Create(ctx context.Context, username, email, hashedPw, role string) (*UserRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`INSERT INTO users (username, email, hashed_password, role)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, username, email, hashed_password, role, created_at,
-		           full_name, department, position, phone, user_status, is_active`,
-		username, email, hashedPw, role)
-	var u UserRow
-	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.HashedPassword, &u.Role, &u.CreatedAt,
-		&u.FullName, &u.Department, &u.Position, &u.Phone, &u.UserStatus, &u.IsActive)
-	return &u, err
-}
-
-func (s *UserStore) List(ctx context.Context) ([]UserRow, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, email, hashed_password, role, created_at,
-		        full_name, department, position, phone, user_status, is_active
-		 FROM users ORDER BY id`)
+	u, err := s.q.CreateUser(ctx, db.CreateUserParams{
+		Username:       username,
+		Email:          email,
+		HashedPassword: hashedPw,
+		Role:           role,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var result []UserRow
-	for rows.Next() {
-		var u UserRow
-		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.HashedPassword, &u.Role, &u.CreatedAt,
-			&u.FullName, &u.Department, &u.Position, &u.Phone, &u.UserStatus, &u.IsActive); err != nil {
-			return nil, err
-		}
-		result = append(result, u)
+	row := mapDBUserToUserRow(u)
+	return &row, nil
+}
+
+func (s *UserStore) List(ctx context.Context) ([]UserRow, error) {
+	users, err := s.q.ListUsers(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return result, rows.Err()
+	result := make([]UserRow, len(users))
+	for i, u := range users {
+		result[i] = mapDBUserToUserRow(u)
+	}
+	return result, nil
 }
 
 func (s *UserStore) UpdateRole(ctx context.Context, username, role string, isActive bool) (*UserRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`UPDATE users SET role = $2, is_active = $3 WHERE username = $1
-		 RETURNING id, username, email, hashed_password, role, created_at,
-		           full_name, department, position, phone, user_status, is_active`, username, role, isActive)
-	var u UserRow
-	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.HashedPassword, &u.Role, &u.CreatedAt,
-		&u.FullName, &u.Department, &u.Position, &u.Phone, &u.UserStatus, &u.IsActive)
-	if err == pgx.ErrNoRows {
-		return nil, nil
+	u, err := s.q.UpdateUserRole(ctx, db.UpdateUserRoleParams{
+		Username: username,
+		Role:     role,
+		IsActive: isActive,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return &u, err
+	row := mapDBUserToUserRow(u)
+	return &row, nil
 }
 
 func (s *UserStore) Delete(ctx context.Context, username string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM users WHERE username = $1`, username)
+	rowsAffected, err := s.q.DeleteUser(ctx, username)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
+

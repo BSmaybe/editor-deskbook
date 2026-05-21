@@ -2,17 +2,23 @@ package store
 
 import (
 	"context"
+	"errors"
 
+	"deskbook/backend-go/internal/store/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type DeskStore struct {
 	pool *pgxpool.Pool
+	q    *db.Queries
 }
 
 func NewDeskStore(pool *pgxpool.Pool) *DeskStore {
-	return &DeskStore{pool: pool}
+	return &DeskStore{
+		pool: pool,
+		q:    db.New(pool),
+	}
 }
 
 type DeskRow struct {
@@ -29,78 +35,83 @@ type DeskRow struct {
 	QRToken    string   `json:"qr_token"`
 }
 
-func (s *DeskStore) List(ctx context.Context, floorID *int) ([]DeskRow, error) {
-	var query string
-	var args []any
-	if floorID != nil {
-		query = `SELECT id, floor_id, label, type, space_type, assigned_to, position_x, position_y, w, h, qr_token
-		         FROM desks WHERE floor_id = $1 ORDER BY id`
-		args = []any{*floorID}
-	} else {
-		query = `SELECT id, floor_id, label, type, space_type, assigned_to, position_x, position_y, w, h, qr_token
-		         FROM desks ORDER BY id`
+func mapDBDeskToDeskRow(d db.Desk) DeskRow {
+	return DeskRow{
+		ID:         int(d.ID),
+		FloorID:    int(d.FloorID),
+		Label:      d.Label,
+		Type:       d.Type,
+		SpaceType:  d.SpaceType,
+		AssignedTo: textToPtr(d.AssignedTo),
+		PositionX:  float8ToPtr(d.PositionX),
+		PositionY:  float8ToPtr(d.PositionY),
+		W:          d.W,
+		H:          d.H,
+		QRToken:    d.QrToken,
 	}
-	rows, err := s.pool.Query(ctx, query, args...)
+}
+
+func (s *DeskStore) List(ctx context.Context, floorID *int) ([]DeskRow, error) {
+	var desks []db.Desk
+	var err error
+	if floorID != nil {
+		desks, err = s.q.ListDesksByFloor(ctx, int32(*floorID))
+	} else {
+		desks, err = s.q.ListDesks(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var result []DeskRow
-	for rows.Next() {
-		var d DeskRow
-		if err := rows.Scan(&d.ID, &d.FloorID, &d.Label, &d.Type, &d.SpaceType,
-			&d.AssignedTo, &d.PositionX, &d.PositionY, &d.W, &d.H, &d.QRToken); err != nil {
-			return nil, err
-		}
-		result = append(result, d)
+	result := make([]DeskRow, len(desks))
+	for i, d := range desks {
+		result[i] = mapDBDeskToDeskRow(d)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *DeskStore) GetByID(ctx context.Context, id int) (*DeskRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT id, floor_id, label, type, space_type, assigned_to, position_x, position_y, w, h, qr_token
-		 FROM desks WHERE id = $1`, id)
-	var d DeskRow
-	err := row.Scan(&d.ID, &d.FloorID, &d.Label, &d.Type, &d.SpaceType,
-		&d.AssignedTo, &d.PositionX, &d.PositionY, &d.W, &d.H, &d.QRToken)
-	if err == pgx.ErrNoRows {
-		return nil, nil
+	d, err := s.q.GetDeskByID(ctx, int32(id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return &d, err
+	row := mapDBDeskToDeskRow(d)
+	return &row, nil
 }
 
 func (s *DeskStore) Update(ctx context.Context, id int, label *string, deskType *string, spaceType *string,
 	assignedTo *string, posX *float64, posY *float64, w *float64, h *float64) (*DeskRow, error) {
-	row := s.pool.QueryRow(ctx,
-		`UPDATE desks SET
-			label = COALESCE($2, label),
-			type = COALESCE($3, type),
-			space_type = COALESCE($4, space_type),
-			assigned_to = COALESCE($5, assigned_to),
-			position_x = COALESCE($6, position_x),
-			position_y = COALESCE($7, position_y),
-			w = COALESCE($8, w),
-			h = COALESCE($9, h)
-		 WHERE id = $1
-		 RETURNING id, floor_id, label, type, space_type, assigned_to, position_x, position_y, w, h, qr_token`,
-		id, label, deskType, spaceType, assignedTo, posX, posY, w, h)
-	var d DeskRow
-	err := row.Scan(&d.ID, &d.FloorID, &d.Label, &d.Type, &d.SpaceType,
-		&d.AssignedTo, &d.PositionX, &d.PositionY, &d.W, &d.H, &d.QRToken)
-	if err == pgx.ErrNoRows {
-		return nil, ErrNotFound
+	d, err := s.q.UpdateDesk(ctx, db.UpdateDeskParams{
+		ID:         int32(id),
+		Label:      ptrToText(label),
+		Type:       ptrToText(deskType),
+		SpaceType:  ptrToText(spaceType),
+		AssignedTo: ptrToText(assignedTo),
+		PositionX:  ptrToFloat8(posX),
+		PositionY:  ptrToFloat8(posY),
+		W:          ptrToFloat8(w),
+		H:          ptrToFloat8(h),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
 	}
-	return &d, err
+	row := mapDBDeskToDeskRow(d)
+	return &row, nil
 }
 
 func (s *DeskStore) Delete(ctx context.Context, id int) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM desks WHERE id = $1`, id)
+	rowsAffected, err := s.q.DeleteDesk(ctx, int32(id))
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
+
