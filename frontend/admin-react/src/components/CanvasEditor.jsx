@@ -44,7 +44,6 @@ import {
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
   AlignVerticalSpaceBetween,
-  Activity,
   Copy,
   Eye,
   EyeOff,
@@ -71,7 +70,6 @@ import {
   Save,
   Search,
   Square,
-  Target,
   Trash2,
   Ungroup,
   Undo2,
@@ -3009,14 +3007,6 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           <MapIcon size={14} /><KBD>Z</KBD>
         </button>
         <button
-          className={`ce-tool-btn ${isInfraDrawMode ? 'active' : ''}`}
-          title={activeInfraLayerId ? 'Коммуникации (I) — рисовать линию слоя' : 'Выберите слой коммуникаций'}
-          disabled={!activeInfraLayerId}
-          onClick={() => { cancelDraw(); setTool(isInfraDrawMode ? 'select' : 'draw_infra'); }}
-        >
-          <Activity size={14} /><KBD>I</KBD>
-        </button>
-        <button
           className={`ce-tool-btn ${tool === 'draw_partition' ? 'active' : ''}`}
           title={structureLocked ? 'Слой конструкций заблокирован' : 'Перегородка'}
           disabled={structureLocked}
@@ -4356,17 +4346,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                     <RotateCw size={12} />
                   </button>
                 </div>
-                {/* Строка 3: вписать / калибровать / зафиксировать */}
+                {/* Строка 3: вписать / зафиксировать */}
                 <div className="ce-bg-popover-row">
                   <button className="ce-tool-btn mini" title="Вписать в холст" onClick={fitBackgroundToCanvas}>
                     <Maximize2 size={12} />
-                  </button>
-                  <button
-                    className={`ce-tool-btn mini ${tool === 'bg_calibrate' ? 'active' : ''}`}
-                    title="Калибровать масштаб по двум точкам"
-                    onClick={startBackgroundCalibration}
-                  >
-                    <Target size={12} />
                   </button>
                   <button
                     className={`ce-tool-btn mini ${bgLocked ? 'active' : ''}`}
@@ -4811,14 +4794,6 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             />
           </span>
         </>
-        {grid.gridVisible && (
-          <>
-            <span className="ce-statusbar-sep ce-statusbar-secondary">·</span>
-            <span className="ce-statusbar-item ce-statusbar-secondary" title="Метрическая сетка: малый шаг / большой шаг">
-              сетка: {formatMeters(metricGridStep, pixelsPerMeter)} м / {formatMeters(metricGridStep * METRIC_GRID_DIVISIONS, pixelsPerMeter)} м
-            </span>
-          </>
-        )}
         <>
           <span className="ce-statusbar-sep ce-statusbar-secondary">·</span>
           <span className="ce-statusbar-item ce-statusbar-secondary" style={{ opacity: 0.6 }}>
