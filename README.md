@@ -115,8 +115,17 @@ bash scripts/restore.sh <file>  # восстановление из бэкапа
 
 Cleanup старых ревизий: `POST /admin/cleanup/revisions?older_than_days=90`.
 
+## Онбординг
+
+Для новых разработчиков — интерактивный скрипт, который проведёт через весь API за 5–10 минут:
+
+```bash
+bash scripts/onboarding.sh
+```
+
 ## Документация
 
+- [Онбординг](docs/TECH_LEAD_HANDOFF_QA.md) — архитектура, FAQ, workflow, troubleshooting
 - [API](docs/API.md) — полная документация по всем эндпоинтам с примерами
-- [Tech Lead QA](docs/TECH_LEAD_HANDOFF_QA.md) — вопросы и ответы для онбординга
 - [Go API](backend-go/README.md) — список эндпоинтов и контракт экспорта SVG/HTML
+- [Swagger UI](http://localhost:8000/docs) — интерактивная документация (на русском)

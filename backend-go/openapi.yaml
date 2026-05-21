@@ -2,48 +2,84 @@ openapi: "3.0.3"
 info:
   title: DeskBook API
   description: |
-    Редактор карт офисных этажей. Здания, этажи, библиотека компонентов, layout editor, SVG/HTML экспорт.
+    REST API редактора карт офисных этажей **DeskBook**.
 
-    **Роли:** `admin` и `user` имеют одинаковый доступ к редактору. Admin-only: invites, user management, cleanup.
+    Система позволяет создавать здания и этажи, загружать планы помещений,
+    размещать мебель и рабочие места на интерактивном холсте, а затем
+    публиковать готовые карты в формате SVG и HTML.
 
-    **Layout workflow:** draft → publish → archived. Каждое сохранение создаёт ревизию в PostgreSQL. Версионирование с оптимистичной блокировкой.
+    ## Авторизация
+
+    Все защищённые эндпоинты требуют JWT-токен в заголовке `Authorization: Bearer <token>`.
+    Токен выдаётся через `POST /auth/login`. Срок жизни по умолчанию — 30 дней.
+
+    ## Роли
+
+    | Роль    | Доступ |
+    |---------|--------|
+    | `admin` | Полный: управление пользователями, приглашениями, очистка ревизий |
+    | `user`  | Редактор: здания, этажи, компоненты, layout, экспорт |
+
+    ## Регистрация
+
+    Регистрация только по приглашению. Администратор создаёт invite для конкретного email,
+    пользователь регистрируется по ссылке с токеном. Invite одноразовый.
+
+    ## Workflow карт (Layout)
+
+    ```
+    draft → publish → archived
+    ```
+
+    Каждое сохранение создаёт ревизию в PostgreSQL. Версионирование с оптимистичной
+    блокировкой (поле `version`). При публикации workplace-объекты автоматически
+    синхронизируются в таблицу `desks`.
+
+    ## Блокировка этажа
+
+    Перед редактированием пользователь захватывает блокировку этажа (TTL 10 минут).
+    Пока блокировка активна, другие пользователи не могут редактировать этот этаж.
   version: "1.0.0"
+  contact:
+    name: Команда DeskBook
 
 servers:
   - url: http://localhost:8000
-    description: Go API (direct)
+    description: Go API напрямую
   - url: http://localhost:5175/api
-    description: Через nginx proxy
+    description: Через nginx proxy (dev)
 
 tags:
-  - name: Health
-  - name: Auth
-    description: Логин и регистрация по invite
-  - name: Invites
-    description: "Управление приглашениями (admin-only)"
-  - name: Users
-  - name: Offices
-    description: Здания
-  - name: Floors
-    description: Этажи
-  - name: Components
-    description: Библиотека компонентов
-  - name: Blocks
-    description: Блоки (группы объектов)
-  - name: Templates
-    description: Шаблоны layout
-  - name: Layout
-    description: "Редактирование карт: draft/publish/revisions"
-  - name: Floor Lock
-    description: Блокировка этажа от одновременного редактирования
-  - name: Desks
-    description: Рабочие места (sync из layout)
-  - name: Render
-    description: SVG/HTML экспорт
-  - name: Embed
-    description: Публичный виджет
-  - name: Admin
-    description: Обслуживание (admin-only)
+  - name: Здоровье
+    description: Проверка доступности сервиса
+  - name: Авторизация
+    description: Логин и регистрация по приглашению
+  - name: Приглашения
+    description: Управление invite-ссылками (только admin)
+  - name: Пользователи
+    description: Просмотр и управление учётными записями
+  - name: Здания
+    description: CRUD для зданий (офисов)
+  - name: Этажи
+    description: CRUD для этажей, загрузка плана помещения
+  - name: Компоненты
+    description: Глобальная библиотека SVG-компонентов (мебель, оборудование)
+  - name: Блоки
+    description: Составные блоки — именованные группы объектов для вставки на холст
+  - name: Шаблоны
+    description: Шаблоны layout — готовые раскладки для быстрого старта
+  - name: Карта этажа
+    description: "Редактирование карт: черновик, публикация, ревизии, импорт SVG"
+  - name: Блокировка этажа
+    description: Защита от одновременного редактирования одного этажа
+  - name: Рабочие места
+    description: Столы и рабочие зоны, синхронизированные из layout
+  - name: Рендеринг
+    description: Экспорт layout в семантический SVG и standalone HTML
+  - name: Встраивание
+    description: Публичный HTML-виджет для iframe (без авторизации)
+  - name: Администрирование
+    description: Обслуживание системы (только admin)
 
 components:
   securitySchemes:
@@ -51,261 +87,457 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: "JWT из POST /auth/login. Claims: sub, role, exp."
+      description: |
+        JWT-токен из `POST /auth/login`.
+        Claims: `sub` (username), `role` (admin/user), `exp` (unix timestamp).
+        Алгоритм подписи: HMAC-SHA256 с секретом `SECRET_KEY`.
 
   schemas:
     Error:
       type: object
+      description: Стандартный формат ошибки API
       properties:
         detail:
           type: string
+          description: Человекочитаемое описание ошибки
+          example: "office not found"
       required: [detail]
 
     TokenResponse:
       type: object
+      description: Ответ при успешном логине
       properties:
         access_token:
           type: string
+          description: JWT-токен для использования в заголовке Authorization
         token_type:
           type: string
+          description: Тип токена (всегда bearer)
           example: bearer
 
     UserPublic:
       type: object
+      description: Публичная информация о пользователе (без пароля)
       properties:
         id:
           type: integer
+          description: Уникальный ID пользователя
         username:
           type: string
+          description: Логин
         email:
           type: string
+          description: Email
         role:
           type: string
           enum: [admin, user]
+          description: "Роль: admin — полный доступ, user — только редактор"
         full_name:
           type: string
           nullable: true
+          description: Полное имя
         department:
           type: string
           nullable: true
+          description: Отдел
         position:
           type: string
           nullable: true
+          description: Должность
         phone:
           type: string
           nullable: true
+          description: Телефон
         user_status:
           type: string
           enum: [available, busy, away]
+          description: "Текущий статус: available (доступен), busy (занят), away (отсутствует)"
         is_active:
           type: boolean
+          description: Активен ли аккаунт (деактивированные не могут логиниться)
 
     Invite:
       type: object
+      description: Приглашение для регистрации нового пользователя
       properties:
         id:
           type: integer
+          description: ID приглашения
         token:
           type: string
+          description: Уникальный токен для ссылки регистрации
         email:
           type: string
+          description: Email, для которого создано приглашение
         role:
           type: string
           enum: [admin, user]
+          description: Роль, которая будет назначена при регистрации
         created_by:
           type: integer
           nullable: true
+          description: ID администратора, создавшего приглашение
         created_at:
           type: string
           format: date-time
+          description: Дата создания
         expires_at:
           type: string
           format: date-time
           nullable: true
+          description: Срок действия (null — бессрочно)
         used_at:
           type: string
           format: date-time
           nullable: true
+          description: Дата использования (null — ещё не использовано)
 
     Office:
       type: object
+      description: Здание (офис)
       properties:
         id:
           type: integer
+          description: ID здания
         name:
           type: string
+          description: Название здания
         address:
           type: string
           nullable: true
+          description: Адрес
 
     Floor:
       type: object
+      description: Этаж в здании
       properties:
         id:
           type: integer
+          description: ID этажа
         office_id:
           type: integer
+          description: ID здания, к которому относится этаж
         name:
           type: string
+          description: Название этажа (например, "2 этаж")
         plan_url:
           type: string
           nullable: true
+          description: URL загруженного плана помещения (PNG/JPG/PDF)
 
     Component:
       type: object
+      description: SVG-компонент из глобальной библиотеки (стол, стул, принтер и т.д.)
       properties:
         id:
           type: string
+          description: "Уникальный ID компонента (латиница, цифры, _ . : -)"
         label:
           type: string
+          description: Отображаемое название
         asset_type:
           type: string
           enum: [workplace, desk, chair, meeting_table, conference_set, call_room, lounge, sofa, plant, storage, printer, reception, column, asset]
+          description: |
+            Тип объекта:
+            - `workplace` — рабочее место (синхронизируется в desks при публикации)
+            - `desk`, `chair`, `meeting_table` и др. — мебель и оборудование
+            - `asset` — прочий объект
         view_box:
           type: array
           items:
             type: number
           minItems: 4
           maxItems: 4
+          description: "SVG viewBox [x, y, ширина, высота]"
         default_w:
           type: number
+          description: Ширина по умолчанию при размещении на холсте
         default_h:
           type: number
+          description: Высота по умолчанию при размещении на холсте
         svg_markup:
           type: string
+          description: SVG-разметка компонента (теги script запрещены)
         created_at:
           type: string
           format: date-time
+          description: Дата создания
         updated_at:
           type: string
           format: date-time
+          description: Дата последнего обновления
 
     Block:
       type: object
+      description: Составной блок — группа объектов, вставляемая на холст как единое целое
       properties:
         id:
           type: integer
+          description: ID блока
         name:
           type: string
+          description: Название блока
         category:
           type: string
+          description: "Категория (например: custom, office, conference)"
         description:
           type: string
+          description: Описание блока
         objects:
           type: array
           items:
             type: object
+          description: Массив объектов (desk-подобные JSON-структуры)
         preview_svg:
           type: string
+          description: SVG-превью блока для отображения в каталоге
         created_at:
           type: string
           format: date-time
+          description: Дата создания
         updated_at:
           type: string
           format: date-time
+          description: Дата последнего обновления
 
     Template:
       type: object
+      description: Шаблон layout — готовая раскладка этажа для быстрого старта
       properties:
         id:
           type: integer
+          description: ID шаблона
         name:
           type: string
+          description: Название шаблона
         description:
           type: string
+          description: Описание
         category:
           type: string
+          description: "Категория (например: custom, open-space, conference)"
         layout:
           type: string
-          description: Layout JSON as string
+          description: Layout JSON (LayoutDocument в виде строки)
+        created_at:
+          type: string
+          format: date-time
+          description: Дата создания
+        updated_at:
+          type: string
+          format: date-time
+          description: Дата последнего обновления
+
+    LayoutResponse:
+      type: object
+      description: Ответ с состоянием карты этажа
+      properties:
+        revision_id:
+          type: integer
+          description: ID ревизии
+        floor_id:
+          type: integer
+          description: ID этажа
+        status:
+          type: string
+          enum: [draft, published, archived]
+          description: "Статус: draft (черновик), published (опубликовано), archived (архив)"
+        version:
+          type: integer
+          description: Номер версии для оптимистичной блокировки
+        updated_at:
+          type: string
+          format: date-time
+          description: Дата последнего изменения
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Дата публикации (null для черновиков)
+        layout:
+          type: object
+          description: LayoutDocument — полная структура карты (viewBox, компоненты, стены, столы)
+
+    RevisionSummary:
+      type: object
+      description: Краткая информация о ревизии карты
+      properties:
+        revision_id:
+          type: integer
+          description: ID ревизии
+        floor_id:
+          type: integer
+          description: ID этажа
+        status:
+          type: string
+          enum: [draft, published, archived]
+          description: Статус ревизии
+        version:
+          type: integer
+          description: Номер версии
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
-
-    LayoutState:
-      type: object
-      properties:
-        floor_id:
-          type: integer
-        version:
-          type: integer
-        status:
-          type: string
-          enum: [draft, published, archived]
-        layout:
-          type: object
-          description: LayoutDocument JSON
-        updated_at:
+        published_at:
           type: string
           format: date-time
-        updated_by:
+          nullable: true
+        created_by_id:
+          type: integer
+          nullable: true
+          description: ID автора
+        created_by_username:
           type: string
+          nullable: true
+          description: Логин автора
+        is_current_published:
+          type: boolean
+          description: Является ли эта ревизия текущей опубликованной
+        is_current_draft:
+          type: boolean
+          description: Является ли эта ревизия текущим черновиком
 
-    Desk:
+    AuditLogEntry:
       type: object
+      description: Запись аудит-лога изменений карты
       properties:
         id:
           type: integer
+          description: ID записи
         floor_id:
           type: integer
+          description: ID этажа
+        user_id:
+          type: integer
+          nullable: true
+          description: ID пользователя, выполнившего действие
+        action:
+          type: string
+          description: "Тип действия: saved, published, discarded, rolled_back, desks_synced"
+        revision_id:
+          type: integer
+          nullable: true
+          description: ID связанной ревизии
+        created_at:
+          type: string
+          format: date-time
+          description: Время действия
+        note:
+          type: string
+          nullable: true
+          description: Дополнительные сведения
+
+    Desk:
+      type: object
+      description: Рабочее место, синхронизированное из layout при публикации
+      properties:
+        id:
+          type: integer
+          description: ID рабочего места
+        floor_id:
+          type: integer
+          description: ID этажа
         label:
           type: string
+          description: Метка рабочего места (например, "D-42")
         type:
           type: string
           enum: [flex, fixed]
+          description: "Тип: flex (гибкое/бронируемое), fixed (закреплённое за сотрудником)"
         space_type:
           type: string
           enum: [desk, meeting_room, call_room, open_space, lounge]
+          description: Тип пространства
         assigned_to:
           type: string
           nullable: true
+          description: Логин сотрудника (для fixed)
         position_x:
           type: number
           nullable: true
+          description: "Нормализованная позиция X (0–1 от viewBox)"
         position_y:
           type: number
           nullable: true
+          description: "Нормализованная позиция Y (0–1 от viewBox)"
         w:
           type: number
+          description: Нормализованная ширина
         h:
           type: number
+          description: Нормализованная высота
         qr_token:
           type: string
+          description: Уникальный UUID для QR-кода рабочего места
 
-    LockState:
+    FloorLock:
       type: object
+      description: Информация о блокировке этажа
       properties:
-        locked:
-          type: boolean
-        locked_by:
+        floor_id:
+          type: integer
+          description: ID этажа
+        locked_by_id:
+          type: integer
+          description: ID пользователя, заблокировавшего этаж
+        locked_by_username:
           type: string
+          description: Логин пользователя, заблокировавшего этаж
         locked_at:
           type: string
           format: date-time
+          description: Время блокировки
+        expires_at:
+          type: string
+          format: date-time
+          description: Время истечения блокировки (через 10 минут)
 
     SyncResult:
       type: object
+      description: Результат синхронизации рабочих мест из layout в таблицу desks
       properties:
+        floor_id:
+          type: integer
+          description: ID этажа
+        revision_id:
+          type: integer
+          description: ID ревизии-источника
+        source_status:
+          type: string
+          description: "Статус источника: published или draft"
         created:
           type: integer
+          description: Создано новых рабочих мест
         updated:
           type: integer
-        removed:
+          description: Обновлено существующих рабочих мест
+        renamed:
           type: integer
-        protected:
+          description: Переименовано (label изменился)
+        total_layout_desks:
           type: integer
+          description: Всего workplace-объектов в layout
+        unmatched_existing:
+          type: integer
+          description: Рабочие места в БД, не найденные в layout
+        deleted:
+          type: integer
+          description: Удалено (если cleanup=true)
 
 paths:
   /health:
     get:
-      tags: [Health]
-      summary: Проверка доступности
+      tags: [Здоровье]
+      summary: Проверка доступности сервиса
+      description: Возвращает статус OK, если Go API запущен и отвечает.
+      operationId: healthCheck
       responses:
         "200":
-          description: OK
+          description: Сервис доступен
           content:
             application/json:
               schema:
@@ -317,8 +549,17 @@ paths:
 
   /auth/login:
     post:
-      tags: [Auth]
+      tags: [Авторизация]
       summary: Получить JWT-токен
+      description: |
+        Аутентификация по логину и паролю. Поддерживает два формата тела запроса:
+        `application/x-www-form-urlencoded` и `application/json`.
+
+        При успехе возвращает JWT-токен со сроком жизни 30 дней (настраивается через
+        переменную окружения `ACCESS_TOKEN_EXPIRE_MINUTES`).
+
+        Для защиты от перебора логинов используется constant-time сравнение паролей.
+      operationId: login
       requestBody:
         required: true
         content:
@@ -328,8 +569,10 @@ paths:
               properties:
                 username:
                   type: string
+                  description: Логин пользователя
                 password:
                   type: string
+                  description: Пароль
               required: [username, password]
           application/json:
             schema:
@@ -337,18 +580,32 @@ paths:
               properties:
                 username:
                   type: string
+                  description: Логин пользователя
                 password:
                   type: string
+                  description: Пароль
               required: [username, password]
       responses:
         "200":
-          description: JWT-токен
+          description: JWT-токен выдан
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: Не указан логин или пароль
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
-          description: Неверные credentials
+          description: Неверный логин или пароль
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Аккаунт деактивирован
           content:
             application/json:
               schema:
@@ -356,8 +613,16 @@ paths:
 
   /auth/register:
     post:
-      tags: [Auth]
-      summary: Регистрация по invite-ссылке
+      tags: [Авторизация]
+      summary: Регистрация по приглашению
+      description: |
+        Создание учётной записи по invite-токену. Требования:
+        - `invite_token` — действительный, неиспользованный, непросроченный токен
+        - `email` — должен совпадать с email, указанным при создании приглашения
+        - `username` и `email` — не должны быть заняты
+
+        После регистрации invite помечается как использованный и не может быть использован повторно.
+      operationId: register
       requestBody:
         required: true
         content:
@@ -367,13 +632,16 @@ paths:
               properties:
                 username:
                   type: string
+                  description: Желаемый логин
                 email:
                   type: string
-                  description: Должен совпадать с email в invite
+                  description: Email (должен совпадать с email в invite)
                 password:
                   type: string
+                  description: Пароль
                 invite_token:
                   type: string
+                  description: Токен из invite-ссылки
               required: [username, email, password, invite_token]
       responses:
         "201":
@@ -382,8 +650,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserPublic"
+        "400":
+          description: Не все обязательные поля заполнены
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          description: Невалидный/использованный/просроченный invite
+          description: Невалидный, использованный или просроченный invite; email не совпадает
           content:
             application/json:
               schema:
@@ -397,8 +671,12 @@ paths:
 
   /admin/invites:
     post:
-      tags: [Invites]
-      summary: Создать invite
+      tags: [Приглашения]
+      summary: Создать приглашение
+      description: |
+        Создаёт новое приглашение для указанного email. Только администратор.
+        Возвращает объект invite с токеном, который нужно передать пользователю.
+      operationId: createInvite
       security:
         - BearerAuth: []
       requestBody:
@@ -410,72 +688,108 @@ paths:
               properties:
                 email:
                   type: string
+                  description: Email приглашаемого пользователя
                 role:
                   type: string
                   enum: [admin, user]
                   default: user
+                  description: Роль, которая будет назначена при регистрации
                 expires_in_hours:
                   type: integer
                   nullable: true
-                  description: Срок действия в часах (null = бессрочно)
+                  description: Срок действия в часах (null или 0 — бессрочно)
               required: [email]
       responses:
         "201":
-          description: Invite создан
+          description: Приглашение создано
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Invite"
+        "400":
+          description: Email не указан или невалидная роль
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          description: Admin-only
+          description: Требуется роль admin
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
     get:
-      tags: [Invites]
-      summary: Список всех invite
+      tags: [Приглашения]
+      summary: Список всех приглашений
+      description: Возвращает все приглашения (использованные и нет). Только администратор.
+      operationId: listInvites
       security:
         - BearerAuth: []
       responses:
         "200":
-          description: OK
+          description: Список приглашений
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: "#/components/schemas/Invite"
+        "403":
+          description: Требуется роль admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /admin/invites/{invite_id}:
     delete:
-      tags: [Invites]
-      summary: Удалить invite
+      tags: [Приглашения]
+      summary: Удалить приглашение
+      description: Удаляет приглашение по ID. Только администратор.
+      operationId: deleteInvite
       security:
         - BearerAuth: []
       parameters:
         - name: invite_id
           in: path
           required: true
+          description: ID приглашения
           schema:
             type: integer
       responses:
         "204":
-          description: Удалён
+          description: Приглашение удалено
+        "404":
+          description: Приглашение не найдено
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /invites/{token}:
     get:
-      tags: [Invites]
-      summary: Публичная информация об invite
+      tags: [Приглашения]
+      summary: Информация о приглашении (публичный)
+      description: |
+        Возвращает email и роль приглашения по токену. Не требует авторизации.
+        Используется на странице регистрации для предзаполнения полей.
+      operationId: getInviteInfo
       parameters:
         - name: token
           in: path
           required: true
+          description: Токен приглашения из ссылки
           schema:
             type: string
       responses:
         "200":
-          description: OK
+          description: Информация о приглашении
           content:
             application/json:
               schema:
@@ -483,42 +797,52 @@ paths:
                 properties:
                   email:
                     type: string
+                    description: Email, для которого создано приглашение
                   role:
                     type: string
+                    description: Роль (admin или user)
         "404":
-          description: Не найден
+          description: Приглашение не найдено
         "410":
-          description: Использован или просрочен
+          description: Приглашение уже использовано или просрочено
 
   /users/me:
     get:
-      tags: [Users]
+      tags: [Пользователи]
       summary: Текущий пользователь
+      description: Возвращает данные авторизованного пользователя.
+      operationId: getCurrentUser
       security:
         - BearerAuth: []
       responses:
         "200":
-          description: OK
+          description: Данные пользователя
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserPublic"
+        "401":
+          description: Не авторизован
 
   /users:
     get:
-      tags: [Users]
-      summary: Список пользователей
+      tags: [Пользователи]
+      summary: Поиск пользователей
+      description: |
+        Возвращает список пользователей. Доступен любому авторизованному пользователю.
+        Поддерживает фильтрацию по username и full_name через параметр `search`.
+      operationId: listUsers
       security:
         - BearerAuth: []
       parameters:
         - name: search
           in: query
+          description: Подстрока для поиска по username или полному имени (регистронезависимо)
           schema:
             type: string
-          description: Фильтр по username/full_name
       responses:
         "200":
-          description: OK
+          description: Список пользователей
           content:
             application/json:
               schema:
@@ -528,30 +852,39 @@ paths:
 
   /admin/users:
     get:
-      tags: [Users]
-      summary: Полный список (admin-only)
+      tags: [Пользователи]
+      summary: Полный список пользователей (admin)
+      description: Возвращает всех пользователей без фильтрации. Только администратор.
+      operationId: adminListUsers
       security:
         - BearerAuth: []
       responses:
         "200":
-          description: OK
+          description: Список всех пользователей
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: "#/components/schemas/UserPublic"
+        "403":
+          description: Требуется роль admin
 
   /admin/users/{username}:
     patch:
-      tags: [Users]
-      summary: Обновить роль/статус (admin-only)
+      tags: [Пользователи]
+      summary: Изменить роль или статус пользователя (admin)
+      description: |
+        Позволяет администратору изменить роль (admin/user) и активность аккаунта.
+        Оба поля опциональны — передавайте только то, что хотите изменить.
+      operationId: adminUpdateUser
       security:
         - BearerAuth: []
       parameters:
         - name: username
           in: path
           required: true
+          description: Логин пользователя
           schema:
             type: string
       requestBody:
@@ -563,37 +896,48 @@ paths:
                 role:
                   type: string
                   enum: [admin, user]
+                  description: Новая роль
                 is_active:
                   type: boolean
+                  description: Активировать/деактивировать аккаунт
       responses:
         "200":
-          description: OK
+          description: Пользователь обновлён
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserPublic"
+        "404":
+          description: Пользователь не найден
     delete:
-      tags: [Users]
-      summary: Удалить пользователя (admin-only)
+      tags: [Пользователи]
+      summary: Удалить пользователя (admin)
+      description: Полностью удаляет учётную запись. Только администратор.
+      operationId: adminDeleteUser
       security:
         - BearerAuth: []
       parameters:
         - name: username
           in: path
           required: true
+          description: Логин пользователя
           schema:
             type: string
       responses:
         "204":
-          description: Удалён
+          description: Пользователь удалён
+        "404":
+          description: Пользователь не найден
 
   /offices:
     get:
-      tags: [Offices]
+      tags: [Здания]
       summary: Список зданий
+      description: Возвращает все здания. Не требует авторизации.
+      operationId: listOffices
       responses:
         "200":
-          description: OK
+          description: Список зданий
           content:
             application/json:
               schema:
@@ -601,8 +945,10 @@ paths:
                 items:
                   $ref: "#/components/schemas/Office"
     post:
-      tags: [Offices]
+      tags: [Здания]
       summary: Создать здание
+      description: Создаёт новое здание (офис). Требуется авторизация.
+      operationId: createOffice
       security:
         - BearerAuth: []
       requestBody:
@@ -614,27 +960,34 @@ paths:
               properties:
                 name:
                   type: string
+                  description: Название здания
                 address:
                   type: string
+                  description: Адрес (опционально)
               required: [name]
       responses:
         "201":
-          description: Создано
+          description: Здание создано
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Office"
+        "400":
+          description: Название не указано
 
   /offices/{office_id}:
     patch:
-      tags: [Offices]
+      tags: [Здания]
       summary: Обновить здание
+      description: Частичное обновление — передавайте только изменяемые поля.
+      operationId: updateOffice
       security:
         - BearerAuth: []
       parameters:
         - name: office_id
           in: path
           required: true
+          description: ID здания
           schema:
             type: integer
       requestBody:
@@ -645,43 +998,54 @@ paths:
               properties:
                 name:
                   type: string
+                  description: Новое название
                 address:
                   type: string
+                  description: Новый адрес
       responses:
         "200":
-          description: OK
+          description: Здание обновлено
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Office"
+        "404":
+          description: Здание не найдено
     delete:
-      tags: [Offices]
+      tags: [Здания]
       summary: Удалить здание
+      description: Удаляет здание и все его этажи каскадно.
+      operationId: deleteOffice
       security:
         - BearerAuth: []
       parameters:
         - name: office_id
           in: path
           required: true
+          description: ID здания
           schema:
             type: integer
       responses:
         "204":
-          description: Удалено
+          description: Здание удалено
+        "404":
+          description: Здание не найдено
 
   /floors:
     get:
-      tags: [Floors]
+      tags: [Этажи]
       summary: Список этажей
+      description: Возвращает этажи. Можно отфильтровать по зданию через `office_id`.
+      operationId: listFloors
       parameters:
         - name: office_id
           in: query
+          description: ID здания для фильтрации
           schema:
             type: integer
-          description: Фильтр по зданию
       responses:
         "200":
-          description: OK
+          description: Список этажей
           content:
             application/json:
               schema:
@@ -689,8 +1053,10 @@ paths:
                 items:
                   $ref: "#/components/schemas/Floor"
     post:
-      tags: [Floors]
+      tags: [Этажи]
       summary: Создать этаж
+      description: Создаёт новый этаж в указанном здании.
+      operationId: createFloor
       security:
         - BearerAuth: []
       requestBody:
@@ -702,27 +1068,34 @@ paths:
               properties:
                 office_id:
                   type: integer
+                  description: ID здания
                 name:
                   type: string
+                  description: Название этажа
               required: [office_id, name]
       responses:
         "201":
-          description: Создан
+          description: Этаж создан
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Floor"
+        "404":
+          description: Здание не найдено
 
   /floors/{floor_id}:
     patch:
-      tags: [Floors]
+      tags: [Этажи]
       summary: Обновить этаж
+      description: Изменение названия этажа.
+      operationId: updateFloor
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       requestBody:
@@ -733,38 +1106,51 @@ paths:
               properties:
                 name:
                   type: string
+                  description: Новое название
       responses:
         "200":
-          description: OK
+          description: Этаж обновлён
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Floor"
+        "404":
+          description: Этаж не найден
     delete:
-      tags: [Floors]
+      tags: [Этажи]
       summary: Удалить этаж
+      description: Удаляет этаж и все связанные ревизии, блокировки, рабочие места.
+      operationId: deleteFloor
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
         "204":
-          description: Удалён
+          description: Этаж удалён
+        "404":
+          description: Этаж не найден
 
   /floors/{floor_id}/plan:
     post:
-      tags: [Floors]
-      summary: Загрузить план этажа (PNG/JPG/SVG)
+      tags: [Этажи]
+      summary: Загрузить план этажа
+      description: |
+        Загружает изображение плана помещения. Поддерживаемые форматы: PNG, JPG, PDF.
+        Файл сохраняется в `/static/` и URL записывается в поле `plan_url` этажа.
+      operationId: uploadFloorPlan
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       requestBody:
@@ -777,10 +1163,11 @@ paths:
                 file:
                   type: string
                   format: binary
+                  description: Файл плана (PNG, JPG или PDF)
               required: [file]
       responses:
         "200":
-          description: OK
+          description: План загружен
           content:
             application/json:
               schema:
@@ -788,14 +1175,19 @@ paths:
                 properties:
                   plan_url:
                     type: string
+                    description: URL загруженного файла
+        "400":
+          description: Неподдерживаемый формат файла
 
   /components:
     get:
-      tags: [Components]
+      tags: [Компоненты]
       summary: Список компонентов
+      description: Возвращает все компоненты из глобальной библиотеки, отсортированные по названию.
+      operationId: listComponents
       responses:
         "200":
-          description: OK
+          description: Список компонентов
           content:
             application/json:
               schema:
@@ -803,9 +1195,15 @@ paths:
                 items:
                   $ref: "#/components/schemas/Component"
     post:
-      tags: [Components]
+      tags: [Компоненты]
       summary: Создать компонент
-      description: "SVG валидируется: <script> и опасные теги запрещены."
+      description: |
+        Добавляет новый компонент в библиотеку. SVG-разметка валидируется:
+        теги `<script>`, `<iframe>`, `onload` и другие опасные конструкции запрещены.
+
+        ID встроенных компонентов (workplace-desk-chair, chair и др.) нельзя использовать
+        при создании — используйте `PUT` для их переопределения.
+      operationId: createComponent
       security:
         - BearerAuth: []
       requestBody:
@@ -818,47 +1216,67 @@ paths:
                 id:
                   type: string
                   pattern: "^[A-Za-z_][A-Za-z0-9_.:-]{0,119}$"
+                  description: "Уникальный ID (латиница, цифры, _ . : -)"
                 label:
                   type: string
                   maxLength: 120
+                  description: Отображаемое название
                 asset_type:
                   type: string
                   enum: [workplace, desk, chair, meeting_table, conference_set, call_room, lounge, sofa, plant, storage, printer, reception, column, asset]
+                  description: Тип объекта
                 view_box:
                   type: array
                   items:
                     type: number
                   minItems: 4
                   maxItems: 4
+                  description: "SVG viewBox [x, y, ширина, высота]"
                 default_w:
                   type: number
+                  description: Ширина по умолчанию
                 default_h:
                   type: number
+                  description: Высота по умолчанию
                 svg_markup:
                   type: string
+                  description: SVG-разметка (без script-тегов)
               required: [id, label, asset_type, view_box, default_w, default_h, svg_markup]
       responses:
         "201":
-          description: Создан
+          description: Компонент создан
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Component"
         "409":
-          description: ID уже существует
+          description: Компонент с таким ID уже существует
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "422":
-          description: Невалидный SVG
+          description: Невалидный SVG (опасные теги или некорректная разметка)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /components/{component_id}:
     put:
-      tags: [Components]
+      tags: [Компоненты]
       summary: Обновить компонент (upsert)
+      description: |
+        Обновляет существующий компонент или создаёт переопределение встроенного.
+        ID в URL и в теле запроса должны совпадать.
+      operationId: updateComponent
       security:
         - BearerAuth: []
       parameters:
         - name: component_id
           in: path
           required: true
+          description: ID компонента
           schema:
             type: string
       requestBody:
@@ -870,50 +1288,68 @@ paths:
               properties:
                 id:
                   type: string
+                  description: ID компонента (должен совпадать с URL)
                 label:
                   type: string
+                  description: Название
                 asset_type:
                   type: string
+                  description: Тип объекта
                 view_box:
                   type: array
                   items:
                     type: number
+                  description: SVG viewBox
                 default_w:
                   type: number
+                  description: Ширина по умолчанию
                 default_h:
                   type: number
+                  description: Высота по умолчанию
                 svg_markup:
                   type: string
+                  description: SVG-разметка
               required: [id, label, asset_type, view_box, default_w, default_h, svg_markup]
       responses:
         "200":
-          description: OK
+          description: Компонент обновлён
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Component"
+        "400":
+          description: ID в URL и теле не совпадают
+        "422":
+          description: Невалидный SVG
     delete:
-      tags: [Components]
+      tags: [Компоненты]
       summary: Удалить компонент
+      description: Удаляет пользовательский компонент из библиотеки.
+      operationId: deleteComponent
       security:
         - BearerAuth: []
       parameters:
         - name: component_id
           in: path
           required: true
+          description: ID компонента
           schema:
             type: string
       responses:
         "200":
-          description: Удалён
+          description: Компонент удалён
+        "404":
+          description: Компонент не найден
 
   /blocks:
     get:
-      tags: [Blocks]
+      tags: [Блоки]
       summary: Список блоков
+      description: Возвращает все составные блоки, отсортированные по дате обновления.
+      operationId: listBlocks
       responses:
         "200":
-          description: OK
+          description: Список блоков
           content:
             application/json:
               schema:
@@ -921,8 +1357,12 @@ paths:
                 items:
                   $ref: "#/components/schemas/Block"
     post:
-      tags: [Blocks]
+      tags: [Блоки]
       summary: Создать блок
+      description: |
+        Создаёт составной блок — именованную группу объектов,
+        которую можно вставить на холст как единое целое.
+      operationId: createBlock
       security:
         - BearerAuth: []
       requestBody:
@@ -934,21 +1374,26 @@ paths:
               properties:
                 name:
                   type: string
+                  description: Название блока
                 category:
                   type: string
                   default: custom
+                  description: Категория
                 description:
                   type: string
+                  description: Описание
                 objects:
                   type: array
                   items:
                     type: object
+                  description: Массив объектов (desk-подобные структуры)
                 preview_svg:
                   type: string
+                  description: SVG-превью для каталога
               required: [name, objects]
       responses:
         "201":
-          description: Создан
+          description: Блок создан
           content:
             application/json:
               schema:
@@ -956,27 +1401,32 @@ paths:
 
   /blocks/{block_id}:
     delete:
-      tags: [Blocks]
+      tags: [Блоки]
       summary: Удалить блок
+      description: Удаляет составной блок по ID.
+      operationId: deleteBlock
       security:
         - BearerAuth: []
       parameters:
         - name: block_id
           in: path
           required: true
+          description: ID блока
           schema:
             type: integer
       responses:
         "204":
-          description: Удалён
+          description: Блок удалён
 
   /templates:
     get:
-      tags: [Templates]
+      tags: [Шаблоны]
       summary: Список шаблонов
+      description: Возвращает все шаблоны layout, отсортированные по дате обновления.
+      operationId: listTemplates
       responses:
         "200":
-          description: OK
+          description: Список шаблонов
           content:
             application/json:
               schema:
@@ -984,8 +1434,10 @@ paths:
                 items:
                   $ref: "#/components/schemas/Template"
     post:
-      tags: [Templates]
+      tags: [Шаблоны]
       summary: Создать шаблон
+      description: Сохраняет текущий layout как шаблон для повторного использования.
+      operationId: createTemplate
       security:
         - BearerAuth: []
       requestBody:
@@ -997,17 +1449,21 @@ paths:
               properties:
                 name:
                   type: string
+                  description: Название шаблона
                 description:
                   type: string
+                  description: Описание
                 category:
                   type: string
                   default: custom
+                  description: Категория
                 layout:
                   type: object
+                  description: LayoutDocument JSON
               required: [name, layout]
       responses:
         "201":
-          description: Создан
+          description: Шаблон создан
           content:
             application/json:
               schema:
@@ -1015,51 +1471,68 @@ paths:
 
   /templates/{template_id}:
     delete:
-      tags: [Templates]
+      tags: [Шаблоны]
       summary: Удалить шаблон
+      description: Удаляет шаблон по ID.
+      operationId: deleteTemplate
       security:
         - BearerAuth: []
       parameters:
         - name: template_id
           in: path
           required: true
+          description: ID шаблона
           schema:
             type: integer
       responses:
         "204":
-          description: Удалён
+          description: Шаблон удалён
 
   /floors/{floor_id}/layout:
     get:
-      tags: [Layout]
-      summary: Текущий layout (draft или published)
+      tags: [Карта этажа]
+      summary: Текущая карта этажа
+      description: |
+        Возвращает черновик (draft), если он существует, иначе — опубликованную версию.
+        Если ни того, ни другого нет — 404.
+      operationId: getLayout
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
         "200":
-          description: OK
+          description: Текущее состояние карты
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/LayoutState"
+                $ref: "#/components/schemas/LayoutResponse"
+        "404":
+          description: Карта не найдена для этого этажа
 
   /floors/{floor_id}/layout/draft:
     put:
-      tags: [Layout]
+      tags: [Карта этажа]
       summary: Сохранить черновик
-      description: "version — оптимистичная блокировка: должен совпадать с текущим."
+      description: |
+        Сохраняет черновик карты этажа. Используется оптимистичная блокировка:
+        поле `version` в запросе должно совпадать с текущей версией черновика.
+        При несовпадении возвращается 409 (конфликт версий).
+
+        Если черновика ещё нет — создаётся новый на основе текущей опубликованной версии.
+      operationId: saveLayoutDraft
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       requestBody:
@@ -1071,99 +1544,146 @@ paths:
               properties:
                 version:
                   type: integer
+                  description: Текущая версия (для оптимистичной блокировки)
                 layout:
                   type: object
-                  description: LayoutDocument JSON
+                  description: LayoutDocument — полная структура карты
               required: [version, layout]
       responses:
         "200":
           description: Черновик сохранён
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LayoutResponse"
         "409":
-          description: Version mismatch
-        "423":
-          description: Этаж заблокирован другим пользователем
+          description: Конфликт версий (кто-то уже обновил черновик)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Невалидный layout
     delete:
-      tags: [Layout]
+      tags: [Карта этажа]
       summary: Отменить черновик
+      description: Удаляет текущий черновик. Опубликованная версия остаётся без изменений.
+      operationId: discardLayoutDraft
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
-        "200":
+        "204":
           description: Черновик удалён
 
   /floors/{floor_id}/layout/publish:
     post:
-      tags: [Layout]
+      tags: [Карта этажа]
       summary: Опубликовать черновик
-      description: "draft → published, старый published → archived. Автоматически синхронизирует workplace-объекты в desks."
+      description: |
+        Публикует текущий черновик:
+        1. Текущий published → archived
+        2. Черновик → published
+        3. Генерируется семантический SVG
+        4. Workplace-объекты синхронизируются в таблицу `desks`
+      operationId: publishLayout
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
         "200":
-          description: Опубликовано
+          description: Карта опубликована
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LayoutResponse"
+        "404":
+          description: Нет черновика для публикации
 
   /floors/{floor_id}/layout/import:
     post:
-      tags: [Layout]
+      tags: [Карта этажа]
       summary: Импортировать и классифицировать SVG
+      description: |
+        Принимает SVG-файл плана помещения и автоматически классифицирует
+        элементы на стены, перегородки, двери и границы зон.
+        Возвращает результат классификации с координатами и уровнями уверенности.
+      operationId: importLayoutSVG
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       requestBody:
         required: true
         content:
-          text/xml:
-            schema:
-              type: string
           image/svg+xml:
             schema:
               type: string
+              description: SVG-файл плана помещения
       responses:
         "200":
           description: Результат классификации
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Классифицированные элементы с viewBox, стенами, перегородками, дверями
+        "400":
+          description: Невалидный SVG
 
   /floors/{floor_id}/layout/sync-desks:
     post:
-      tags: [Layout]
-      summary: Синхронизировать рабочие места из layout
+      tags: [Карта этажа]
+      summary: Синхронизировать рабочие места
+      description: |
+        Извлекает workplace-объекты из layout и синхронизирует их с таблицей `desks`.
+        Создаёт новые, обновляет существующие, опционально удаляет лишние.
+
+        По умолчанию берёт данные из опубликованной версии. Параметр `source=draft`
+        позволяет синхронизировать из черновика.
+      operationId: syncLayoutDesks
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
         - name: source
           in: query
+          description: "Источник данных: published (по умолчанию) или draft"
           schema:
             type: string
+            enum: [published, draft]
             default: published
         - name: cleanup
           in: query
+          description: Удалить рабочие места, отсутствующие в layout
           schema:
             type: boolean
             default: false
       responses:
         "200":
-          description: OK
+          description: Результат синхронизации
           content:
             application/json:
               schema:
@@ -1171,30 +1691,44 @@ paths:
 
   /floors/{floor_id}/layout/published:
     get:
-      tags: [Layout]
-      summary: Опубликованный layout (JSON)
+      tags: [Карта этажа]
+      summary: Опубликованная карта (JSON)
+      description: Возвращает опубликованную версию карты этажа в формате JSON.
+      operationId: getPublishedLayout
+      security:
+        - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
         "200":
-          description: OK
+          description: Опубликованная карта
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/LayoutState"
+                $ref: "#/components/schemas/LayoutResponse"
+        "404":
+          description: Нет опубликованной версии
 
   /floors/{floor_id}/layout/published.svg:
     get:
-      tags: [Render]
-      summary: Опубликованный layout как SVG
+      tags: [Рендеринг]
+      summary: Опубликованная карта в формате SVG
+      description: |
+        Возвращает семантический SVG с иерархией building → storey → zone → workplace,
+        data-атрибутами для интеграции и переиспользуемыми symbol/use.
+      operationId: getPublishedSVG
+      security:
+        - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
@@ -1204,199 +1738,259 @@ paths:
             image/svg+xml:
               schema:
                 type: string
+        "404":
+          description: Нет опубликованной версии
 
   /floors/{floor_id}/layout/published.html:
     get:
-      tags: [Render]
-      summary: Опубликованный layout как HTML
+      tags: [Рендеринг]
+      summary: Опубликованная карта в формате HTML
+      description: |
+        Возвращает standalone HTML-страницу с встроенным SVG, CSS для hover-эффектов
+        и JavaScript для события `deskbook:workplace-click` при клике на рабочее место.
+      operationId: getPublishedHTML
+      security:
+        - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
         "200":
-          description: Standalone HTML с hover и click events
+          description: HTML-страница с интерактивной картой
           content:
             text/html:
               schema:
                 type: string
+        "404":
+          description: Нет опубликованной версии
 
   /floors/{floor_id}/layout/history:
     get:
-      tags: [Layout]
+      tags: [Карта этажа]
       summary: Аудит-лог изменений
+      description: |
+        Возвращает историю действий с картой этажа: сохранения, публикации,
+        откаты, синхронизации рабочих мест. Последние 50 записей.
+      operationId: getLayoutHistory
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
         "200":
-          description: OK
+          description: Записи аудит-лога
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  type: object
-                  properties:
-                    action:
-                      type: string
-                    username:
-                      type: string
-                    created_at:
-                      type: string
-                      format: date-time
+                  $ref: "#/components/schemas/AuditLogEntry"
 
   /floors/{floor_id}/layout/revisions:
     get:
-      tags: [Layout]
-      summary: Список ревизий
+      tags: [Карта этажа]
+      summary: Список ревизий карты
+      description: |
+        Возвращает все ревизии карты этажа с отметками, какая является
+        текущим черновиком и текущей опубликованной версией.
+      operationId: listLayoutRevisions
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
+        - name: limit
+          in: query
+          description: "Максимальное количество ревизий (по умолчанию 100, макс. 300)"
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 300
       responses:
         "200":
-          description: OK
+          description: Список ревизий
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  type: object
-                  properties:
-                    id:
-                      type: integer
-                    status:
-                      type: string
-                      enum: [draft, published, archived]
-                    version:
-                      type: integer
-                    is_current:
-                      type: boolean
-                    created_at:
-                      type: string
-                      format: date-time
+                  $ref: "#/components/schemas/RevisionSummary"
 
   /floors/{floor_id}/layout/revisions/{revision_id}:
     get:
-      tags: [Layout]
-      summary: Получить ревизию
+      tags: [Карта этажа]
+      summary: Получить конкретную ревизию
+      description: Возвращает полный layout из указанной ревизии.
+      operationId: getLayoutRevision
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
         - name: revision_id
           in: path
           required: true
+          description: ID ревизии
           schema:
             type: integer
       responses:
         "200":
           description: Layout из ревизии
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LayoutResponse"
+        "404":
+          description: Ревизия не найдена для данного этажа
 
   /floors/{floor_id}/layout/revisions/{revision_id}/restore:
     post:
-      tags: [Layout]
-      summary: Восстановить ревизию как новый черновик
+      tags: [Карта этажа]
+      summary: Восстановить ревизию как черновик
+      description: |
+        Копирует данные из указанной ревизии в текущий черновик.
+        Если черновика нет — создаёт новый. Оригинальная ревизия не изменяется.
+      operationId: restoreLayoutRevision
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
         - name: revision_id
           in: path
           required: true
+          description: ID ревизии для восстановления
           schema:
             type: integer
       responses:
         "200":
-          description: Ревизия восстановлена как draft
+          description: Ревизия восстановлена как черновик
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LayoutResponse"
+        "404":
+          description: Ревизия не найдена
 
   /floors/{floor_id}/lock:
     get:
-      tags: [Floor Lock]
-      summary: Статус блокировки
+      tags: [Блокировка этажа]
+      summary: Статус блокировки этажа
+      description: |
+        Возвращает информацию о текущей блокировке этажа.
+        Если блокировка истекла — автоматически снимается.
+      operationId: getFloorLock
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
         "200":
-          description: OK
+          description: Статус блокировки
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/LockState"
+                oneOf:
+                  - type: object
+                    properties:
+                      locked:
+                        type: boolean
+                        example: false
+                  - $ref: "#/components/schemas/FloorLock"
     post:
-      tags: [Floor Lock]
-      summary: Заблокировать этаж (TTL 10 мин)
+      tags: [Блокировка этажа]
+      summary: Заблокировать этаж
+      description: |
+        Захватывает блокировку этажа на 10 минут. Если этаж уже заблокирован
+        другим пользователем и блокировка не истекла — возвращает 423.
+        Повторный вызов от того же пользователя продлевает блокировку.
+      operationId: acquireFloorLock
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
         "200":
-          description: Заблокировано
+          description: Этаж заблокирован
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/LockState"
+                $ref: "#/components/schemas/FloorLock"
         "423":
-          description: Уже заблокирован другим пользователем
+          description: Этаж уже заблокирован другим пользователем
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
-      tags: [Floor Lock]
-      summary: Снять блокировку (только владелец)
+      tags: [Блокировка этажа]
+      summary: Снять блокировку этажа
+      description: Снимает блокировку. Может снять только тот пользователь, который её установил.
+      operationId: releaseFloorLock
       security:
         - BearerAuth: []
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
-        "200":
-          description: Разблокировано
+        "204":
+          description: Блокировка снята
 
   /desks:
     get:
-      tags: [Desks]
+      tags: [Рабочие места]
       summary: Список рабочих мест
+      description: |
+        Возвращает рабочие места. Можно отфильтровать по этажу через `floor_id`.
+        Рабочие места создаются автоматически при публикации карты из workplace-объектов layout.
+      operationId: listDesks
+      security:
+        - BearerAuth: []
       parameters:
         - name: floor_id
           in: query
+          description: ID этажа для фильтрации
           schema:
             type: integer
-          description: Фильтр по этажу
       responses:
         "200":
-          description: OK
+          description: Список рабочих мест
           content:
             application/json:
               schema:
@@ -1406,30 +2000,40 @@ paths:
 
   /desks/{desk_id}:
     get:
-      tags: [Desks]
+      tags: [Рабочие места]
       summary: Получить рабочее место
-      parameters:
-        - name: desk_id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Desk"
-    patch:
-      tags: [Desks]
-      summary: Обновить рабочее место
+      description: Возвращает рабочее место по ID.
+      operationId: getDesk
       security:
         - BearerAuth: []
       parameters:
         - name: desk_id
           in: path
           required: true
+          description: ID рабочего места
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Рабочее место
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Desk"
+        "404":
+          description: Рабочее место не найдено
+    patch:
+      tags: [Рабочие места]
+      summary: Обновить рабочее место
+      description: Частичное обновление полей рабочего места.
+      operationId: updateDesk
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: desk_id
+          in: path
+          required: true
+          description: ID рабочего места
           schema:
             type: integer
       requestBody:
@@ -1440,118 +2044,177 @@ paths:
               properties:
                 label:
                   type: string
+                  description: Метка
                 type:
                   type: string
                   enum: [flex, fixed]
+                  description: "Тип: flex (гибкое) или fixed (закреплённое)"
                 space_type:
                   type: string
+                  description: Тип пространства
                 assigned_to:
                   type: string
+                  description: Закреплённый сотрудник (для fixed)
                 position_x:
                   type: number
+                  description: Позиция X
                 position_y:
                   type: number
+                  description: Позиция Y
                 w:
                   type: number
+                  description: Ширина
                 h:
                   type: number
+                  description: Высота
       responses:
         "200":
-          description: OK
+          description: Рабочее место обновлено
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Desk"
+        "404":
+          description: Рабочее место не найдено
     delete:
-      tags: [Desks]
+      tags: [Рабочие места]
       summary: Удалить рабочее место
+      description: Удаляет рабочее место по ID.
+      operationId: deleteDesk
       security:
         - BearerAuth: []
       parameters:
         - name: desk_id
           in: path
           required: true
+          description: ID рабочего места
           schema:
             type: integer
       responses:
         "204":
-          description: Удалён
+          description: Рабочее место удалено
+        "404":
+          description: Рабочее место не найдено
 
   /render/svg:
     post:
-      tags: [Render]
+      tags: [Рендеринг]
       summary: Отрендерить layout в SVG
+      description: |
+        Принимает LayoutDocument JSON и возвращает семантический SVG.
+        Можно передать layout напрямую или обёрнутым: `{"layout": {...}, "title": "..."}`.
+        Не требует авторизации — работает как stateless рендерер.
+      operationId: renderSVG
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              description: "layout_json напрямую или {layout: {...}, title: '...'}"
+              description: LayoutDocument JSON или обёртка с title
       responses:
         "200":
-          description: SVG
+          description: Семантический SVG
           content:
             image/svg+xml:
               schema:
                 type: string
+        "400":
+          description: Пустое тело запроса или невалидный JSON
+        "422":
+          description: Ошибка рендеринга (невалидный layout)
 
   /render/html:
     post:
-      tags: [Render]
+      tags: [Рендеринг]
       summary: Отрендерить layout в HTML
+      description: |
+        Принимает `{"layout": {...}, "title": "..."}` и возвращает standalone HTML-страницу
+        с встроенным SVG, CSS для hover-подсветки рабочих мест и JavaScript для
+        события `deskbook:workplace-click`.
+      operationId: renderHTML
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              properties:
+                layout:
+                  type: object
+                  description: LayoutDocument JSON
+                title:
+                  type: string
+                  description: Заголовок HTML-страницы
       responses:
         "200":
-          description: Standalone HTML
+          description: Standalone HTML-страница
           content:
             text/html:
               schema:
                 type: string
+        "400":
+          description: Невалидный запрос
 
   /embed/floors/{floor_id}:
     get:
-      tags: [Embed]
-      summary: Публичная HTML-страница для iframe
+      tags: [Встраивание]
+      summary: Публичная HTML-страница для встраивания
+      description: |
+        Возвращает standalone HTML с опубликованной картой этажа.
+        Не требует авторизации — предназначен для iframe-встраивания.
+        Устанавливает заголовок `X-Frame-Options: ALLOWALL`.
+      operationId: embedFloor
       parameters:
         - name: floor_id
           in: path
           required: true
+          description: ID этажа
           schema:
             type: integer
       responses:
         "200":
-          description: HTML с опубликованной картой
+          description: HTML-страница с картой
           content:
             text/html:
               schema:
                 type: string
+        "404":
+          description: Нет опубликованной карты для этого этажа
 
   /admin/cleanup/revisions:
     post:
-      tags: [Admin]
-      summary: Удалить старые архивные ревизии (admin-only)
-      description: "Удаляет archived-ревизии старше N дней. Текущий draft и published не трогает."
+      tags: [Администрирование]
+      summary: Очистка старых ревизий
+      description: |
+        Удаляет архивные (archived) ревизии старше указанного количества дней.
+        Текущий черновик и опубликованная версия не затрагиваются.
+        Только для администраторов.
+      operationId: cleanupRevisions
       security:
         - BearerAuth: []
       parameters:
         - name: older_than_days
           in: query
+          description: "Удалять ревизии старше N дней (по умолчанию 90, мин. 1, макс. 3650)"
           schema:
             type: integer
             default: 90
+            minimum: 1
+            maximum: 3650
       responses:
         "200":
-          description: OK
+          description: Результат очистки
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  deleted:
+                  deleted_revisions:
                     type: integer
+                    description: Количество удалённых ревизий
+                  older_than_days:
+                    type: integer
+                    description: Использованный порог в днях
+        "403":
+          description: Требуется роль admin
