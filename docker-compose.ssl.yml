@@ -1,0 +1,42 @@
+# docker-compose.ssl.yml — TLS overlay for DeskBook production.
+#
+# Use as an override on top of docker-compose.prod.yml:
+#
+#   DESKBOOK_DOMAIN=app.example.com \
+#   CERTBOT_EMAIL=admin@example.com \
+#   docker compose -f docker-compose.prod.yml -f docker-compose.ssl.yml up -d
+#
+# On first deploy run scripts/setup-ssl.sh to obtain the initial certificate
+# before starting the full stack.
+
+services:
+  admin:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - certbot-conf:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+    environment:
+      - DESKBOOK_DOMAIN=${DESKBOOK_DOMAIN}
+    # Replace the default conf with the SSL template at startup
+    command: >
+      /bin/sh -c "envsubst '$$DESKBOOK_DOMAIN' < /etc/nginx/templates/ssl.conf.template
+      > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - certbot-conf:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    # Renew every 12 hours; certbot only acts when cert is within 30 days of expiry
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot --webroot-path /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done"
+
+volumes:
+  certbot-conf:
+  certbot-www:
