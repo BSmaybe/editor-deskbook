@@ -21,7 +21,7 @@ services:
       - DESKBOOK_DOMAIN=${DESKBOOK_DOMAIN}
     # Replace the default conf with the SSL template at startup
     command: >
-      /bin/sh -c "envsubst '$$DESKBOOK_DOMAIN' < /etc/nginx/templates/ssl.conf.template
+      /bin/sh -c "envsubst '$$DESKBOOK_DOMAIN' < /etc/nginx/ssl.conf.template
       > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
 
   certbot:
