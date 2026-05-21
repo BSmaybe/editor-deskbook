@@ -1042,6 +1042,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const [bgPdfPages, setBgPdfPages] = useState(0);    // total pages in loaded PDF
   const [bgPdfPage, setBgPdfPage] = useState(1);      // current page (1-indexed)
   const [bgPdfLoading, setBgPdfLoading] = useState(false);
+  const [bgPopoverOpen, setBgPopoverOpen] = useState(false);
+  const bgPopoverRef = useRef(null);
   const bgFileRef = useRef(null);
   const toolbarTipTargetRef = useRef(null);
   const [toolbarTip, setToolbarTip] = useState(null);
@@ -2750,6 +2752,18 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     return () => clearTimeout(autoSaveRef.current);
   }, [dirty, floorId, saveDraft]);
 
+  // Close background popover when clicking outside
+  useEffect(() => {
+    if (!bgPopoverOpen) return undefined;
+    const handler = (e) => {
+      if (bgPopoverRef.current && !bgPopoverRef.current.contains(e.target)) {
+        setBgPopoverOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [bgPopoverOpen]);
+
   /* ── insert objects from block ── */
   function insertObjects(rawDesks) {
     if (!rawDesks?.length) return;
@@ -2947,6 +2961,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         onFocus={showToolbarTip}
         onBlur={hideToolbarTip}
       >
+        {/* ── Инструменты ── */}
+        <div className="ce-toolbar-group">
         <button
           className={`ce-tool-btn ${tool === 'select' ? 'active' : ''}`}
           title="Выбор (V)"
@@ -2975,9 +2991,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         >
           <Ruler size={14} /><KBD>M</KBD>
         </button>
+        </div>
 
-        <div className="ce-toolbar-sep" />
-
+        {/* ── Черчение ── */}
+        <div className="ce-toolbar-group">
         <button
           className={`ce-tool-btn ${tool === 'draw_wall' ? 'active' : ''}`}
           title={structureLocked ? 'Слой конструкций заблокирован' : 'Стена (W)'}
@@ -3017,9 +3034,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         >
           <DoorOpen size={14} />
         </button>
+        </div>
 
-        <div className="ce-toolbar-sep" />
-
+        {/* ── Масштаб ── */}
+        <div className="ce-toolbar-group">
         <button className="ce-tool-btn" title="Приблизить (+)" onClick={() => viewport.zoomBy(1 / 1.25)}>
           <ZoomIn size={14} />
         </button>
@@ -3030,9 +3048,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         <button className="ce-tool-btn" title="Показать всё (F)" onClick={handleZoomToFit}>
           <Maximize size={14} /><KBD>F</KBD>
         </button>
+        </div>
 
-        <div className="ce-toolbar-sep" />
-
+        {/* ── Холст ── */}
+        <div className="ce-toolbar-group">
         <button
           className={`ce-tool-btn ${grid.gridVisible ? 'active' : ''}`}
           title={`Сетка: малая 0.25 м (${formatUnits(metricGridStep)} ед.), крупная 1 м`}
@@ -3054,9 +3073,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         >
           {desksLocked ? <Lock size={14} /> : <Unlock size={14} />}<KBD>L</KBD>
         </button>
+        </div>
 
-        <div className="ce-toolbar-sep" />
-
+        {/* ── Панели ── */}
+        <div className="ce-toolbar-group">
         <button
           className={`ce-tool-btn ${layerPanelOpen ? 'active' : ''}`}
           title="Слои"
@@ -3095,10 +3115,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         >
           <Maximize2 size={14} />
         </button>
+        </div>
 
+        {/* ── Выделение (условная группа) ── */}
         {(sel.selectedIds.size > 0 || selectedStruct) && (
-          <>
-            <div className="ce-toolbar-sep" />
+          <div className="ce-toolbar-group">
             {sel.selectedIds.size > 0 && (
               <button
                 className="ce-tool-btn"
@@ -3196,12 +3217,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             >
               <Trash2 size={14} />
             </button>
-          </>
+          </div>
         )}
 
-        <div className="ce-toolbar-sep" />
-
-        {/* Background tracing image controls */}
+        {/* ── Фон (кнопка + popover) ── */}
         <input
           ref={bgFileRef}
           type="file"
@@ -3209,162 +3228,151 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           style={{ display: 'none' }}
           onChange={onBgFileChange}
         />
-        <button
-          className={`ce-tool-btn icon-text ${bgImage ? 'active' : ''}`}
-          title="Загрузить фоновое изображение для обводки стен"
-          onClick={() => bgFileRef.current?.click()}
-        >
-          <ImageIcon size={14} />
-          <span>Фон</span>
-        </button>
-        {bgImage && (
-          <>
-            <button
-              className={`ce-tool-btn mini ${bgVisible ? 'active' : ''}`}
-              title={bgVisible ? 'Скрыть фон' : 'Показать фон'}
-              onClick={() => {
-                undoRedo.push(snapshot());
-                setBgVisible((v) => !v);
-                setDirty(true);
-              }}
-            >
-              {bgVisible ? <Eye size={12} /> : <EyeOff size={12} />}
-            </button>
-            <input
-              type="range"
-              min={0.05} max={1} step={0.05}
-              value={bgOpacity}
-              onChange={(e) => {
-                setBgOpacity(Number(e.target.value));
-                setDirty(true);
-              }}
-              title={`Прозрачность фона: ${Math.round(bgOpacity * 100)}%`}
-              className="ce-bg-opacity-slider"
-            />
-            <button
-              className={`ce-tool-btn mini ${tool === 'bg_edit' ? 'active' : ''}`}
-              title={bgLocked ? 'Фон зафиксирован' : 'Подогнать фон: двигать, менять размер, вращать'}
-              disabled={bgLocked}
-              onClick={() => {
-                cancelDraw();
-                setTool(tool === 'bg_edit' ? 'select' : 'bg_edit');
-              }}
-            >
-              <Move size={12} />
-            </button>
-            <span className="ce-bg-transform-controls" aria-label="Трансформация подложки">
-              <button
-                className="ce-tool-btn mini"
-                title="Уменьшить подложку на 10%"
-                disabled={bgLocked}
-                onClick={() => zoomBackgroundBy(0.9)}
-              >
-                <ZoomOut size={12} />
-              </button>
-              <span className="ce-bg-transform-readout" title="Масштаб подложки">
-                {bgScalePercent === null ? '—' : `${bgScalePercent}%`}
-              </span>
-              <button
-                className="ce-tool-btn mini"
-                title="Увеличить подложку на 10%"
-                disabled={bgLocked}
-                onClick={() => zoomBackgroundBy(1.1)}
-              >
-                <ZoomIn size={12} />
-              </button>
-              <button
-                className="ce-tool-btn mini"
-                title="Повернуть подложку влево на 15°"
-                disabled={bgLocked}
-                onClick={() => rotateBackgroundBy(-15)}
-              >
-                <RotateCcw size={12} />
-              </button>
-              <span className="ce-bg-transform-readout" title="Поворот подложки">
-                {bgRotationDegrees}°
-              </span>
-              <button
-                className="ce-tool-btn mini"
-                title="Повернуть подложку вправо на 15°"
-                disabled={bgLocked}
-                onClick={() => rotateBackgroundBy(15)}
-              >
-                <RotateCw size={12} />
-              </button>
-            </span>
-            <button
-              className="ce-tool-btn mini"
-              title="Вписать фон в холст"
-              onClick={fitBackgroundToCanvas}
-            >
-              <Maximize2 size={12} />
-            </button>
-            <button
-              className={`ce-tool-btn mini ${tool === 'bg_calibrate' ? 'active' : ''}`}
-              title="Калибровать масштаб по двум точкам"
-              onClick={startBackgroundCalibration}
-            >
-              <Target size={12} />
-            </button>
-            <button
-              className={`ce-tool-btn mini ${bgLocked ? 'active' : ''}`}
-              title={bgLocked ? 'Разблокировать фон' : 'Зафиксировать фон'}
-              onClick={toggleBackgroundLock}
-            >
-              {bgLocked ? <Lock size={12} /> : <Unlock size={12} />}
-            </button>
-            {/* PDF page navigation */}
-            {bgPdfPages > 1 && (
-              <span className="ce-pdf-nav">
+        {/* Фон-кнопка с popover — контролы скрыты до клика */}
+        <div className="ce-toolbar-group ce-bg-btn-group" ref={bgPopoverRef}>
+          <button
+            className={`ce-tool-btn icon-text ${bgImage ? 'active' : ''}`}
+            title={bgImage ? 'Настройки фонового изображения' : 'Загрузить фоновое изображение для обводки стен'}
+            onClick={() => (bgImage ? setBgPopoverOpen((v) => !v) : bgFileRef.current?.click())}
+          >
+            <ImageIcon size={14} />
+            <span>Фон</span>
+            {bgImage && <span className="ce-bg-indicator" />}
+          </button>
+
+          {bgPopoverOpen && bgImage && (
+            <div className="ce-bg-popover">
+              {/* Строка 1: загрузить новый / видимость / прозрачность */}
+              <div className="ce-bg-popover-row">
                 <button
                   className="ce-tool-btn mini"
-                  title="Предыдущая страница PDF"
-                  disabled={bgPdfPage <= 1 || bgPdfLoading}
-                  onClick={() => navigatePdfPage(-1)}
+                  title="Заменить изображение"
+                  onClick={() => bgFileRef.current?.click()}
                 >
-                  ‹
+                  <ImageIcon size={12} />
                 </button>
-                <span className="ce-pdf-page-label">
-                  {bgPdfLoading ? '…' : `${bgPdfPage}/${bgPdfPages}`}
-                </span>
                 <button
-                  className="ce-tool-btn mini"
-                  title="Следующая страница PDF"
-                  disabled={bgPdfPage >= bgPdfPages || bgPdfLoading}
-                  onClick={() => navigatePdfPage(1)}
+                  className={`ce-tool-btn mini ${bgVisible ? 'active' : ''}`}
+                  title={bgVisible ? 'Скрыть фон' : 'Показать фон'}
+                  onClick={() => { undoRedo.push(snapshot()); setBgVisible((v) => !v); setDirty(true); }}
                 >
-                  ›
+                  {bgVisible ? <Eye size={12} /> : <EyeOff size={12} />}
                 </button>
-              </span>
-            )}
-            {bgPdfLoading && bgPdfPages === 0 && (
-              <span className="ce-pdf-loading">PDF…</span>
-            )}
-            <button
-              className="ce-tool-btn mini danger"
-              title="Удалить фоновое изображение"
-              onClick={() => {
-                undoRedo.push(snapshot());
-                setBgImage(null);
-                setBgLocked(false);
-                setBgTransform(defaultBackgroundTransform(canvasW, canvasH));
-                setBgCalibration(null);
-                setBgCalibrationPoints([]);
-                setBgCalibrationInput('');
-                setBgNaturalSize(null);
-                setBgPdfData(null);
-                setBgPdfPages(0);
-                setBgPdfPage(1);
-                setDirty(true);
-              }}
-            >
-              <Trash2 size={12} />
-            </button>
-          </>
-        )}
+                <input
+                  type="range"
+                  min={0.05} max={1} step={0.05}
+                  value={bgOpacity}
+                  onChange={(e) => { setBgOpacity(Number(e.target.value)); setDirty(true); }}
+                  title={`Прозрачность: ${Math.round(bgOpacity * 100)}%`}
+                  className="ce-bg-opacity-slider"
+                />
+                <span className="ce-bg-popover-readout">{Math.round(bgOpacity * 100)}%</span>
+              </div>
+
+              {/* Строка 2: перемещение + масштаб + поворот */}
+              <div className="ce-bg-popover-row">
+                <button
+                  className={`ce-tool-btn mini ${tool === 'bg_edit' ? 'active' : ''}`}
+                  title={bgLocked ? 'Фон зафиксирован' : 'Двигать / масштабировать / вращать'}
+                  disabled={bgLocked}
+                  onClick={() => { cancelDraw(); setTool(tool === 'bg_edit' ? 'select' : 'bg_edit'); }}
+                >
+                  <Move size={12} />
+                </button>
+                <button className="ce-tool-btn mini" title="Уменьшить на 10%" disabled={bgLocked} onClick={() => zoomBackgroundBy(0.9)}>
+                  <ZoomOut size={12} />
+                </button>
+                <span className="ce-bg-popover-readout" title="Масштаб">{bgScalePercent === null ? '—' : `${bgScalePercent}%`}</span>
+                <button className="ce-tool-btn mini" title="Увеличить на 10%" disabled={bgLocked} onClick={() => zoomBackgroundBy(1.1)}>
+                  <ZoomIn size={12} />
+                </button>
+                <button className="ce-tool-btn mini" title="Повернуть −15°" disabled={bgLocked} onClick={() => rotateBackgroundBy(-15)}>
+                  <RotateCcw size={12} />
+                </button>
+                <span className="ce-bg-popover-readout" title="Поворот">{bgRotationDegrees}°</span>
+                <button className="ce-tool-btn mini" title="Повернуть +15°" disabled={bgLocked} onClick={() => rotateBackgroundBy(15)}>
+                  <RotateCw size={12} />
+                </button>
+              </div>
+
+              {/* Строка 3: вписать / калибровать / зафиксировать */}
+              <div className="ce-bg-popover-row">
+                <button className="ce-tool-btn mini" title="Вписать в холст" onClick={fitBackgroundToCanvas}>
+                  <Maximize2 size={12} />
+                </button>
+                <button
+                  className={`ce-tool-btn mini ${tool === 'bg_calibrate' ? 'active' : ''}`}
+                  title="Калибровать масштаб по двум точкам"
+                  onClick={startBackgroundCalibration}
+                >
+                  <Target size={12} />
+                </button>
+                <button
+                  className={`ce-tool-btn mini ${bgLocked ? 'active' : ''}`}
+                  title={bgLocked ? 'Разблокировать фон' : 'Зафиксировать фон'}
+                  onClick={toggleBackgroundLock}
+                >
+                  {bgLocked ? <Lock size={12} /> : <Unlock size={12} />}
+                </button>
+              </div>
+
+              {/* PDF-навигация (при наличии) */}
+              {bgPdfPages > 1 && (
+                <div className="ce-bg-popover-row">
+                  <button
+                    className="ce-tool-btn mini"
+                    title="Предыдущая страница"
+                    disabled={bgPdfPage <= 1 || bgPdfLoading}
+                    onClick={() => navigatePdfPage(-1)}
+                  >‹</button>
+                  <span className="ce-bg-popover-readout">
+                    {bgPdfLoading ? '…' : `${bgPdfPage} / ${bgPdfPages}`}
+                  </span>
+                  <button
+                    className="ce-tool-btn mini"
+                    title="Следующая страница"
+                    disabled={bgPdfPage >= bgPdfPages || bgPdfLoading}
+                    onClick={() => navigatePdfPage(1)}
+                  >›</button>
+                </div>
+              )}
+              {bgPdfLoading && bgPdfPages === 0 && (
+                <div className="ce-bg-popover-row"><span className="ce-bg-popover-readout">PDF…</span></div>
+              )}
+
+              {/* Удалить */}
+              <div className="ce-bg-popover-row ce-bg-popover-row--danger">
+                <button
+                  className="ce-tool-btn mini danger"
+                  title="Удалить фоновое изображение"
+                  onClick={() => {
+                    undoRedo.push(snapshot());
+                    setBgImage(null);
+                    setBgLocked(false);
+                    setBgTransform(defaultBackgroundTransform(canvasW, canvasH));
+                    setBgCalibration(null);
+                    setBgCalibrationPoints([]);
+                    setBgCalibrationInput('');
+                    setBgNaturalSize(null);
+                    setBgPdfData(null);
+                    setBgPdfPages(0);
+                    setBgPdfPage(1);
+                    setBgPopoverOpen(false);
+                    setDirty(true);
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+                <span className="ce-bg-popover-readout">Удалить фон</span>
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="ce-toolbar-spacer" />
 
+        {/* ── Действия ── */}
+        <div className="ce-toolbar-group">
         <button
           className="ce-tool-btn"
           title="Отменить (Ctrl+Z)"
@@ -3398,6 +3406,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             </button>
           </>
         )}
+        </div>
       </div>
 
       {toolbarTip && (
