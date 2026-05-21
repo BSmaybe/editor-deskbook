@@ -49,7 +49,7 @@
 .floor-canvas-editor .ce-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 5px 8px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border-color);
@@ -79,12 +79,46 @@
 .floor-canvas-editor .ce-toolbar-group {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  background: rgba(0, 0, 0, 0.03);
-  border: 1px solid #e8ecf2;
+  gap: 1px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
   border-radius: 8px;
-  padding: 2px 3px;
+  padding: 2px;
   flex-shrink: 0;
+}
+
+/* Кнопки внутри группы: убираем их рамку, фон прозрачный — группа сама даёт контейнер */
+.floor-canvas-editor .ce-toolbar-group > .ce-tool-btn,
+.floor-canvas-editor .ce-toolbar-group > .ce-zoom-label {
+  border-color: transparent;
+  background: transparent;
+}
+
+.floor-canvas-editor .ce-toolbar-group > .ce-tool-btn:hover {
+  background: #e2e8f0;
+  border-color: transparent;
+}
+
+.floor-canvas-editor .ce-toolbar-group > .ce-tool-btn.active {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.floor-canvas-editor .ce-toolbar-group > .ce-tool-btn:disabled {
+  background: transparent;
+  border-color: transparent;
+}
+
+.floor-canvas-editor .ce-toolbar-group > .ce-tool-btn.save-btn {
+  background: #2563eb;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
+.floor-canvas-editor .ce-toolbar-group > .ce-tool-btn.save-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+  border-color: #1e40af;
 }
 
 .floor-canvas-editor .ce-toolbar-sep {
