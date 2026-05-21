@@ -46,8 +46,6 @@ import {
   AlignVerticalSpaceBetween,
   Activity,
   Copy,
-  Download,
-  DoorOpen,
   Eye,
   EyeOff,
   Grid3X3,
@@ -3026,14 +3024,6 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         >
           <Pencil size={14} />
         </button>
-        <button
-          className={`ce-tool-btn ${tool === 'draw_door' ? 'active' : ''}`}
-          title={structureLocked ? 'Слой конструкций заблокирован' : 'Дверь'}
-          disabled={structureLocked}
-          onClick={() => { cancelDraw(); setTool(tool === 'draw_door' ? 'select' : 'draw_door'); }}
-        >
-          <DoorOpen size={14} />
-        </button>
         </div>
 
         {/* ── Холст ── */}
@@ -3083,13 +3073,6 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           onClick={() => setKbdPanelOpen((prev) => !prev)}
         >
           <Keyboard size={14} />
-        </button>
-        <button
-          className="ce-tool-btn"
-          title="Экспортировать PNG"
-          onClick={exportPng}
-        >
-          <Download size={14} />
         </button>
         <button
           className={`ce-tool-btn ${canvasResizeOpen ? 'active' : ''}`}

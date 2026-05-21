@@ -641,8 +641,8 @@ ${svgPreview}
                     <FileDown size={15} /> Экспорт PDF
                   </button>
                   <div className="lp-dropdown-sep" />
-                  <button className="lp-dropdown-item" onClick={() => { runValidation(); setFilesMenuOpen(false); }} disabled={!layout && mode !== 'canvas'}>
-                    <ListChecks size={15} /> Проверить ошибки
+                  <button className="lp-dropdown-item" disabled title="Проверка ошибок — скоро">
+                    <ListChecks size={15} /> Проверить ошибки <span style={{ fontSize: 10, color: '#94a3b8', marginLeft: 4 }}>скоро</span>
                   </button>
                 </div>
               )}
