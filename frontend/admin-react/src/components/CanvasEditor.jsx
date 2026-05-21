@@ -868,7 +868,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
   /* ── scale: pixels per meter ── */
   const [pixelsPerMeter, setPixelsPerMeter] = useState(
-    () => layout?.layout?.pixels_per_meter || 100
+    () => layout?.layout?.pixels_per_meter || 50
   );
 
   /* ── hooks ── */
@@ -1441,7 +1441,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     setZones(layout?.layout?.zones || []);
     setInfraLayers(layout?.layout?.infra_layers || []);
     setCanvasSizeOverride(null); // clear override — use layout vb
-    setPixelsPerMeter(layout?.layout?.pixels_per_meter || 100);
+    setPixelsPerMeter(layout?.layout?.pixels_per_meter || 50);
     const nextBackground = backgroundFromLayout(layout?.layout);
     setBgImage(nextBackground.image);
     setBgOpacity(nextBackground.opacity);

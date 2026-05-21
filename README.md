@@ -12,13 +12,14 @@ docker compose up --build -d
 | --- | --- |
 | React admin | http://localhost:5175 |
 | Go API | http://localhost:8000 |
+| Swagger UI | http://localhost:8000/docs |
 | PostgreSQL | localhost:5432 |
 
 Порты 5175, 8000 и 5432 открываются через `docker-compose.override.yml` (для разработки). Первый админ создаётся автоматически из `BOOTSTRAP_ADMIN_*` в `.env`.
 
 ## Локальная разработка
 
-Go API:
+Go API (требует Go 1.22+):
 
 ```bash
 cd backend-go
@@ -31,7 +32,9 @@ React admin с hot reload:
 ```bash
 cd frontend/admin-react
 npm install
-npm run dev
+npm run dev      # http://localhost:5175
+npm run lint     # ESLint
+npm run test     # Vitest unit-тесты
 ```
 
 Dev server на `http://localhost:5175`, проксирует `/api` в Go API.
@@ -40,14 +43,21 @@ Dev server на `http://localhost:5175`, проксирует `/api` в Go API.
 
 ```
 backend-go/
-  cmd/server/          Go HTTP API (auth, CRUD, layout, export)
-  internal/exporter/   layout_json -> semantic SVG/HTML
-  internal/svgimport/  SVG import и классификация
-  migrations/          PostgreSQL schema
+  cmd/server/          Точка входа — HTTP-сервер, настройка slog, goose-миграции
+  internal/
+    handler/           HTTP-хендлеры (auth, offices, floors, components, layouts, ...)
+    store/             CRUD-обёртки над БД (pgx/v5)
+    store/db/          sqlc-генерированные запросы
+    store/queries/     SQL-шаблоны для sqlc
+    auth/              JWT-утилиты (HS256)
+    exporter/          layout_json → семантический SVG/HTML
+    svgimport/         SVG-импорт и классификация элементов
+  migrations/          SQL-миграции (goose, embedded)
 
 frontend/admin-react/
-  src/                 React admin UI (Vite)
-  nginx.conf           /api proxy -> Go API
+  src/                 React admin UI (Vite + React 18)
+  src/lib/             Хуки и утилиты канваса (useViewport, useGrid, ...)
+  nginx.conf           /api proxy → Go API
 
 scripts/
   backup.sh            Бэкап PostgreSQL с ротацией
@@ -84,10 +94,17 @@ tests/
 ## Тесты
 
 ```bash
+# Backend unit + integration
+cd backend-go && go test ./... -count=1
+
+# Contract tests (требуют запущенный стек)
 bash tests/go_renderer_contract.sh
 bash tests/go_components_contract.sh
 bash tests/go_layout_contract.sh
 bash tests/smoke_test.sh
+
+# Frontend
+cd frontend/admin-react && npm test
 ```
 
 ## Деплой на сервер
@@ -105,6 +122,27 @@ docker compose up --build -d
 ```
 
 Наружу открыт только порт 80 (nginx). PostgreSQL и Go API доступны только внутри Docker-сети. Порт можно сменить через `DESKBOOK_PORT` в `.env`.
+
+### HTTPS / TLS (опционально)
+
+Для production с Let's Encrypt:
+
+```bash
+# Сначала убедиться что домен указывает на сервер
+export DESKBOOK_DOMAIN=maps.example.com
+bash scripts/setup-ssl.sh
+
+# Использовать SSL overlay
+docker compose -f docker-compose.yml -f docker-compose.ssl.yml up -d
+```
+
+### Логирование
+
+API логирует в текстовом формате по умолчанию. Для JSON-логов в production:
+
+```
+APP_ENV=production
+```
 
 ### Обслуживание
 

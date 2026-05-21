@@ -2,6 +2,8 @@
 
 Base URL: `http://localhost:8000` (Docker) или через nginx proxy `http://localhost:5175/api`.
 
+Интерактивная документация: `http://localhost:8000/docs` (Swagger UI).
+
 ## Общие правила
 
 - **Content-Type**: `application/json` (кроме login и upload).

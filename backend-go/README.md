@@ -2,15 +2,34 @@
 
 Go-бэкенд редактора карт DeskBook: авторизация, приглашения, здания, этажи, компоненты, блоки, шаблоны, рабочие места, layout draft/publish, SVG-импорт и семантический SVG/HTML экспорт.
 
+## Структура пакетов
+
+```
+cmd/server/          — точка входа: slog-логгер, pgxpool, goose-миграции, graceful shutdown
+internal/
+  handler/           — HTTP-хендлеры: handler.go регистрирует все маршруты через NewServer()
+  store/             — CRUD-обёртки: ComponentStore, LayoutStore, UserStore, ...
+  store/db/          — sqlc-генерированный код (Querier, модели, SQL-методы)
+  store/queries/     — SQL-шаблоны для sqlc
+  auth/              — JWT-утилиты (HS256, claims sub/role/exp)
+  exporter/          — layout_json → семантический SVG/HTML
+  svgimport/         — SVG-импорт и классификация элементов (стены, двери, рабочие места)
+migrations/          — SQL-файлы goose (embedded в бинарник через migrations.go)
+```
+
 ## Контракт экспорта
 
 - **Вход**: `layout_json` (структура `LayoutDocument`).
 - **SVG**: семантический SVG/XML — `<defs>/<symbol>`, слои `background`, `structure`, `building/storey/zone/workplace`, атрибуты `data-*`, переиспользуемые `<use>`-ссылки.
 - **HTML**: standalone HTML-обёртка с CSS-подсветкой при наведении и событием `deskbook:workplace-click` для интеграции.
 
+## Логирование
+
+По умолчанию — текстовый формат (`slog.TextHandler`). Для JSON-логов установить `APP_ENV=production`.
+
 ## Локальный запуск
 
-Если Go установлен:
+Если Go установлен (требуется Go 1.22+):
 
 ```bash
 cd backend-go
@@ -21,7 +40,7 @@ go run ./cmd/server
 Если Go не установлен — через Docker:
 
 ```bash
-docker run --rm -v "$PWD/backend-go:/src" -w /src golang:1.22-alpine go test ./...
+docker run --rm -v "$PWD/backend-go:/src" -w /src golang:1.23-alpine go test ./...
 ```
 
 ## HTTP API
@@ -99,6 +118,10 @@ docker run --rm -v "$PWD/backend-go:/src" -w /src golang:1.22-alpine go test ./.
 
 Admin write-операции валидируют HS256 JWT через `SECRET_KEY` и требуют `role=admin`. Регистрация — только по приглашению.
 
+## Миграции
+
+Используется [goose](https://github.com/pressly/goose) с embedded SQL-файлами. Миграции применяются автоматически при старте сервера (или вручную через compose-сервис `migrate`). Файлы: `migrations/00001_schema.sql`, `00002_templates.sql`, `00003_blocks.sql`.
+
 ## Запуск через Docker Compose
 
 ```bash
@@ -116,7 +139,7 @@ Unit-тесты (без базы данных):
 go test ./... -count=1
 
 # Через Docker
-docker run --rm -v "$PWD/backend-go:/app" -w /app golang:1.22-alpine go test ./... -count=1
+docker run --rm -v "$PWD/backend-go:/app" -w /app golang:1.23-alpine go test ./... -count=1
 ```
 
 Contract-тесты (требуют запущенный compose-стек):
@@ -127,3 +150,12 @@ bash tests/go_components_contract.sh
 bash tests/go_layout_contract.sh
 bash tests/smoke_test.sh
 ```
+
+## Добавление нового endpoint
+
+1. Добавить handler в `internal/handler/` (файл по домену: `offices_floors.go`, `layouts.go`, ...)
+2. Зарегистрировать маршрут в `internal/handler/handler.go` (`Routes()`)
+3. Добавить CRUD-метод в `internal/store/` если нужен новый SQL
+4. Обновить `backend-go/openapi.yaml` и скопировать:
+   `cp backend-go/openapi.yaml backend-go/internal/handler/swagger-ui/openapi.yaml`
+5. Добавить тест

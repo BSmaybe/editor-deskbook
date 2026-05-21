@@ -26,10 +26,11 @@ bash scripts/onboarding.sh
 │  React Admin      │────▸│  nginx        │────▸│  Go API       │
 │  (Vite, :5175)    │     │  /api → :8000 │     │  (net/http)   │
 │                   │     │  /static      │     │               │
-│  Canvas editor    │     │  /docs (Swagger)    │  JWT auth     │
-│  Component lib    │     └───────────────┘     │  CRUD         │
-│  Draft/Publish UI │                           │  SVG export   │
-└───────────────────┘                           └───────┬───────┘
+│  Canvas editor    │     │  /docs(Swagger│     │  JWT auth     │
+│  Component lib    │     └───────────────┘     │  handler/     │
+│  Draft/Publish UI │                           │  store/       │
+└───────────────────┘                           │  exporter/    │
+                                                └───────┬───────┘
                                                         │
                                                         ▼
                                                 ┌───────────────┐
@@ -37,18 +38,31 @@ bash scripts/onboarding.sh
                                                 │  (:5432)      │
                                                 │               │
                                                 │  Миграции     │
-                                                │  через compose│
+                                                │  через goose  │
                                                 └───────────────┘
 ```
 
 **Compose-сервисы:**
 
-| Сервис    | Что делает                              |
-|-----------|----------------------------------------|
-| `postgres`| БД, данные в Docker volume              |
-| `migrate` | Применяет SQL-миграции и завершается    |
-| `api`     | Go HTTP API на порту 8000               |
-| `admin`   | nginx + React SPA на порту 5175         |
+| Сервис    | Что делает                                       |
+|-----------|--------------------------------------------------|
+| `postgres`| БД, данные в Docker volume                       |
+| `migrate` | Применяет goose-миграции и завершается           |
+| `api`     | Go HTTP API на порту 8000 (graceful shutdown)    |
+| `admin`   | nginx + React SPA на порту 5175                  |
+
+**Backend-пакеты:**
+
+| Пакет                   | Роль                                              |
+|-------------------------|---------------------------------------------------|
+| `cmd/server`            | main: slog-логгер, pgxpool, запуск goose и сервера|
+| `internal/handler`      | HTTP-хендлеры; `NewServer()` регистрирует маршруты|
+| `internal/store`        | Репозитории: ComponentStore, LayoutStore, ...     |
+| `internal/store/db`     | sqlc-сгенерированный код (Querier, модели)        |
+| `internal/auth`         | JWT-утилиты (HS256)                               |
+| `internal/exporter`     | layout_json → SVG/HTML                            |
+| `internal/svgimport`    | SVG-импорт и классификация                        |
+| `migrations`            | SQL-файлы goose, embedded в бинарник              |
 
 ---
 
@@ -99,7 +113,7 @@ bash scripts/onboarding.sh
 ### Данные и схема
 
 7. **Где схема БД и как запускаются миграции?**
-   Основная: `backend-go/migrations/001_schema.sql`. Дополнительные: `002_templates.sql`, `003_blocks.sql`. Compose-сервис `migrate` применяет их перед стартом `api`.
+   Файлы: `backend-go/migrations/00001_schema.sql`, `00002_templates.sql`, `00003_blocks.sql`. Используется [goose](https://github.com/pressly/goose) с embedded-файлами — применяются автоматически при старте сервера. Compose-сервис `migrate` выполняет миграции до запуска `api`.
 
 8. **Какие API критичны для редактора?**
    `/offices`, `/floors`, `/components`, `/blocks`, `/templates`, `/floors/{id}/layout/*`, `/floors/{id}/lock`, `/render/svg`, `/render/html`, `/admin/invites`, `/desks`.
@@ -143,15 +157,23 @@ bash scripts/onboarding.sh
 17. **Какая валидация SVG?**
     `<script>`, `<iframe>`, `<object>`, `<embed>`, `onclick` и прочие XSS-векторы запрещены — возвращается `422 Unprocessable Entity`.
 
+### Редактор карт (Canvas Editor)
+
+18. **Как устроен интерфейс редактора?**
+    Canvas editor — SVG-редактор с pan/zoom через viewBox. Инструменты: Select, Pan, Place, Measure, Draw Wall/Partition/Zone/Boundary. Масштаб/Undo/Save — в HUD-оверлее поверх канваса (не в тулбаре). Фоновое изображение управляется через popover-кнопку «Фон» в HUD.
+
+19. **Что такое pixels_per_meter?**
+    Масштаб карты: сколько canvas-единиц равно 1 метру. Дефолт — **50** (1 м = 50 ед.). Показывается в статусбаре как «1 м = N ед.» и кликается для редактирования. Сетка адаптируется к масштабу: `niceMetricStep(ppm × zoom)` выбирает ближайший красивый шаг (0.05, 0.1, 0.25, 0.5, 1, 2, 5… метров) чтобы линии были ~40px друг от друга.
+
 ### Деплой и обслуживание
 
-18. **Какие проверки обязательны перед релизом?**
-    - `go test ./...` в `backend-go` (или через Docker)
-    - `npm run build` в `frontend/admin-react`
+20. **Какие проверки обязательны перед релизом?**
+    - `cd backend-go && go test ./... -count=1`
+    - `cd frontend/admin-react && npm run lint && npm run test && npm run build`
     - Contract tests: `bash tests/go_renderer_contract.sh`, `bash tests/go_components_contract.sh`, `bash tests/go_layout_contract.sh`
     - Smoke test: `bash tests/smoke_test.sh` на поднятом стеке
 
-19. **Как настроить production?**
+21. **Как настроить production?**
     ```bash
     bash scripts/gen-secrets.sh   # генерирует .env.production
     cp .env.production .env
@@ -159,12 +181,16 @@ bash scripts/onboarding.sh
     docker compose up --build -d
     ```
     Наружу только порт 80 (nginx). PostgreSQL и Go API — только внутри Docker-сети.
+    Для HTTPS добавить overlay: `docker compose -f docker-compose.yml -f docker-compose.ssl.yml up -d`
 
-20. **Бэкап и восстановление?**
+22. **Бэкап и восстановление?**
     ```bash
     bash scripts/backup.sh           # бэкап PostgreSQL (ротация 30 копий)
     bash scripts/restore.sh <file>   # восстановление
     ```
+
+23. **Как работает логирование?**
+    API использует `log/slog`. По умолчанию — текстовый формат. Установите `APP_ENV=production` для JSON-логов (удобно для Loki/ELK).
 
 ---
 
@@ -176,7 +202,7 @@ bash scripts/onboarding.sh
 | React Admin | `http://localhost:5175` |
 | API документация (Markdown) | `docs/API.md` |
 | OpenAPI спецификация | `backend-go/openapi.yaml` |
-| Схема БД | `backend-go/migrations/001_schema.sql` |
+| Схема БД | `backend-go/migrations/00001_schema.sql` |
 | Интерактивный онбординг | `bash scripts/onboarding.sh` |
 | Smoke test | `bash tests/smoke_test.sh` |
 
@@ -197,25 +223,32 @@ cd frontend/admin-react && npm run dev
 docker compose up -d --build api
 
 # 4. Прогнать тесты
-docker run --rm -v "$PWD/backend-go:/app" -w /app golang:1.22-alpine go test ./... -count=1
+cd backend-go && go test ./... -count=1
 
-# 5. Contract tests
+# 5. Frontend lint + тесты
+cd frontend/admin-react && npm run lint && npm run test
+
+# 6. Contract tests
 bash tests/smoke_test.sh
 ```
 
 ### Добавление нового endpoint
 
-1. Добавить handler в `backend-go/cmd/server/` (файл по домену: `offices.go`, `floors.go`, ...)
-2. Зарегистрировать маршрут в `main.go` (`mux.HandleFunc(...)`)
-3. Добавить описание в `backend-go/openapi.yaml` (на русском)
-4. Скопировать: `cp backend-go/openapi.yaml backend-go/cmd/server/swagger-ui/openapi.yaml`
-5. Добавить тест в `handlers_test.go` (unit) и/или `tests/` (contract)
+1. Добавить handler в `backend-go/internal/handler/` (файл по домену: `offices_floors.go`, `layouts.go`, ...)
+2. Зарегистрировать маршрут в `internal/handler/handler.go`
+3. Добавить CRUD-метод в `internal/store/` + SQL в `internal/store/queries/`
+4. Обновить OpenAPI спецификацию:
+   ```bash
+   # Отредактировать backend-go/openapi.yaml
+   cp backend-go/openapi.yaml backend-go/internal/handler/swagger-ui/openapi.yaml
+   ```
+5. Добавить тест в `internal/handler/` (unit) и/или `tests/` (contract)
 
 ### Добавление миграции
 
-1. Создать `backend-go/migrations/NNN_description.sql`
-2. Добавить `COPY` в `backend-go/Dockerfile` (или `docker-compose.yml` volume mount)
-3. Убедиться что `migrate` сервис подхватывает файл
+1. Создать `backend-go/migrations/NNNNN_description.sql` (формат goose)
+2. Файл подхватывается автоматически через `embed.FS` в `migrations/migrations.go`
+3. `docker compose up -d --build migrate` — применить
 
 ---
 
@@ -229,9 +262,10 @@ bash tests/smoke_test.sh
 | `423 Locked` при сохранении draft | Этаж заблокирован другим — подождать 10 мин или попросить снять |
 | `422` при создании компонента | SVG содержит запрещённые теги (`<script>` и т.д.) |
 | `403` на admin-эндпоинте | Пользователь не admin — проверить `role` в JWT |
-| Swagger UI пустой | `openapi.yaml` не скопирован в `cmd/server/swagger-ui/` |
+| Swagger UI пустой | `openapi.yaml` не скопирован в `internal/handler/swagger-ui/` |
 | Frontend не видит API | Проверить что `api` на порту 8000. Vite proxy: `vite.config.*` → `/api` |
-| Go не установлен | Запускать через Docker: `docker run --rm -v "$PWD/backend-go:/app" -w /app golang:1.22-alpine go test ./...` |
+| Go не установлен | Запускать через Docker: `docker run --rm -v "$PWD/backend-go:/app" -w /app golang:1.23-alpine go test ./...` |
+| Логи в JSON | Установить `APP_ENV=production` в `.env` |
 
 ---
 
