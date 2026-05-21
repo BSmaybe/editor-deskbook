@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   BookTemplate,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   CircleCheck,
   Clock,
+  Database,
   Download,
   Eye,
   FileDown,
@@ -12,7 +14,6 @@ import {
   FileJson,
   FileUp,
   GitCompareArrows,
-  ImageIcon,
   ListChecks,
   Move,
   Package,
@@ -282,6 +283,12 @@ export default function LayoutPanel({
   const [validationOpen, setValidationOpen] = useState(false);
   const canvasRef = useRef(null);
 
+  // Dropdown menus
+  const [filesMenuOpen, setFilesMenuOpen] = useState(false);
+  const [libMenuOpen, setLibMenuOpen] = useState(false);
+  const filesMenuRef = useRef(null);
+  const libMenuRef = useRef(null);
+
   useEffect(() => {
     if (templateOpen) {
       apiFetch('/templates').then(setTemplates).catch(() => setTemplates([]));
@@ -303,6 +310,16 @@ export default function LayoutPanel({
   const [floorLock, setFloorLock] = useState(null);
   const currentUser = usernameFromStorage();
   const isLockedByOther = !!(floorLock?.locked && floorLock?.locked_by_username !== currentUser);
+
+  useEffect(() => {
+    if (!filesMenuOpen && !libMenuOpen) return undefined;
+    const handler = (e) => {
+      if (filesMenuRef.current && !filesMenuRef.current.contains(e.target)) setFilesMenuOpen(false);
+      if (libMenuRef.current && !libMenuRef.current.contains(e.target)) setLibMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [filesMenuOpen, libMenuOpen]);
 
   useEffect(() => {
     if (mode !== 'canvas') reportDirty(false);
@@ -598,72 +615,98 @@ ${svgPreview}
                 <span>{creatingBlank ? 'Создание...' : 'Пустой черновик'}</span>
               </button>
             )}
-            <button
-              className="icon-button"
-              onClick={() => switchMode('json')}
-              disabled={isLockedByOther}
-              data-tip="JSON черновика"
-              title="JSON черновика"
-            >
-              <FileJson size={18} />
-            </button>
-            <button
-              className="icon-button"
-              onClick={() => setImportOpen(true)}
-              disabled={isLockedByOther}
-              data-tip="Импортировать SVG как черновик"
-              title="Импортировать SVG"
-            >
-              <FileUp size={18} />
-            </button>
-            <button
-              className="icon-button"
-              onClick={() => { switchMode('canvas'); setTimeout(() => canvasRef.current?.triggerBgUpload?.(), 100); }}
-              disabled={isLockedByOther}
-              data-tip="Загрузить подложку (PNG, JPEG, PDF) для обрисовки"
-              title="Загрузить подложку (PNG, JPEG, PDF)"
-            >
-              <ImageIcon size={18} />
-            </button>
-            <button className="icon-button" onClick={() => setTemplateOpen(!templateOpen)} data-tip="Шаблоны планировок">
-              <BookTemplate size={18} />
-            </button>
-            <button className="icon-button" onClick={() => setBlockLibOpen(!blockLibOpen)} data-tip="Библиотека блоков">
-              <Package size={18} />
-            </button>
-            <button className="icon-button" onClick={() => setHistoryOpen(true)} data-tip="История версий">
+
+            {/* ── Файлы ▾ ── */}
+            <div className="lp-menu-wrap" ref={filesMenuRef}>
+              <button
+                className={`tool-button secondary lp-menu-btn ${filesMenuOpen ? 'active' : ''}`}
+                onClick={() => { setFilesMenuOpen((v) => !v); setLibMenuOpen(false); }}
+                title="Файлы и экспорт"
+              >
+                <span>Файлы</span>
+                <ChevronDown size={14} />
+              </button>
+              {filesMenuOpen && (
+                <div className="lp-dropdown">
+                  <button className="lp-dropdown-item" onClick={() => { switchMode('json'); setFilesMenuOpen(false); }}>
+                    <FileJson size={15} /> JSON черновика
+                  </button>
+                  <button className="lp-dropdown-item" onClick={() => { setImportOpen(true); setFilesMenuOpen(false); }}>
+                    <FileUp size={15} /> Импортировать SVG
+                  </button>
+                  <div className="lp-dropdown-sep" />
+                  <button className="lp-dropdown-item" onClick={() => { handleDownload(); setFilesMenuOpen(false); }} disabled={!layout && !svgPreview}>
+                    <Download size={15} /> Скачать SVG
+                  </button>
+                  <button className="lp-dropdown-item" onClick={() => { exportPdf(); setFilesMenuOpen(false); }} disabled={!svgPreview}>
+                    <FileDown size={15} /> Экспорт PDF
+                  </button>
+                  <div className="lp-dropdown-sep" />
+                  <button className="lp-dropdown-item" onClick={() => { runValidation(); setFilesMenuOpen(false); }} disabled={!layout && mode !== 'canvas'}>
+                    <ListChecks size={15} /> Проверить ошибки
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* ── Библиотека ▾ ── */}
+            <div className="lp-menu-wrap" ref={libMenuRef}>
+              <button
+                className={`tool-button secondary lp-menu-btn ${libMenuOpen ? 'active' : ''}`}
+                onClick={() => { setLibMenuOpen((v) => !v); setFilesMenuOpen(false); }}
+                title="Шаблоны и блоки"
+              >
+                <span>Библиотека</span>
+                <ChevronDown size={14} />
+              </button>
+              {libMenuOpen && (
+                <div className="lp-dropdown">
+                  <button className="lp-dropdown-item" onClick={() => { setTemplateOpen((v) => !v); setLibMenuOpen(false); }}>
+                    <BookTemplate size={15} /> Шаблоны планировок
+                  </button>
+                  <button className="lp-dropdown-item" onClick={() => { setBlockLibOpen((v) => !v); setLibMenuOpen(false); }}>
+                    <Package size={15} /> Библиотека блоков
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* ── История ── */}
+            <button className="icon-button" onClick={() => setHistoryOpen(true)} title="История версий">
               <Clock size={18} />
             </button>
-            <button className="icon-button" onClick={handleDownload} disabled={!layout && !svgPreview} data-tip="Скачать SVG файл карты">
-              <Download size={18} />
-            </button>
-            <button className="icon-button" onClick={exportPdf} disabled={!svgPreview} data-tip="Экспортировать в PDF (через печать)">
-              <FileDown size={18} />
-            </button>
-            <button
-              className="icon-button"
-              onClick={() => runValidation()}
-              disabled={!layout && mode !== 'canvas'}
-              data-tip="Проверить карту на ошибки"
-            >
-              <ListChecks size={18} />
-            </button>
+
+            <div className="toolbar-sep" />
+
+            {/* ── Сохранить (когда есть изменения) ── */}
             {canvasDirty && mode === 'canvas' && (
               <button
                 className="tool-button secondary"
                 onClick={async () => { try { await saveCanvasIfNeeded({ updatePreview: true }); } catch {} }}
                 disabled={busy || isLockedByOther}
-                data-tip="Сохранить черновик"
+                title="Сохранить черновик"
               >
                 <Save size={18} />
                 <span>Сохранить</span>
               </button>
             )}
+
+            {/* ── Применить к базе ── */}
+            <button
+              className="icon-button"
+              onClick={onSync}
+              disabled={busy || !layout}
+              title="Записать рабочие места из опубликованного плана в базу данных"
+            >
+              <Database size={18} />
+            </button>
+
+            {/* ── Опубликовать ── */}
             <button
               className="tool-button"
               onClick={handlePublish}
               disabled={busy || !layout || (layout.status !== 'draft' && !canvasDirty) || isLockedByOther}
-              data-tip="Опубликовать черновик"
+              title="Опубликовать черновик"
             >
               <Rocket size={18} />
               <span>Опубликовать</span>
@@ -783,7 +826,7 @@ ${svgPreview}
         )}
       </section>
 
-      <LayoutInspector layout={layout} busy={busy} onSync={onSync} />
+      {/* LayoutInspector removed — metadata shown in header badges */}
 
       <ImportModal
         floorId={floorId}

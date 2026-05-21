@@ -476,17 +476,10 @@ input {
 }
 
 .layout-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  grid-template-rows: 1fr;
-  gap: 16px;
-  align-items: stretch;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   flex: 1 1 0;
-}
-
-.layout-grid .inspector:not(.inspector-collapsed) {
-  width: clamp(260px, 22vw, 320px);
 }
 
 .preview-panel,
@@ -1272,6 +1265,65 @@ textarea.code-area.full {
   background: #2563eb;
   color: #fff;
 }
+
+/* ── Dropdown menus (Файлы / Библиотека) ───────────────────────────── */
+
+.lp-menu-wrap {
+  position: relative;
+}
+
+.lp-menu-btn {
+  gap: 5px;
+}
+
+.lp-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 300;
+  min-width: 200px;
+  background: #fff;
+  border: 1px solid #d1d9e6;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.13);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.lp-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: #1e293b;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+
+.lp-dropdown-item:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.lp-dropdown-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.lp-dropdown-sep {
+  height: 1px;
+  background: #e8ecf2;
+  margin: 3px 4px;
+}
+
+/* ───────────────────────────────────────────────────────────────────── */
 
 .add-desk-wrap {
   position: relative;
